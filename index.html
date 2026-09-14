@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+
+<html lang="vi">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>HHG Oasis — Trung tâm điều hành V0</title>
+<style>
+:root{
+  --bg:#f4f5f1; --panel:#ffffff; --panel2:#f8f9f6; --ink:#17211e; --muted:#6e7873;
+  --line:#e2e6e1; --green:#0f6b50; --green2:#e7f3ee; --amber:#a75e06; --amber2:#fff3df;
+  --red:#b43b33; --red2:#fdecea; --blue:#245b8e; --blue2:#eaf1f8; --shadow:0 12px 40px rgba(24,37,31,.08);
+  --radius:18px;
+}
+*{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+button,input,select,textarea{font:inherit} button{cursor:pointer}
+.app{display:grid;grid-template-columns:246px 1fr;min-height:100vh}
+.sidebar{background:#17211e;color:#fff;padding:22px 16px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:22px}
+.brand{display:flex;align-items:center;gap:11px;padding:4px 8px 12px}.mark{width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#56a786,#d6c89d);display:grid;place-items:center;color:#10231c;font-weight:900}.brand b{display:block;font-size:15px;letter-spacing:.02em}.brand small{color:#aeb9b3;font-size:11px}
+.nav{display:flex;flex-direction:column;gap:6px}.nav button,.nav .nav-link{border:0;background:transparent;color:#cbd3cf;text-align:left;padding:11px 12px;border-radius:11px;display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer}.nav button:hover,.nav button.active,.nav .nav-link:hover{background:#26332e;color:#fff}.nav .ico{width:22px;height:22px;border-radius:7px;background:#32413b;display:grid;place-items:center;font-size:11px}
+.side-bottom{margin-top:auto;padding:12px;background:#202d28;border:1px solid #2e3a35;border-radius:15px}.side-bottom .demo{font-size:11px;color:#9fb1a8;text-transform:uppercase;letter-spacing:.11em}.side-bottom strong{display:block;margin:4px 0 3px;font-size:13px}.side-bottom p{margin:0;color:#9fb1a8;font-size:11px;line-height:1.45}
+.main{padding:26px 30px 50px;min-width:0}.topbar{display:flex;justify-content:space-between;gap:18px;align-items:center;margin-bottom:23px}.crumb small{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}.crumb h1{margin:0;font-size:25px;letter-spacing:-.03em}.top-actions{display:flex;gap:10px;align-items:center}.pill,.role-select{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:9px 12px;font-size:12px;color:var(--ink)}.role-select{outline:none}.avatar{width:38px;height:38px;border-radius:12px;background:#dce6e1;display:grid;place-items:center;font-weight:800;font-size:12px;color:#204439}
+.notice{display:flex;justify-content:space-between;align-items:center;background:#f1eee2;border:1px solid #e8dfc7;border-radius:14px;padding:11px 14px;margin-bottom:18px;font-size:12px}.notice b{font-weight:800}.notice span{color:#7c735f}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:17px;box-shadow:0 2px 0 rgba(0,0,0,.01)}.metric .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.metric .value{font-size:27px;font-weight:800;margin:8px 0 5px;letter-spacing:-.04em}.metric .delta{font-size:11px;color:var(--muted)}.up{color:var(--green)!important}.down{color:var(--red)!important}
+.section{margin-top:18px}.section-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.section-head h2{margin:0;font-size:15px}.section-head p{margin:3px 0 0;color:var(--muted);font-size:11px}.linkbtn{border:0;background:transparent;color:var(--green);font-size:12px;font-weight:700}
+.twocol{display:grid;grid-template-columns:1.35fr .85fr;gap:15px}.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:17px;box-shadow:0 2px 0 rgba(0,0,0,.01)}
+.priority-list{display:grid;gap:10px}.priority{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:12px}.prio-num{width:30px;height:30px;border-radius:10px;background:#17211e;color:white;display:grid;place-items:center;font-size:12px;font-weight:800}.priority h3{font-size:13px;margin:0 0 4px}.priority p{font-size:11px;color:var(--muted);margin:0}.tag{display:inline-flex;align-items:center;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:800;white-space:nowrap}.tag.green{background:var(--green2);color:var(--green)}.tag.amber{background:var(--amber2);color:var(--amber)}.tag.red{background:var(--red2);color:var(--red)}.tag.blue{background:var(--blue2);color:var(--blue)}.tag.gray{background:#eef0ee;color:#606966}
+.decision{padding:11px 0;border-bottom:1px solid var(--line)}.decision:last-child{border-bottom:0}.decision-top{display:flex;justify-content:space-between;gap:10px}.decision h3{font-size:12px;margin:0}.decision p{font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.45}.amount{font-size:12px;font-weight:800;white-space:nowrap}
+.units{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.unit{border:1px solid var(--line);border-radius:15px;padding:14px;background:var(--panel2)}.unit-top{display:flex;justify-content:space-between;align-items:center}.unit h3{font-size:12px;margin:0}.unit .money{font-size:18px;font-weight:800;margin:12px 0 3px}.unit .micro{font-size:10px;color:var(--muted)}.bar{height:7px;background:#e6e9e5;border-radius:99px;overflow:hidden;margin-top:11px}.bar>i{display:block;height:100%;border-radius:inherit;background:var(--green)}.bar.warn>i{background:var(--amber)}
+.risk-list{display:grid;gap:8px}.risk{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}.risk:last-child{border-bottom:0}.dot{width:8px;height:8px;border-radius:50%;background:var(--red)}.dot.amber{background:var(--amber)}.dot.green{background:var(--green)}.risk b{font-size:12px}.risk small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+.view{display:none}.view.active{display:block}
+.project-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.project{padding:18px}.project .row{display:flex;justify-content:space-between;gap:12px}.project h3{font-size:15px;margin:0 0 4px}.project p{font-size:11px;color:var(--muted);margin:0}.project .progressline{display:flex;justify-content:space-between;margin-top:15px;font-size:11px}.project .meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}.meta-box{background:var(--panel2);border-radius:10px;padding:9px}.meta-box span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.meta-box b{font-size:11px}.project .foot{display:flex;justify-content:space-between;align-items:center;margin-top:13px;padding-top:13px;border-top:1px solid var(--line)}
+.btn{border:0;border-radius:11px;padding:10px 13px;font-size:11px;font-weight:800}.btn.primary{background:var(--green);color:#fff}.btn.dark{background:#17211e;color:white}.btn.soft{background:#edf1ee;color:#31423b}.btn.danger{background:var(--red2);color:var(--red)}
+.task-toolbar{display:flex;justify-content:space-between;gap:10px;margin-bottom:12px}.filters{display:flex;gap:7px;flex-wrap:wrap}.filter{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 10px;font-size:10px}.filter.active{background:#17211e;color:#fff;border-color:#17211e}.task-table{width:100%;border-collapse:separate;border-spacing:0;background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}.task-table th{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:10px 12px;text-align:left;background:var(--panel2)}.task-table td{font-size:11px;padding:12px;border-top:1px solid var(--line)}.task-title b{display:block;font-size:12px;margin-bottom:3px}.task-title small{color:var(--muted)}
+.staff-wrap{max-width:620px;margin:0 auto}.mobile-shell{background:#eef0ec;border:1px solid #dfe4de;border-radius:34px;padding:12px;box-shadow:var(--shadow)}.mobile-screen{background:#fbfcfa;border-radius:25px;min-height:700px;padding:20px;overflow:hidden}.mobile-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.mobile-head h2{margin:0;font-size:20px}.mobile-head small{color:var(--muted)}.hello{background:#18221e;color:white;border-radius:19px;padding:16px;margin-bottom:14px}.hello small{color:#b7c3bd}.hello h3{margin:4px 0 0;font-size:17px}.staff-task{background:#fff;border:1px solid var(--line);border-radius:17px;padding:15px;margin-bottom:10px}.staff-task .top{display:flex;justify-content:space-between;gap:10px}.staff-task h3{font-size:14px;margin:0 0 5px}.staff-task p{font-size:11px;color:var(--muted);margin:0}.staff-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:13px}.staff-actions button{border:0;border-radius:10px;padding:10px 6px;font-size:10px;font-weight:800}.start{background:#e8f2ed;color:#0f6b50}.done{background:#17211e;color:#fff}.problem{background:#fff0e8;color:#9d4b10}.report-big{width:100%;border:0;border-radius:16px;padding:15px;background:#b43b33;color:white;font-size:13px;font-weight:900;margin-top:8px}.bottomnav{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:17px}.bottomnav div{text-align:center;color:var(--muted);font-size:9px;padding:8px}.bottomnav .on{color:var(--green);font-weight:800}
+.issue-categories{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}.issue-cat{border:1px solid var(--line);border-radius:15px;background:#fff;padding:17px 12px;text-align:left}.issue-cat b{display:block;font-size:12px}.issue-cat small{color:var(--muted);font-size:10px}.camera{height:160px;border-radius:16px;border:1.5px dashed #cfd5d1;background:#f5f7f4;display:grid;place-items:center;text-align:center;color:var(--muted);margin-top:12px}.camera strong{display:block;color:#4a5651;font-size:12px}.camera span{font-size:28px}.text-input{width:100%;border:1px solid var(--line);border-radius:13px;padding:12px;margin-top:10px;outline:none;background:#fff;font-size:11px}
+.arch{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:stretch}.arch-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;text-align:center}.arch-box b{display:block;font-size:11px}.arch-box span{display:block;font-size:9px;color:var(--muted);margin-top:5px;line-height:1.4}.arch-arrow{display:none}.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:13px}.rule{border-radius:14px;padding:14px;background:var(--panel);border:1px solid var(--line)}.rule b{font-size:11px}.rule p{font-size:10px;color:var(--muted);line-height:1.45;margin:6px 0 0}
+.modal{position:fixed;inset:0;background:rgba(10,18,15,.48);display:none;place-items:center;padding:18px;z-index:20}.modal.show{display:grid}.modal-card{width:min(520px,100%);background:#fff;border-radius:20px;padding:19px;box-shadow:var(--shadow)}.modal-card h3{margin:0 0 5px;font-size:17px}.modal-card p{margin:0 0 15px;color:var(--muted);font-size:11px}.field{margin-top:10px}.field label{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;outline:none;background:#fff;font-size:11px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.priority-gate{background:#fff5e7;border:1px solid #f0d8b2;border-radius:13px;padding:11px;margin-top:10px}.priority-gate b{font-size:11px;color:#85520c}.priority-gate p{font-size:10px;color:#8a6c42;margin:4px 0 0}
+
+/* Chốt ngày & tài chính quản trị */
+.finance-alert{display:flex;justify-content:space-between;gap:14px;align-items:center;background:#fff5e7;border:1px solid #f0d8b2;border-radius:16px;padding:14px 16px;margin-bottom:14px}.finance-alert b{display:block;font-size:12px;color:#7a4c0b}.finance-alert span{display:block;font-size:10px;color:#8a6c42;margin-top:3px}.finance-alert .btn{white-space:nowrap}
+.finance-layout{display:grid;grid-template-columns:1.45fr .55fr;gap:14px}.finance-table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:14px;overflow:hidden}.finance-table th{font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:10px;background:var(--panel2);text-align:left}.finance-table td{font-size:10px;padding:11px 10px;border-top:1px solid var(--line);vertical-align:middle}.finance-table b{font-size:11px}.source{display:inline-flex;padding:4px 7px;border-radius:999px;background:#eef2f0;color:#52605a;font-size:9px;font-weight:800;white-space:nowrap}.finance-rule{padding:11px 0;border-bottom:1px solid var(--line)}.finance-rule:last-child{border-bottom:0}.finance-rule b{font-size:11px}.finance-rule p{font-size:10px;line-height:1.45;color:var(--muted);margin:4px 0 0}.finance-rule .num{display:inline-grid;place-items:center;width:23px;height:23px;border-radius:8px;background:#17211e;color:#fff;font-size:9px;margin-right:7px}.status-line{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}.unit .data-line{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}.unit .data-line small{font-size:9px;color:var(--muted);line-height:1.35}.unit.missing{background:#fff9f8;border-color:#f1d6d2}.unit.missing .money{color:var(--red)}
+.modal-card.finance{width:min(610px,100%)}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.checkline{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:10px;color:var(--muted)}.toast{position:fixed;right:22px;bottom:22px;background:#17211e;color:#fff;padding:12px 15px;border-radius:12px;font-size:11px;box-shadow:var(--shadow);z-index:50;display:none}.toast.show{display:block}
+@media(max-width:1050px){.finance-layout{grid-template-columns:1fr}}
+@media(max-width:760px){.finance-alert{align-items:flex-start;flex-direction:column}.finance-table{display:block;overflow-x:auto}.form-grid{grid-template-columns:1fr}.unit .data-line{align-items:flex-start}}
+
+@media(max-width:1050px){.grid4{grid-template-columns:repeat(2,1fr)}.units{grid-template-columns:repeat(2,1fr)}.twocol{grid-template-columns:1fr}.project-grid{grid-template-columns:1fr}.arch{grid-template-columns:repeat(2,1fr)}.rules{grid-template-columns:1fr}}
+
+/* Hồ sơ công việc / Before-After */
+.task-table tbody tr{cursor:pointer;transition:.16s ease}.task-table tbody tr:hover{background:#f7faf7}.staff-task{cursor:pointer;transition:.16s ease}.staff-task:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(24,37,31,.06)}
+.modal-card.detail{width:min(920px,100%);max-height:90vh;overflow:auto}.detail-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.detail-head h3{font-size:20px}.detail-sub{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.detail-progress{margin:16px 0}.detail-progress .line{display:flex;justify-content:space-between;font-size:11px;margin-bottom:7px}.detail-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}.detail-panel{border:1px solid var(--line);border-radius:15px;padding:14px;background:#fff}.detail-panel h4{margin:0 0 10px;font-size:12px}.photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.photo-card{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel2)}.photo-card .scene{height:175px;position:relative;display:grid;place-items:center;overflow:hidden}.scene.before{background:linear-gradient(145deg,#d7d2c5,#ece9df)}.scene.after{background:linear-gradient(145deg,#dbe9df,#f1f6f2)}.scene.pending{background:repeating-linear-gradient(135deg,#f3f4f2,#f3f4f2 14px,#eceeeb 14px,#eceeeb 28px);color:#7d8681}.scene .lamp{width:70px;height:70px;border-radius:50%;border:10px solid rgba(255,255,255,.72);box-shadow:0 0 0 2px rgba(30,40,34,.08)}.scene.before .lamp{background:#676b68;box-shadow:none}.scene.after .lamp{background:#fff3b5;box-shadow:0 0 34px rgba(255,218,91,.72)}.scene .demo-label{position:absolute;left:10px;top:10px;background:rgba(23,33,30,.82);color:#fff;font-size:9px;font-weight:800;padding:5px 7px;border-radius:999px}.photo-cap{padding:9px 10px}.photo-cap b{display:block;font-size:11px}.photo-cap span{font-size:9px;color:var(--muted)}.detail-kv{display:grid;grid-template-columns:1fr 1fr;gap:8px}.kv{background:var(--panel2);padding:10px;border-radius:10px}.kv span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;margin-bottom:3px}.kv b{font-size:11px}.timeline{display:grid;gap:10px}.time-row{display:grid;grid-template-columns:10px 1fr;gap:9px;align-items:start}.time-dot{width:9px;height:9px;border-radius:50%;background:var(--green);margin-top:4px}.time-dot.wait{background:var(--amber)}.time-row b{display:block;font-size:10px}.time-row span{display:block;color:var(--muted);font-size:9px;line-height:1.4;margin-top:2px}.history-note{margin-top:11px;padding:10px;border-radius:10px;background:#fff7e9;color:#7b571b;font-size:10px;line-height:1.45}.detail-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+@media(max-width:760px){.modal-card.detail{max-height:94vh}.detail-grid{grid-template-columns:1fr}.photo-grid{grid-template-columns:1fr}.scene{height:150px}.detail-kv{grid-template-columns:1fr 1fr}}
+
+
+.mobile-menu-btn{display:none;border:1px solid var(--line);background:var(--panel);width:40px;height:40px;border-radius:12px;align-items:center;justify-content:center;font-size:20px;color:var(--ink);flex:0 0 auto}.mobile-overlay{display:none}
+@media(max-width:760px){.app{grid-template-columns:1fr}.sidebar{display:flex;position:fixed;left:0;top:0;bottom:0;width:min(82vw,310px);height:100vh;z-index:1001;transform:translateX(-104%);transition:transform .22s ease;box-shadow:16px 0 40px rgba(0,0,0,.2)}.sidebar.mobile-open{transform:translateX(0)}.mobile-overlay{display:block;position:fixed;inset:0;background:rgba(11,18,15,.42);z-index:1000;opacity:0;pointer-events:none;transition:opacity .2s ease}.mobile-overlay.show{opacity:1;pointer-events:auto}.mobile-menu-btn{display:flex}.main{padding:18px 14px 82px}.topbar{align-items:flex-start}.crumb{flex:1;min-width:0}.top-actions .pill{display:none}.grid4{grid-template-columns:1fr 1fr;gap:9px}.metric{padding:14px}.metric .value{font-size:22px}.units{grid-template-columns:1fr}.task-table{font-size:10px;display:block;overflow-x:auto}.top-actions{gap:6px}.crumb h1{font-size:21px}.role-select{max-width:140px}.arch{grid-template-columns:1fr}.mobile-shell{border-radius:24px}.mobile-screen{min-height:0}}
+
+/* Mobile fallback that does not require JavaScript (important for iOS file preview). */
+.ui-view-radio,.mobile-menu-toggle{position:fixed;left:-9999px;opacity:0;pointer-events:none}
+#vr-dashboard:checked ~ .app #dashboard,
+#vr-projects:checked ~ .app #projects,
+#vr-tasks:checked ~ .app #tasks,
+#vr-decisions:checked ~ .app #decisions,
+#vr-finance:checked ~ .app #finance,
+#vr-staff:checked ~ .app #staff,
+#vr-issue:checked ~ .app #issue,
+#vr-blueprint:checked ~ .app #blueprint{display:block!important}
+#vr-dashboard:not(:checked) ~ .app #dashboard.active{display:none}
+#vr-projects:checked ~ .app #dashboard.active,
+#vr-tasks:checked ~ .app #dashboard.active,
+#vr-decisions:checked ~ .app #dashboard.active,
+#vr-finance:checked ~ .app #dashboard.active,
+#vr-staff:checked ~ .app #dashboard.active,
+#vr-issue:checked ~ .app #dashboard.active,
+#vr-blueprint:checked ~ .app #dashboard.active{display:none!important}
+.mobile-close{display:none}
+@media(max-width:760px){
+  #mobileMenuToggle:checked ~ .app .sidebar{transform:translateX(0)!important}
+  #mobileMenuToggle:checked ~ .app .mobile-overlay{opacity:1!important;pointer-events:auto!important}
+  .mobile-close{display:grid;place-items:center;position:absolute;right:13px;top:13px;width:38px;height:38px;border-radius:12px;background:#26332e;color:#fff;font-size:24px;cursor:pointer;z-index:3}
+  .nav .nav-link{min-height:44px}
+}
+
+</style>
+</head>
+<body>
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-dashboard" checked>
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-projects">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-tasks">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-decisions">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-finance">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-staff">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-issue">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-blueprint">
+<input class="mobile-menu-toggle" type="checkbox" id="mobileMenuToggle">
+
+<div class="app">
+<aside class="sidebar">
+<label class="mobile-close" for="mobileMenuToggle" aria-label="Đóng menu">×</label>
+<div class="brand"><div class="mark">O</div><div><b>HHG OASIS</b><small>Trung tâm điều hành · V0</small></div></div>
+<nav class="nav">
+<label class="nav-link" for="vr-dashboard" data-view="dashboard"><span class="ico">⌂</span> Trung tâm điều hành</label>
+<label class="nav-link" for="vr-projects" data-view="projects"><span class="ico">◫</span> Dự án</label>
+<label class="nav-link" for="vr-tasks" data-view="tasks"><span class="ico">✓</span> Công việc</label>
+<label class="nav-link" for="vr-decisions" data-view="decisions"><span class="ico">!</span> Việc chờ quyết định</label>
+<label class="nav-link" for="vr-finance" data-view="finance"><span class="ico">₫</span> Chốt ngày & tài chính</label>
+<label class="nav-link" for="vr-staff" data-view="staff"><span class="ico">◎</span> Ứng dụng Lead/Tổ trưởng</label>
+<label class="nav-link" for="vr-issue" data-view="issue"><span class="ico">＋</span> Báo vấn đề</label>
+<label class="nav-link" for="vr-blueprint" data-view="blueprint"><span class="ico">◇</span> Sơ đồ hệ thống</label>
+</nav>
+<div class="side-bottom"><div class="demo">Bản mẫu thử nghiệm</div><strong>Dữ liệu đang hiển thị là DỮ LIỆU MẪU</strong><p>Thiết kế để thử luồng quản trị trước khi nối Google Sheets / AppSheet.</p></div>
+</aside>
+<label class="mobile-overlay" id="mobileOverlay" for="mobileMenuToggle" aria-label="Đóng menu"></label>
+<main class="main">
+<div class="topbar">
+<label class="mobile-menu-btn" id="mobileMenuBtn" for="mobileMenuToggle" aria-label="Mở menu">☰</label>
+<div class="crumb"><small id="eyebrow">QUẢN TRỊ HHG</small><h1 id="pageTitle">Trung tâm điều hành</h1></div>
+<div class="top-actions">
+<span class="pill">Chủ nhật · 13/09/2026</span>
+<select class="role-select" id="roleSelect"><option>Giám đốc vận hành</option><option>Lãnh đạo cấp cao</option><option>Cố vấn / Quản trị hệ thống</option><option>Quản lý phân khu</option><option>Nhân viên</option></select>
+<div class="avatar">PN</div>
+</div>
+</div>
+<div class="notice"><div><b>Bản mẫu V0</b> · Giao diện mô phỏng luồng quản trị chuyển tiếp</div><span>Không phải dữ liệu tài chính thật</span></div>
+<section class="view active" id="dashboard">
+<div class="grid4">
+<div class="metric"><div class="label">Doanh thu đã ghi nhận</div><div class="value">116,7 triệu</div><div class="delta down">5/6 phân khu đã nộp · chưa gồm Pickleball</div></div>
+<div class="metric"><div class="label">Tiền thực thu đã ghi nhận</div><div class="value">110,1 triệu</div><div class="delta">94,3% doanh thu đang có dữ liệu</div></div>
+<div class="metric"><div class="label">Chi phí hôm nay</div><div class="value">8,4 triệu</div><div class="delta">5,9 triệu đã đối chiếu · 2,5 triệu tạm ghi nhận</div></div>
+<div class="metric"><div class="label">Tình trạng chốt ngày</div><div class="value">5 / 6</div><div class="delta down">1 phân khu chưa nộp dữ liệu cuối ngày</div></div>
+</div>
+<div class="section twocol">
+<div class="card">
+<div class="section-head"><div><h2>3 ưu tiên cấp HHG</h2><p>Tối đa 3 ưu tiên đang chạy cùng lúc</p></div><button class="linkbtn" onclick="openTaskModal()">+ Đề xuất ưu tiên mới</button></div>
+<div class="priority-list">
+<div class="priority"><div class="prio-num">01</div><div><h3>Mở rộng Lòng Nướng</h3><p>Phụ trách: Vận hành · Hạn: 30/09 · 8/12 việc hoàn tất</p></div><span class="tag amber">P1 · CÓ RỦI RO</span></div>
+<div class="priority"><div class="prio-num">02</div><div><h3>Mức sẵn sàng Bếp trung tâm</h3><p>Phụ trách: Vận hành chung · Hạn: 24/09 · đang chờ quyết định thiết bị</p></div><span class="tag red">P1 · ĐANG BỊ CHẶN</span></div>
+<div class="priority"><div class="prio-num">03</div><div><h3>Tăng doanh thu hoạt động cốt lõi Oasis</h3><p>Phụ trách: Kinh doanh · rà soát mỗi 7 ngày · 3 thử nghiệm đang chạy</p></div><span class="tag green">P1 · ĐÚNG TIẾN ĐỘ</span></div>
+</div>
+</div>
+<div class="card">
+<div class="section-head"><div><h2>Việc chờ quyết định</h2><p>Việc lãnh đạo cần quyết định</p></div><button class="linkbtn" onclick="setView('decisions')">Xem tất cả</button></div>
+<div class="decision"><div class="decision-top"><h3>Duyệt thiết bị Bếp trung tâm</h3><span class="amount">68,0 triệu</span></div><p>Hạn hôm nay · Nếu chậm, lịch lắp đặt trễ 3–4 ngày.</p></div>
+<div class="decision"><div class="decision-top"><h3>Chọn phương án cải tạo Pickleball</h3><span class="amount">42–79 triệu</span></div><p>Cần chốt phương án A/B trước 15/09 để giữ lịch nhà thầu.</p></div>
+<div class="decision"><div class="decision-top"><h3>Quy tắc phân chia doanh thu Spa</h3><span class="amount">Chính sách</span></div><p>Cần xác nhận cách tính để phần đóng góp thuộc HHG trên bảng điều hành không sai.</p></div>
+</div>
+</div>
+<div class="section twocol">
+<div class="card">
+<div class="section-head"><div><h2>Các phân khu doanh thu</h2><p>Số hiện theo dữ liệu đã nộp · luôn hiển thị nguồn và trạng thái</p></div><button class="linkbtn" onclick="setView('finance')">Chốt ngày / xem chi tiết</button></div>
+<div class="units">
+<div class="unit"><div class="unit-top"><h3>Lòng Nướng</h3><span class="tag amber">TẠM GHI NHẬN</span></div><div class="money">42,6 triệu</div><div class="micro">Mục tiêu ngày 45,0 triệu</div><div class="bar"><i style="width:94%"></i></div><div class="data-line"><small>Nguồn: <b>Nhập tay</b><br/>22:14 · Quản lý phân khu</small><span class="source">Chờ đối chiếu</span></div></div>
+<div class="unit"><div class="unit-top"><h3>Spa</h3><span class="tag green">ĐÃ ĐỐI CHIẾU</span></div><div class="money">28,1 triệu</div><div class="micro">Mục tiêu ngày 30,0 triệu</div><div class="bar"><i style="width:88%"></i></div><div class="data-line"><small>Nguồn: <b>Import file</b><br/>21:50 · Finance</small><span class="source">File bán hàng</span></div></div>
+<div class="unit"><div class="unit-top"><h3>Hồ bơi</h3><span class="tag green">ĐÃ CHỐT</span></div><div class="money">19,8 triệu</div><div class="micro">Mục tiêu ngày 24,0 triệu</div><div class="bar warn"><i style="width:76%"></i></div><div class="data-line"><small>Nguồn: <b>Nhập tay</b><br/>20:58 · đã Finance xác nhận</small><span class="source">Chốt</span></div></div>
+<div class="unit"><div class="unit-top"><h3>Gym</h3><span class="tag amber">CHỜ ĐỐI CHIẾU</span></div><div class="money">11,2 triệu</div><div class="micro">Mục tiêu ngày 16,0 triệu</div><div class="bar warn"><i style="width:70%"></i></div><div class="data-line"><small>Nguồn: <b>File Excel</b><br/>21:18 · Quản lý phân khu</small><span class="source">Import</span></div></div>
+<div class="unit missing"><div class="unit-top"><h3>Pickleball</h3><span class="tag red">CHƯA NỘP</span></div><div class="money">—</div><div class="micro">Chưa cộng vào tổng doanh thu hôm nay</div><div class="bar warn"><i style="width:0%"></i></div><div class="data-line"><small>Chưa có dữ liệu cuối ngày</small><button class="linkbtn" onclick="openDailyClose('Pickleball')">Nhập ngay</button></div></div>
+<div class="unit"><div class="unit-top"><h3>Khác</h3><span class="tag green">ĐÃ CHỐT</span></div><div class="money">15,0 triệu</div><div class="micro">Nguồn thu phụ trợ / dùng chung</div><div class="bar"><i style="width:82%"></i></div><div class="data-line"><small>Nguồn: <b>Tổng hợp Finance</b><br/>22:20</small><span class="source">Chốt</span></div></div>
+</div>
+</div>
+<div class="card">
+<div class="section-head"><div><h2>Cần chú ý</h2><p>Chỉ những gì cần hành động</p></div></div>
+<div class="risk-list">
+<div class="risk"><i class="dot"></i><div><b>Pickleball chưa nộp chốt ngày</b><small>Doanh thu tổng hiện tại chưa bao gồm phân khu này</small></div><span class="tag red">THIẾU DỮ LIỆU</span></div>
+<div class="risk"><i class="dot"></i><div><b>Bếp trung tâm: chờ duyệt thiết bị</b><small>Vướng mắc cấp quản lý · 1 ngày</small></div><span class="tag red">CẦN QUYẾT</span></div>
+<div class="risk"><i class="dot amber"></i><div><b>Pickleball: nhà thầu chưa chốt lịch</b><small>Nguy cơ trễ tái vận hành</small></div><span class="tag amber">CẦN BÁM</span></div>
+<div class="risk"><i class="dot amber"></i><div><b>4 việc quá hạn</b><small>2 Bảo trì · 1 Trang trí · 1 Tài chính</small></div><span class="tag amber">CẦN ĐÔN ĐỐC</span></div>
+<div class="risk"><i class="dot green"></i><div><b>4/5 chốt ngày đã được đối chiếu hoặc chốt</b><small>Lòng Nướng đang ở trạng thái tạm ghi nhận</small></div><span class="tag green">CÓ NGUỒN</span></div>
+</div>
+</div>
+</div>
+</section>
+<section class="view" id="projects">
+<div class="section-head"><div><h2>Theo dõi dự án</h2><p>Mỗi dự án = nhóm việc + ngân sách + vướng mắc + quyết định</p></div><button class="btn primary">+ Dự án mới</button></div>
+<div class="project-grid">
+<div class="card project"><div class="row"><div><h3>Mở rộng Lòng Nướng</h3><p>Doanh thu / Mở rộng · Phụ trách: Vận hành</p></div><span class="tag amber">CÓ RỦI RO</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>68%</b></div><div class="bar"><i style="width:68%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>350 triệu</b></div><div class="meta-box"><span>Hạn</span><b>30/09</b></div><div class="meta-box"><span>Công việc</span><b>8 / 12</b></div></div><div class="foot"><span class="tag amber">1 vướng mắc</span><button class="btn soft" onclick="setView('tasks')">Xem việc →</button></div></div>
+<div class="card project"><div class="row"><div><h3>Bếp trung tâm</h3><p>Vận hành / Hạ tầng · Phụ trách: Vận hành chung</p></div><span class="tag red">ĐANG BỊ CHẶN</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>54%</b></div><div class="bar warn"><i style="width:54%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>480 triệu</b></div><div class="meta-box"><span>Hạn</span><b>24/09</b></div><div class="meta-box"><span>Công việc</span><b>6 / 14</b></div></div><div class="foot"><span class="tag red">Cần quyết định</span><button class="btn soft" onclick="setView('decisions')">Quyết định →</button></div></div>
+<div class="card project"><div class="row"><div><h3>Tái vận hành Pickleball</h3><p>Cải tiến / Tái vận hành · Phụ trách: Quản lý phân khu</p></div><span class="tag amber">CÓ RỦI RO</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>61%</b></div><div class="bar warn"><i style="width:61%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>120 triệu</b></div><div class="meta-box"><span>Hạn</span><b>02/10</b></div><div class="meta-box"><span>Công việc</span><b>9 / 17</b></div></div><div class="foot"><span class="tag amber">2 vướng mắc</span><button class="btn soft" onclick="setView('tasks')">Xem việc →</button></div></div>
+<div class="card project"><div class="row"><div><h3>Tái vận hành khu Gym</h3><p>Doanh thu / Tái vận hành · Phụ trách: Kinh doanh</p></div><span class="tag green">ĐÚNG TIẾN ĐỘ</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>77%</b></div><div class="bar"><i style="width:77%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>95 triệu</b></div><div class="meta-box"><span>Hạn</span><b>05/10</b></div><div class="meta-box"><span>Công việc</span><b>10 / 13</b></div></div><div class="foot"><span class="tag green">Không vướng</span><button class="btn soft" onclick="setView('tasks')">Xem việc →</button></div></div>
+</div>
+</section>
+<section class="view" id="tasks">
+<div class="task-toolbar"><div class="filters"><button class="filter active">Tất cả</button><button class="filter">P0/P1</button><button class="filter">Quá hạn</button><button class="filter">Bị chặn</button><button class="filter">Trước/Sau</button></div><button class="btn primary" onclick="openTaskModal()">+ Tạo việc</button></div>
+<table class="task-table"><thead><tr><th>Việc</th><th>Phân khu</th><th>Ưu tiên</th><th>Phụ trách</th><th>Hạn</th><th>Trạng thái</th><th>Chi phí</th></tr></thead><tbody>
+<tr onclick="openTaskDetail('layout')"><td class="task-title"><b>Chốt layout mở rộng khu nướng</b><small>Dự án: Mở rộng Lòng Nướng</small></td><td>Lòng Nướng</td><td><span class="tag amber">P1</span></td><td>Vận hành</td><td>14/09</td><td><span class="tag blue">Đang làm</span></td><td>—</td></tr>
+<tr onclick="openTaskDetail('kitchen')"><td class="task-title"><b>Duyệt danh sách thiết bị bếp</b><small>Dự án: Bếp trung tâm</small></td><td>Vận hành chung</td><td><span class="tag red">P1</span></td><td>Giám đốc vận hành</td><td>13/09</td><td><span class="tag red">Bị chặn</span></td><td>68 triệu</td></tr>
+<tr onclick="openTaskDetail('lights')"><td class="task-title"><b>Thay 4 đèn khu hồ trẻ em</b><small>Bảo trì · có ảnh Trước</small></td><td>Hồ bơi</td><td><span class="tag gray">P2</span></td><td>Kỹ thuật</td><td>13/09</td><td><span class="tag amber">Đang chờ</span></td><td>1,8 triệu</td></tr>
+<tr onclick="openTaskDetail('menu')"><td class="task-title"><b>Chụp lại menu và giá mới</b><small>Kinh doanh / Nội dung</small></td><td>Lòng Nướng</td><td><span class="tag gray">P2</span></td><td>Nội dung</td><td>15/09</td><td><span class="tag blue">Đang làm</span></td><td>—</td></tr>
+<tr onclick="openTaskDetail('clean')"><td class="task-title"><b>Xử lý vệ sinh kho phụ</b><small>Vấn đề #IS-0192</small></td><td>Spa</td><td><span class="tag gray">P2</span></td><td>Vệ sinh</td><td>13/09</td><td><span class="tag green">Hoàn tất</span></td><td>0,4 triệu</td></tr>
+</tbody></table>
+</section>
+<section class="view" id="decisions">
+<div class="section-head"><div><h2>Việc chờ quyết định</h2><p>Giảm “chờ lãnh đạo” thành danh sách quyết định có hạn và tác động rõ ràng</p></div><button class="btn primary">+ Yêu cầu duyệt</button></div>
+<div class="card">
+<div class="decision"><div class="decision-top"><div><h3>Duyệt thiết bị Bếp trung tâm</h3><p>Người đề xuất: Vận hành chung · Người duyệt: Giám đốc vận hành · Hạn: 13/09</p></div><div><span class="amount">68,0 triệu</span> <span class="tag red">KHẨN</span></div></div><div class="priority-gate"><b>Tác động nếu chưa quyết</b><p>Nhà cung cấp chưa thể khóa lịch lắp đặt; mức sẵn sàng dự kiến trễ 3–4 ngày.</p></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn dark">Duyệt</button><button class="btn soft">Yêu cầu bổ sung</button><button class="btn danger">Từ chối</button></div></div>
+<div class="decision"><div class="decision-top"><div><h3>Chọn phương án cải tạo Pickleball</h3><p>Người đề xuất: Quản lý phân khu · Người duyệt: Giám đốc vận hành · Hạn: 15/09</p></div><div><span class="amount">42–79 triệu</span> <span class="tag amber">2 PHƯƠNG ÁN</span></div></div><p>Phương án A: sửa tối thiểu để tái vận hành nhanh · Phương án B: làm lại đồng bộ nhưng cần thêm thời gian.</p></div>
+<div class="decision"><div class="decision-top"><div><h3>Xác nhận quy tắc phân chia Spa</h3><p>Người đề xuất: Tài chính · Người duyệt: Lãnh đạo cấp cao / Giám đốc vận hành · Hạn: 16/09</p></div><div><span class="amount">Quy tắc hợp đồng</span></div></div><p>Bảng điều hành giữ nguyên Kết quả vận hành; phần đóng góp thuộc HHG chỉ tính sau khi quy tắc được xác nhận.</p></div>
+</div>
+</section>
+<section class="view" id="finance">
+<div class="finance-alert"><div><b>Hôm nay còn 1 phân khu chưa nộp chốt ngày</b><span>Pickleball chưa có doanh thu / tiền thực thu. Số tổng trên Trung tâm điều hành vì vậy đang là số đã ghi nhận, chưa phải số chốt cuối cùng.</span></div><button class="btn primary" onclick="openDailyClose('Pickleball')">Nhập chốt ngày</button></div>
+<div class="grid4">
+<div class="metric"><div class="label">Phân khu đã nộp</div><div class="value">5 / 6</div><div class="delta down">Pickleball chưa nộp</div></div>
+<div class="metric"><div class="label">Doanh thu đã ghi nhận</div><div class="value">116,7 triệu</div><div class="delta">Tổng của 5 phân khu có dữ liệu</div></div>
+<div class="metric"><div class="label">Tiền thực thu</div><div class="value">110,1 triệu</div><div class="delta">94,3% doanh thu đã ghi nhận</div></div>
+<div class="metric"><div class="label">Chi phí đã ghi nhận</div><div class="value">8,4 triệu</div><div class="delta">2,5 triệu còn chờ đối chiếu</div></div>
+</div>
+<div class="section finance-layout">
+<div class="card"><div class="section-head"><div><h2>Tình trạng chốt ngày theo phân khu</h2><p>Nhập tay, import hay tự động đều về cùng một bảng; nguồn dữ liệu luôn được giữ lại</p></div><button class="btn primary" onclick="openDailyClose()">+ Nhập chốt ngày</button></div>
+<table class="finance-table"><thead><tr><th>Phân khu</th><th>Doanh thu</th><th>Tiền thực thu</th><th>Nguồn</th><th>Cập nhật</th><th>Trạng thái</th><th></th></tr></thead><tbody>
+<tr><td><b>Lòng Nướng</b></td><td>42,6 triệu</td><td>39,8 triệu</td><td><span class="source">Nhập tay</span></td><td>22:14</td><td><span class="tag amber">Tạm ghi nhận</span></td><td><button class="linkbtn" onclick="openDailyClose('Lòng Nướng')">Sửa</button></td></tr>
+<tr><td><b>Spa</b></td><td>28,1 triệu</td><td>26,9 triệu</td><td><span class="source">Import file</span></td><td>21:50</td><td><span class="tag green">Đã đối chiếu</span></td><td><button class="linkbtn" onclick="openDailyClose('Spa')">Xem</button></td></tr>
+<tr><td><b>Hồ bơi</b></td><td>19,8 triệu</td><td>19,8 triệu</td><td><span class="source">Nhập tay</span></td><td>20:58</td><td><span class="tag green">Đã chốt</span></td><td><button class="linkbtn" onclick="openDailyClose('Hồ bơi')">Xem</button></td></tr>
+<tr><td><b>Gym</b></td><td>11,2 triệu</td><td>10,7 triệu</td><td><span class="source">File Excel</span></td><td>21:18</td><td><span class="tag amber">Chờ đối chiếu</span></td><td><button class="linkbtn" onclick="openDailyClose('Gym')">Sửa</button></td></tr>
+<tr id="pickleCloseRow"><td><b>Pickleball</b></td><td id="pickleRev">—</td><td id="pickleCash">—</td><td><span class="source" id="pickleSource">Chưa có</span></td><td id="pickleTime">—</td><td id="pickleStatus"><span class="tag red">Chưa nộp</span></td><td><button class="linkbtn" onclick="openDailyClose('Pickleball')">Nhập ngay</button></td></tr>
+<tr><td><b>Khác</b></td><td>15,0 triệu</td><td>12,9 triệu</td><td><span class="source">Finance tổng hợp</span></td><td>22:20</td><td><span class="tag green">Đã chốt</span></td><td><button class="linkbtn" onclick="openDailyClose('Khác')">Xem</button></td></tr>
+</tbody></table></div>
+<div class="card"><div class="section-head"><div><h2>3 trạng thái dữ liệu</h2><p>Để lãnh đạo biết con số đáng tin tới đâu</p></div></div>
+<div class="finance-rule"><b><span class="num">1</span>Tạm ghi nhận</b><p>Quản lý phân khu nhập tay hoặc dữ liệu vừa import. Số được hiển thị ngay để vận hành không phải chờ.</p></div>
+<div class="finance-rule"><b><span class="num">2</span>Đã đối chiếu</b><p>Finance đã so với POS, file nguồn, tiền mặt/chuyển khoản hoặc chứng từ liên quan.</p></div>
+<div class="finance-rule"><b><span class="num">3</span>Đã chốt</b><p>Số được khóa cho ngày đó. Nếu điều chỉnh sau chốt phải để lại lịch sử thay đổi.</p></div>
+<div class="priority-gate"><b>Không nhập lại nếu đã có nguồn tốt</b><p>Khu có POS/file ổn định ưu tiên import. Nhập tay dành cho phần chưa có nguồn tự động hoặc cần số sớm để điều hành.</p></div></div>
+</div>
+<div class="section card"><div class="section-head"><div><h2>Chi phí phát sinh hôm nay</h2><p>Chi phí vận hành có thể ghi nhanh trước; Finance đối chiếu/chốt sau</p></div><button class="btn primary" onclick="openExpenseModal()">+ Ghi chi phí</button></div>
+<table class="finance-table"><thead><tr><th>Thời gian</th><th>Phân khu</th><th>Nhóm chi phí</th><th>Nội dung</th><th>Số tiền</th><th>Nguồn / chứng từ</th><th>Trạng thái</th></tr></thead><tbody>
+<tr><td>18:20</td><td>Lòng Nướng</td><td>OPEX</td><td>Mua bổ sung vật tư phục vụ</td><td><b>2,5 triệu</b></td><td><span class="source">Ảnh hóa đơn</span></td><td><span class="tag amber">Tạm ghi nhận</span></td></tr>
+<tr><td>15:05</td><td>Hồ bơi</td><td>Bảo trì</td><td>Đèn và vật tư điện</td><td><b>1,8 triệu</b></td><td><span class="source">Gắn CV-0241</span></td><td><span class="tag green">Đã đối chiếu</span></td></tr>
+<tr><td>11:30</td><td>Dùng chung</td><td>OPEX</td><td>Vật tư vệ sinh</td><td><b>1,6 triệu</b></td><td><span class="source">Chứng từ</span></td><td><span class="tag green">Đã chốt</span></td></tr>
+<tr><td>09:10</td><td>Pickleball</td><td>Cải tạo</td><td>Biển bảng khu sân</td><td><b>2,5 triệu</b></td><td><span class="source">Gắn CV-0239</span></td><td><span class="tag green">Đã đối chiếu</span></td></tr>
+</tbody></table></div>
+</section>
+<section class="view" id="staff">
+<div class="staff-wrap"><div class="mobile-shell"><div class="mobile-screen">
+<div class="mobile-head"><div><small>HHG Oasis · Nhân viên</small><h2>Việc của tôi</h2></div><div class="avatar">KT</div></div>
+<div class="hello"><small>Hôm nay · 13/09</small><h3>Còn 3 việc cần xử lý</h3></div>
+<div class="staff-task" onclick="openTaskDetail('lights')"><div class="top"><div><h3>Thay 4 đèn khu hồ trẻ em</h3><p>Hạn hôm nay · Khu Hồ bơi</p></div><span class="tag amber">Làm trước</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
+<div class="staff-task" onclick="openTaskDetail('socket')"><div class="top"><div><h3>Kiểm tra ổ điện quầy phụ</h3><p>Hạn hôm nay · Lòng Nướng</p></div><span class="tag gray">Tiếp theo</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
+<div class="staff-task" onclick="openTaskDetail('signage')"><div class="top"><div><h3>Chụp ảnh Sau khu biển bảng</h3><p>Hạn 14/09 · Pickleball</p></div><span class="tag gray">Tiếp theo</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
+<button class="report-big" onclick="setView('issue')">＋ BÁO VẤN ĐỀ MỚI</button>
+<div class="bottomnav"><div class="on">✓<br/>Việc của tôi</div><div>＋<br/>Báo vấn đề</div><div>◌<br/>Lịch sử</div></div>
+</div></div></div>
+</section>
+<section class="view" id="issue">
+<div class="staff-wrap"><div class="mobile-shell"><div class="mobile-screen">
+<div class="mobile-head"><div><small>QR: Khu Hồ bơi</small><h2>Báo vấn đề</h2></div><span class="tag green">KHU VỰC tự gắn</span></div>
+<p style="font-size:12px;color:var(--muted);margin-top:-8px">Chọn loại vấn đề. Không cần nhập mã, tên khu hay thời gian.</p>
+<div class="issue-categories"><button class="issue-cat"><b>🔧 Hỏng / cần sửa</b><small>đèn, điện, thiết bị…</small></button><button class="issue-cat"><b>📦 Thiếu đồ</b><small>vật tư, dụng cụ…</small></button><button class="issue-cat"><b>🧹 Vệ sinh</b><small>cần xử lý khu vực</small></button><button class="issue-cat"><b>⚠️ An toàn</b><small>rủi ro cần báo ngay</small></button></div>
+<div class="camera"><div><span>▣</span><strong>Chụp ảnh</strong><small>1 ảnh là đủ trong đa số trường hợp</small></div></div>
+<input class="text-input" placeholder="Ghi chú ngắn (không bắt buộc)"/>
+<button class="report-big" style="background:var(--green)">GỬI BÁO CÁO · 10 GIÂY</button>
+<div class="priority-gate"><b>Sau khi gửi</b><p>Điều phối / Quản lý sẽ quyết định: xử lý ngay, tạo việc, gắn ưu tiên và giao người phụ trách.</p></div>
+</div></div></div>
+</section>
+<section class="view" id="blueprint">
+<div class="card">
+<div class="section-head"><div><h2>Hệ quản trị chuyển tiếp · Logic V0</h2><p>Chuẩn hóa hành vi trước, số hóa sau</p></div></div>
+<div class="arch">
+<div class="arch-box"><b>DỮ LIỆU VÀO</b><span>Chốt ngày<br/>Báo vấn đề / QR<br/>Cập nhật công việc<br/>Ghi nhận tài chính</span></div>
+<div class="arch-box"><b>KIỂM SOÁT</b><span>Ưu tiên<br/>Phụ trách<br/>Hạn<br/>Trạng thái / Bằng chứng</span></div>
+<div class="arch-box"><b>LUỒNG XỬ LÝ</b><span>Một luồng công việc<br/>Dự án = nhóm việc<br/>Vai trò + Phạm vi</span></div>
+<div class="arch-box"><b>QUẢN TRỊ</b><span>Trung tâm điều hành<br/>Việc chờ quyết định<br/>Xem chi tiết</span></div>
+<div class="arch-box"><b>BÀN GIAO</b><span>Google Sheets<br/>AppSheet<br/>Drive / Script<br/>Xuất dữ liệu khi chuyển hệ thống</span></div>
+</div>
+<div class="rules">
+<div class="rule"><b>Nguyên tắc 01 · Lãnh đạo xem toàn bộ</b><p>Lãnh đạo / Giám đốc vận hành / Quản trị hệ thống có thể xem chi tiết tới công việc, chi phí, bằng chứng và lịch sử theo quyền được cấp.</p></div>
+<div class="rule"><b>Nguyên tắc 02 · Nhân viên chỉ thấy phần cần thiết</b><p>Nhân viên chỉ cần Việc của tôi, Bắt đầu, Đã xong, Có vấn đề, chụp ảnh và báo vấn đề.</p></div>
+<div class="rule"><b>Nguyên tắc 03 · Thêm việc mới = chọn việc bị đẩy xuống</b><p>Nếu thêm việc ưu tiên mới ngoài P0, hệ thống buộc xác định việc nào bị đẩy xuống để giảm chuyển đổi liên tục giữa quá nhiều việc.</p></div>
+</div>
+</div>
+</section>
+</main>
+</div>
+<div class="modal" id="taskModal"><div class="modal-card"><h3>Tạo việc / ưu tiên mới</h3><p>Bản mẫu minh họa cổng kiểm soát ưu tiên. Nếu đẩy việc mới vào nhóm ưu tiên cao nhất, phải chọn việc bị thay thế.</p>
+<div class="field"><label>Tên việc</label><input value="Ví dụ: sửa khu check-in Oasis"/></div>
+<div class="field"><label>Ưu tiên</label><select id="prioritySelect" onchange="toggleGate()"><option>P2 — Cải thiện / chuẩn hóa</option><option>P1 — Ảnh hưởng trực tiếp doanh thu/tiền</option><option>P0 — An toàn / pháp lý / mất tiền ngay</option></select></div>
+<div class="priority-gate" id="replaceGate" style="display:none"><b>Thêm việc mới = chọn việc bị đẩy xuống</b><p>Ba ưu tiên hiện tại đã đầy. Chọn 1 ưu tiên đang chạy sẽ bị tạm dừng/đẩy xuống.</p><select class="text-input"><option>01 · Mở rộng Lòng Nướng</option><option>02 · Mức sẵn sàng Bếp trung tâm</option><option>03 · Tăng doanh thu hoạt động cốt lõi Oasis</option></select></div>
+<div class="field"><label>Phụ trách</label><select><option>Vận hành</option><option>Kinh doanh</option><option>Vận hành chung</option><option>Quản lý phân khu</option></select></div>
+<div class="field"><label>Hạn</label><input type="date" value="2026-09-16"/></div>
+<div class="modal-actions"><button class="btn soft" onclick="closeTaskModal()">Hủy</button><button class="btn primary" onclick="closeTaskModal()">Tạo việc mẫu</button></div>
+</div></div>
+<div class="modal" id="dailyCloseModal"><div class="modal-card finance"><h3>Chốt doanh thu cuối ngày</h3><p>Nhập số quản trị tối thiểu. Nếu chưa đối chiếu, hệ thống vẫn cho hiển thị nhưng gắn trạng thái “Tạm ghi nhận”.</p>
+<div class="form-grid"><div class="field"><label>Phân khu</label><select id="closeUnit"><option>Lòng Nướng</option><option>Spa</option><option>Hồ bơi</option><option>Gym</option><option>Pickleball</option><option>Khác</option></select></div><div class="field"><label>Ngày</label><input type="date" value="2026-09-13"/></div>
+<div class="field"><label>Doanh thu</label><input id="closeRevenue" type="number" placeholder="Ví dụ 12500000"/></div><div class="field"><label>Tiền thực thu</label><input id="closeCash" type="number" placeholder="Ví dụ 12000000"/></div>
+<div class="field"><label>Số khách / bill</label><input type="number" placeholder="Ví dụ 84"/></div><div class="field"><label>Nguồn dữ liệu</label><select id="closeSource"><option>Nhập tay</option><option>Import file Excel</option><option>Import file từ POS/app</option><option>Finance tổng hợp</option><option>Kết nối tự động</option></select></div></div>
+<div class="field"><label>Ghi chú / sự cố trong ngày</label><textarea rows="3" placeholder="Chỉ ghi khi có điểm bất thường hoặc cần giải thích"></textarea></div>
+<div class="priority-gate"><b>Khi bấm lưu</b><p>Số xuất hiện ngay trên bảng điều hành với trạng thái <b>Tạm ghi nhận</b>. Finance có thể chuyển sang Đã đối chiếu / Đã chốt sau.</p></div>
+<div class="modal-actions"><button class="btn soft" onclick="closeDailyClose()">Hủy</button><button class="btn primary" onclick="saveDailyCloseDemo()">Lưu số tạm ghi nhận</button></div></div></div>
+<div class="modal" id="expenseModal"><div class="modal-card finance"><h3>Ghi chi phí phát sinh</h3><p>Dùng cho chi phí vận hành cần ghi nhận nhanh. Chứng từ và bước đối chiếu có thể hoàn thiện sau.</p>
+<div class="form-grid"><div class="field"><label>Phân khu</label><select><option>Lòng Nướng</option><option>Spa</option><option>Hồ bơi</option><option>Gym</option><option>Pickleball</option><option>Dùng chung</option></select></div><div class="field"><label>Nhóm chi phí</label><select><option>OPEX</option><option>Bảo trì / sửa chữa</option><option>Cải tạo / nâng cấp</option><option>CAPEX</option><option>Chi phí dùng chung</option></select></div><div class="field"><label>Số tiền</label><input type="number" placeholder="Số tiền"/></div><div class="field"><label>Gắn với công việc / dự án</label><input placeholder="Không bắt buộc"/></div></div>
+<div class="field"><label>Nội dung</label><input placeholder="Ví dụ: mua 4 bóng đèn hồ bơi"/></div><div class="field"><label>Chứng từ</label><div class="camera" style="height:95px;margin-top:0"><div><span style="font-size:20px">▣</span><strong>Chụp / tải ảnh hóa đơn</strong><small>Có thể bổ sung sau nếu chưa có ngay</small></div></div></div>
+<div class="modal-actions"><button class="btn soft" onclick="closeExpenseModal()">Hủy</button><button class="btn primary" onclick="saveExpenseDemo()">Ghi nhận tạm</button></div></div></div>
+<div class="toast" id="toast">Đã lưu bản mẫu</div>
+<div class="modal" id="detailModal"><div class="modal-card detail">
+<div class="detail-head"><div><small style="color:var(--muted);font-size:10px" id="detailCode">CÔNG VIỆC</small><h3 id="detailTitle">Chi tiết công việc</h3><div class="detail-sub" id="detailTags"></div></div><button class="btn soft" onclick="closeTaskDetail()">Đóng</button></div>
+<div class="detail-progress"><div class="line"><span>Tiến độ xử lý</span><b id="detailProgressText">0%</b></div><div class="bar"><i id="detailProgressBar" style="width:0%"></i></div></div>
+<div class="detail-grid">
+<div class="detail-panel"><h4>Ảnh Trước / Sau</h4><div class="photo-grid">
+<div class="photo-card"><div class="scene before"><span class="demo-label">ẢNH DEMO · TRƯỚC</span><div class="lamp"></div></div><div class="photo-cap"><b id="beforeCaption">Ảnh trước khi xử lý</b><span id="beforeTime">Đã ghi nhận</span></div></div>
+<div class="photo-card"><div class="scene" id="afterScene"><span class="demo-label" id="afterLabel">ẢNH DEMO · SAU</span><div class="lamp" id="afterLamp"></div><strong id="pendingText" style="display:none;font-size:12px">Chưa có ảnh Sau</strong></div><div class="photo-cap"><b id="afterCaption">Ảnh sau khi xử lý</b><span id="afterTime">Chờ cập nhật</span></div></div>
+</div><div class="history-note">Trong bản chạy thật, ảnh được lưu theo từng lần cập nhật. Boss có thể mở ảnh gốc, xem thời gian, người chụp và toàn bộ lịch sử thay đổi.</div></div>
+<div><div class="detail-panel"><h4>Thông tin xử lý</h4><div class="detail-kv"><div class="kv"><span>Phân khu</span><b id="dUnit"></b></div><div class="kv"><span>Phụ trách</span><b id="dOwner"></b></div><div class="kv"><span>Hạn</span><b id="dDeadline"></b></div><div class="kv"><span>Chi phí</span><b id="dCost"></b></div><div class="kv"><span>Trạng thái</span><b id="dStatus"></b></div><div class="kv"><span>Vướng mắc</span><b id="dBlocker"></b></div></div></div>
+<div class="detail-panel" style="margin-top:10px"><h4>Lịch sử tiến độ</h4><div class="timeline" id="detailTimeline"></div></div></div>
+</div><div class="detail-actions"><button class="btn soft">Xem chứng từ / chi phí</button><button class="btn soft">Xem toàn bộ lịch sử</button><button class="btn primary">Cập nhật tiến độ</button></div>
+</div></div>
+<script>
+const titles={dashboard:['QUẢN TRỊ HHG','Trung tâm điều hành'],projects:['DANH MỤC DỰ ÁN','Dự án'],tasks:['THỰC THI','Công việc'],decisions:['PHÊ DUYỆT & QUYẾT ĐỊNH','Việc chờ quyết định'],finance:['TÀI CHÍNH QUẢN TRỊ','Chốt ngày & tài chính'],staff:['NHÂN VIÊN','Việc của tôi'],issue:['NHÂN VIÊN','Báo vấn đề'],blueprint:['THIẾT KẾ HỆ THỐNG','Sơ đồ hệ thống']};
+const taskDetails={
+  lights:{code:'CV-0241 · BẢO TRÌ',title:'Thay 4 đèn khu hồ trẻ em',priority:'P2',unit:'Hồ bơi',owner:'Kỹ thuật',deadline:'13/09',cost:'1,8 triệu',status:'Đang xử lý',blocker:'Chờ 2 bóng đúng công suất',progress:65,before:'Ảnh trước: 4 vị trí đèn yếu/hỏng',beforeTime:'12/09 · 16:42 · NV vận hành',after:null,afterTime:'Chờ hoàn tất',timeline:[['12/09 · 16:42','Nhân viên báo vấn đề từ QR Hồ bơi, kèm ảnh hiện trạng.'],['12/09 · 17:05','Quản lý xác nhận tạo công việc và giao Kỹ thuật.'],['13/09 · 09:20','Đã kiểm tra 4 vị trí; thay được 2/4 bóng.'],['13/09 · 11:10','Đang chờ 2 bóng đúng công suất để hoàn tất.']]},
+  layout:{code:'CV-0231 · DỰ ÁN',title:'Chốt layout mở rộng khu nướng',priority:'P1',unit:'Lòng Nướng',owner:'Vận hành',deadline:'14/09',cost:'—',status:'Đang làm',blocker:'Chờ xác nhận luồng khách',progress:55,before:'Hiện trạng mặt bằng trước bố trí',beforeTime:'11/09 · 10:15',after:null,afterTime:'Chờ phương án chốt',timeline:[['11/09','Ghi nhận hiện trạng và đo kích thước.'],['12/09','Hoàn thành phương án layout A/B.'],['13/09','Đang rà soát luồng khách và khoảng cách bàn.']]},
+  kitchen:{code:'CV-0228 · BẾP TRUNG TÂM',title:'Duyệt danh sách thiết bị bếp',priority:'P1',unit:'Vận hành chung',owner:'Giám đốc vận hành',deadline:'13/09',cost:'68 triệu',status:'Bị chặn',blocker:'Cần quyết định',progress:40,before:'Danh sách và vị trí thiết bị hiện tại',beforeTime:'12/09 · 14:00',after:null,afterTime:'Chưa thể triển khai',timeline:[['12/09','Vận hành gửi danh sách thiết bị đề xuất.'],['13/09 · 08:30','Tài chính đối chiếu báo giá 68 triệu.'],['13/09 · 10:00','Chuyển vào Việc chờ quyết định.']]},
+  menu:{code:'CV-0245 · NỘI DUNG',title:'Chụp lại menu và giá mới',priority:'P2',unit:'Lòng Nướng',owner:'Nội dung',deadline:'15/09',cost:'—',status:'Đang làm',blocker:'Không',progress:45,before:'Menu hiện tại trước khi cập nhật',beforeTime:'13/09 · 09:10',after:null,afterTime:'Chờ buổi chụp',timeline:[['13/09 · 09:10','Đã chụp hiện trạng menu cũ.'],['13/09 · 11:30','Đã nhận bảng giá mới từ quản lý.']]},
+  clean:{code:'CV-0219 · VỆ SINH',title:'Xử lý vệ sinh kho phụ',priority:'P2',unit:'Spa',owner:'Vệ sinh',deadline:'13/09',cost:'0,4 triệu',status:'Hoàn tất',blocker:'Không',progress:100,before:'Kho phụ trước khi xử lý',beforeTime:'13/09 · 07:48',after:'Kho phụ sau khi xử lý',afterTime:'13/09 · 09:06',timeline:[['13/09 · 07:48','Báo vấn đề #IS-0192 kèm ảnh.'],['13/09 · 08:00','Giao đội Vệ sinh xử lý.'],['13/09 · 09:06','Hoàn tất, tải ảnh Sau và đóng công việc.']]},
+  socket:{code:'CV-0247 · KỸ THUẬT',title:'Kiểm tra ổ điện quầy phụ',priority:'P2',unit:'Lòng Nướng',owner:'Kỹ thuật',deadline:'13/09',cost:'Chưa phát sinh',status:'Chưa bắt đầu',blocker:'Không',progress:10,before:'Ảnh vị trí ổ điện cần kiểm tra',beforeTime:'13/09 · 08:15',after:null,afterTime:'Chưa xử lý',timeline:[['13/09 · 08:15','Quản lý giao việc, kèm ảnh vị trí.']]},
+  signage:{code:'CV-0239 · CẢI TIẾN',title:'Chụp ảnh Sau khu biển bảng',priority:'P2',unit:'Pickleball',owner:'Nhân viên phân khu',deadline:'14/09',cost:'3,2 triệu',status:'Chờ ảnh Sau',blocker:'Không',progress:90,before:'Biển bảng cũ trước khi thay',beforeTime:'10/09 · 15:20',after:null,afterTime:'Chờ nhân viên tải ảnh xác nhận',timeline:[['10/09','Ghi nhận biển bảng cũ.'],['11/09','Duyệt phương án thay mới.'],['13/09','Thi công đã xong; còn thiếu ảnh Sau để nghiệm thu.']]}
+};
+function openTaskDetail(key){const d=taskDetails[key]||taskDetails.lights;document.getElementById('detailCode').textContent=d.code;document.getElementById('detailTitle').textContent=d.title;document.getElementById('detailTags').innerHTML=`<span class="tag ${d.priority==='P1'?'amber':'gray'}">${d.priority}</span><span class="tag blue">${d.unit}</span>`;document.getElementById('detailProgressText').textContent=d.progress+'%';document.getElementById('detailProgressBar').style.width=d.progress+'%';document.getElementById('dUnit').textContent=d.unit;document.getElementById('dOwner').textContent=d.owner;document.getElementById('dDeadline').textContent=d.deadline;document.getElementById('dCost').textContent=d.cost;document.getElementById('dStatus').textContent=d.status;document.getElementById('dBlocker').textContent=d.blocker;document.getElementById('beforeCaption').textContent=d.before;document.getElementById('beforeTime').textContent=d.beforeTime;const scene=document.getElementById('afterScene'),lamp=document.getElementById('afterLamp'),pending=document.getElementById('pendingText'),label=document.getElementById('afterLabel');if(d.after){scene.className='scene after';lamp.style.display='block';pending.style.display='none';label.textContent='ẢNH DEMO · SAU';document.getElementById('afterCaption').textContent=d.after;document.getElementById('afterTime').textContent=d.afterTime}else{scene.className='scene pending';lamp.style.display='none';pending.style.display='block';label.textContent='CHỜ ẢNH SAU';document.getElementById('afterCaption').textContent='Chưa có ảnh sau';document.getElementById('afterTime').textContent=d.afterTime}document.getElementById('detailTimeline').innerHTML=d.timeline.map((x,i)=>`<div class="time-row"><i class="time-dot ${i===d.timeline.length-1&&d.progress<100?'wait':''}"></i><div><b>${x[0]}</b><span>${x[1]}</span></div></div>`).join('');document.getElementById('detailModal').classList.add('show')}
+function closeTaskDetail(){document.getElementById('detailModal').classList.remove('show')}
+
+function setView(id){const r=document.getElementById('vr-'+id);if(r)r.checked=true;document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.nav [data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));document.getElementById('eyebrow').textContent=titles[id][0];document.getElementById('pageTitle').textContent=titles[id][1];history.replaceState(null,'','?view='+id);closeMobileMenu();window.scrollTo(0,0)}
+function toggleMobileMenu(){const t=document.getElementById('mobileMenuToggle');if(t)t.checked=!t.checked}
+function closeMobileMenu(){const t=document.getElementById('mobileMenuToggle');if(t)t.checked=false;document.body.style.overflow=''}
+document.querySelectorAll('.nav [data-view]').forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.view;if(titles[id]){document.getElementById('eyebrow').textContent=titles[id][0];document.getElementById('pageTitle').textContent=titles[id][1];history.replaceState(null,'','?view='+id);setTimeout(closeMobileMenu,80);window.scrollTo(0,0)}}));
+document.querySelectorAll('.ui-view-radio').forEach(r=>r.addEventListener('change',()=>{if(r.checked){const id=r.id.replace('vr-','');document.querySelectorAll('.nav [data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));if(titles[id]){document.getElementById('eyebrow').textContent=titles[id][0];document.getElementById('pageTitle').textContent=titles[id][1]}}}));
+function openTaskModal(){document.getElementById('taskModal').classList.add('show')} function closeTaskModal(){document.getElementById('taskModal').classList.remove('show')}
+function toggleGate(){const p=document.getElementById('prioritySelect').value;document.getElementById('replaceGate').style.display=p.startsWith('P1')?'block':'none'}
+document.getElementById('taskModal').addEventListener('click',e=>{if(e.target.id==='taskModal')closeTaskModal()});
+document.getElementById('detailModal').addEventListener('click',e=>{if(e.target.id==='detailModal')closeTaskDetail()});
+function openDailyClose(unit){if(unit)document.getElementById('closeUnit').value=unit;document.getElementById('dailyCloseModal').classList.add('show')}
+function closeDailyClose(){document.getElementById('dailyCloseModal').classList.remove('show')}
+function openExpenseModal(){document.getElementById('expenseModal').classList.add('show')}
+function closeExpenseModal(){document.getElementById('expenseModal').classList.remove('show')}
+function moneyDemo(v){const n=Number(v||0);return n?((n/1000000).toLocaleString('vi-VN',{maximumFractionDigits:1})+' triệu'):'—'}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+function saveDailyCloseDemo(){const unit=document.getElementById('closeUnit').value,rev=document.getElementById('closeRevenue').value,cash=document.getElementById('closeCash').value,src=document.getElementById('closeSource').value;if(unit==='Pickleball'&&rev){document.getElementById('pickleRev').textContent=moneyDemo(rev);document.getElementById('pickleCash').textContent=moneyDemo(cash);document.getElementById('pickleSource').textContent=src;document.getElementById('pickleTime').textContent='vừa cập nhật';document.getElementById('pickleStatus').innerHTML='<span class="tag amber">Tạm ghi nhận</span>'}closeDailyClose();showToast('Đã ghi nhận số vận hành · chờ Finance đối chiếu')}
+function saveExpenseDemo(){closeExpenseModal();showToast('Đã ghi chi phí tạm · chờ đối chiếu')}
+document.getElementById('dailyCloseModal').addEventListener('click',e=>{if(e.target.id==='dailyCloseModal')closeDailyClose()});
+document.getElementById('expenseModal').addEventListener('click',e=>{if(e.target.id==='expenseModal')closeExpenseModal()});
+const params=new URLSearchParams(location.search); const q=params.get('view'); if(q&&document.getElementById(q))setView(q); const taskQ=params.get('task'); if(taskQ&&taskDetails[taskQ])openTaskDetail(taskQ);
+</script>
+</body>
+</html>
