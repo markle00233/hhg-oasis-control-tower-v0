@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Phân khu doanh thu
+model Unit {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects    Project[]
+  tasks       Task[]
+  dailyCloses DailyClose[]
+  expenses    Expense[]
+  issues      Issue[]
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  category  String?
+  owner     String?
+  budget    Float?
+  deadline  String?
+  readiness Int      @default(0)
+  status    String   @default("ON_TRACK") // ON_TRACK | AT_RISK | BLOCKED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unitId String?
+  unit   Unit?   @relation(fields: [unitId], references: [id])
+  tasks  Task[]
+}
+
+model Task {
+  id        String   @id @default(cuid())
+  title     String
+  priority  String   @default("P2") // P0 | P1 | P2
+  owner     String?
+  deadline  String?
+  status    String   @default("TODO") // TODO | DOING | BLOCKED | DONE | WAITING
+  cost      Float?
+  blocker   String?
+  progress  Int      @default(0)
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unitId    String?
+  unit      Unit?    @relation(fields: [unitId], references: [id])
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+}
+
+/// Chốt ngày theo phân khu
+model DailyClose {
+  id            String   @id @default(cuid())
+  date          String // YYYY-MM-DD
+  revenue       Float    @default(0)
+  cashCollected Float    @default(0)
+  guestCount    Int?
+  source        String   @default("MANUAL") // MANUAL | EXCEL | POS | FINANCE | AUTO
+  note          String?
+  status        String   @default("PROVISIONAL") // PROVISIONAL | RECONCILED | LOCKED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  unitId String
+  unit   Unit   @relation(fields: [unitId], references: [id])
+
+  @@unique([unitId, date])
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  category  String // OPEX | MAINTENANCE | RENOVATION | CAPEX | SHARED
+  amount    Float
+  content   String?
+  source    String?
+  taskRef   String?
+  status    String   @default("PROVISIONAL") // PROVISIONAL | RECONCILED | LOCKED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unitId String?
+  unit   Unit?   @relation(fields: [unitId], references: [id])
+}
+
+/// Báo vấn đề từ QR / staff app
+model Issue {
+  id        String   @id @default(cuid())
+  category  String // BROKEN | MISSING | CLEANING | SAFETY
+  note      String?
+  areaLabel String? // ví dụ: QR: Khu Hồ bơi
+  status    String   @default("OPEN") // OPEN | ASSIGNED | CLOSED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unitId String?
+  unit   Unit?   @relation(fields: [unitId], references: [id])
+}
