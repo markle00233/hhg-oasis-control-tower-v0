@@ -57,6 +57,30 @@ model Task {
   unit      Unit?    @relation(fields: [unitId], references: [id])
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id])
+  events    TaskEvent[]
+}
+
+model TaskEvent {
+  id        String   @id @default(cuid())
+  label     String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model Decision {
+  id          String   @id @default(cuid())
+  title       String
+  amountLabel String?
+  proposer    String?
+  approver    String?
+  deadline    String?
+  impact      String?
+  status      String   @default("PENDING") // PENDING | APPROVED | NEEDS_INFO | REJECTED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 /// Chốt ngày theo phân khu

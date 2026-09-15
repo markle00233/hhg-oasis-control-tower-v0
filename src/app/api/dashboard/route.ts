@@ -4,24 +4,33 @@ import { prisma } from "@/lib/prisma";
 export async function GET() {
   const date = "2026-09-13";
 
-  const [units, closes, expenses, tasks, issues, projects] = await Promise.all([
-    prisma.unit.findMany({ orderBy: { sortOrder: "asc" } }),
-    prisma.dailyClose.findMany({
-      where: { date },
-      include: { unit: true },
-    }),
-    prisma.expense.findMany({
-      include: { unit: true },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-    }),
-    prisma.task.findMany({
-      include: { unit: true, project: true },
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.issue.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
-    prisma.project.findMany({ orderBy: { updatedAt: "desc" } }),
-  ]);
+  const [units, closes, expenses, tasks, issues, projects, decisions] =
+    await Promise.all([
+      prisma.unit.findMany({ orderBy: { sortOrder: "asc" } }),
+      prisma.dailyClose.findMany({
+        where: { date },
+        include: { unit: true },
+      }),
+      prisma.expense.findMany({
+        include: { unit: true },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      }),
+      prisma.task.findMany({
+        include: {
+          unit: true,
+          project: true,
+          events: { orderBy: { createdAt: "desc" }, take: 8 },
+        },
+        orderBy: { updatedAt: "desc" },
+      }),
+      prisma.issue.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
+      prisma.project.findMany({
+        include: { unit: true, tasks: true },
+        orderBy: { updatedAt: "desc" },
+      }),
+      prisma.decision.findMany({ orderBy: { updatedAt: "desc" } }),
+    ]);
 
   const revenue = closes.reduce((s, c) => s + c.revenue, 0);
   const cash = closes.reduce((s, c) => s + c.cashCollected, 0);
@@ -48,5 +57,6 @@ export async function GET() {
     tasks,
     issues,
     projects,
+    decisions,
   });
 }

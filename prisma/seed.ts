@@ -3,10 +3,12 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
+  await prisma.taskEvent.deleteMany();
   await prisma.issue.deleteMany();
   await prisma.expense.deleteMany();
   await prisma.dailyClose.deleteMany();
   await prisma.task.deleteMany();
+  await prisma.decision.deleteMany();
   await prisma.project.deleteMany();
   await prisma.unit.deleteMany();
 
@@ -115,6 +117,19 @@ async function main() {
     },
   });
 
+  await prisma.project.create({
+    data: {
+      name: "Tái vận hành khu Gym",
+      category: "Doanh thu / Tái vận hành",
+      owner: "Kinh doanh",
+      budget: 95_000_000,
+      deadline: "05/10",
+      readiness: 77,
+      status: "ON_TRACK",
+      unitId: byName["Gym"].id,
+    },
+  });
+
   await prisma.task.createMany({
     data: [
       {
@@ -147,6 +162,90 @@ async function main() {
         cost: 1_800_000,
         progress: 65,
         unitId: byName["Hồ bơi"].id,
+      },
+      {
+        title: "Chụp lại menu và giá mới",
+        priority: "P2",
+        owner: "Nội dung",
+        deadline: "15/09",
+        status: "DOING",
+        progress: 45,
+        unitId: byName["Lòng Nướng"].id,
+      },
+      {
+        title: "Xử lý vệ sinh kho phụ",
+        priority: "P2",
+        owner: "Vệ sinh",
+        deadline: "13/09",
+        status: "DONE",
+        cost: 400_000,
+        progress: 100,
+        unitId: byName["Spa"].id,
+      },
+      {
+        title: "Kiểm tra ổ điện quầy phụ",
+        priority: "P2",
+        owner: "Kỹ thuật",
+        deadline: "13/09",
+        status: "TODO",
+        progress: 10,
+        unitId: byName["Lòng Nướng"].id,
+      },
+      {
+        title: "Chụp ảnh Sau khu biển bảng",
+        priority: "P2",
+        owner: "Nhân viên phân khu",
+        deadline: "14/09",
+        status: "WAITING",
+        cost: 3_200_000,
+        progress: 90,
+        unitId: byName["Pickleball"].id,
+      },
+    ],
+  });
+
+  const allTasks = await prisma.task.findMany();
+  for (const t of allTasks) {
+    await prisma.taskEvent.create({
+      data: {
+        taskId: t.id,
+        label: "Seed demo",
+        detail: `Trạng thái ban đầu: ${t.status} · ${t.progress}%`,
+      },
+    });
+  }
+
+  await prisma.decision.createMany({
+    data: [
+      {
+        title: "Duyệt thiết bị Bếp trung tâm",
+        amountLabel: "68,0 triệu",
+        proposer: "Vận hành chung",
+        approver: "Giám đốc vận hành",
+        deadline: "13/09",
+        impact:
+          "Nhà cung cấp chưa thể khóa lịch lắp đặt; mức sẵn sàng dự kiến trễ 3–4 ngày.",
+        status: "PENDING",
+      },
+      {
+        title: "Chọn phương án cải tạo Pickleball",
+        amountLabel: "42–79 triệu",
+        proposer: "Quản lý phân khu",
+        approver: "Giám đốc vận hành",
+        deadline: "15/09",
+        impact:
+          "Phương án A: sửa tối thiểu · Phương án B: làm lại đồng bộ nhưng cần thêm thời gian.",
+        status: "PENDING",
+      },
+      {
+        title: "Xác nhận quy tắc phân chia Spa",
+        amountLabel: "Quy tắc hợp đồng",
+        proposer: "Tài chính",
+        approver: "Lãnh đạo cấp cao",
+        deadline: "16/09",
+        impact:
+          "Phần đóng góp thuộc HHG chỉ tính sau khi quy tắc được xác nhận.",
+        status: "PENDING",
       },
     ],
   });

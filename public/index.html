@@ -19,6 +19,36 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .brand{display:flex;align-items:center;gap:11px;padding:4px 8px 12px}.mark{width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#56a786,#d6c89d);display:grid;place-items:center;color:#10231c;font-weight:900}.brand b{display:block;font-size:15px;letter-spacing:.02em}.brand small{color:#aeb9b3;font-size:11px}
 .nav{display:flex;flex-direction:column;gap:6px}.nav button,.nav .nav-link{border:0;background:transparent;color:#cbd3cf;text-align:left;padding:11px 12px;border-radius:11px;display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer}.nav button:hover,.nav button.active,.nav .nav-link:hover{background:#26332e;color:#fff}.nav .ico{width:22px;height:22px;border-radius:7px;background:#32413b;display:grid;place-items:center;font-size:11px}
 .side-bottom{margin-top:auto;padding:12px;background:#202d28;border:1px solid #2e3a35;border-radius:15px}.side-bottom .demo{font-size:11px;color:#9fb1a8;text-transform:uppercase;letter-spacing:.11em}.side-bottom strong{display:block;margin:4px 0 3px;font-size:13px}.side-bottom p{margin:0;color:#9fb1a8;font-size:11px;line-height:1.45}
+.bottomnav button{border:0;background:transparent;text-align:center;color:var(--muted);font-size:9px;padding:8px;cursor:pointer;border-radius:10px}.bottomnav button.on{color:var(--green);font-weight:800;background:#e8f2ed}
+.camera{cursor:pointer;position:relative}.camera input[type=file]{display:none}.issue-cat.selected{outline:2px solid var(--green)}
+.toast{left:16px;right:16px;bottom:16px;max-width:420px;margin:0 auto}
+@media(max-width:760px){
+  .toast{bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+  .section-head{flex-direction:column;align-items:stretch;gap:10px}
+  .section-head .btn,.section-head .linkbtn{align-self:flex-start}
+  .task-toolbar{flex-direction:column;align-items:stretch}
+  .notice{flex-direction:column;align-items:flex-start;gap:6px}
+  .decision-top{flex-direction:column}
+  .modal{padding:10px;align-items:end}
+  .modal-card,.modal-card.finance,.modal-card.detail{width:100%;max-height:min(92vh,920px);border-radius:18px 18px 12px 12px;padding:16px}
+  .modal-actions,.detail-actions{position:sticky;bottom:0;background:#fff;padding-top:10px}
+  .detail-actions .btn,.modal-actions .btn{flex:1;min-height:44px}
+  .staff-actions button{min-height:44px}
+  .btn,.linkbtn,.filter,.report-big,.issue-cat{min-height:44px}
+  .role-select{max-width:min(48vw,160px);font-size:11px}
+  .priority{grid-template-columns:28px 1fr;gap:8px}
+  .priority .tag{grid-column:2}
+  .mobile-shell{border-radius:0;border:0;padding:0;box-shadow:none;background:transparent}
+  .mobile-screen{border-radius:0;padding:0;min-height:0;background:transparent}
+  .staff-wrap{max-width:none}
+  .grid4{grid-template-columns:1fr}
+  .metric .value{font-size:20px}
+  .main{padding:14px 12px calc(28px + env(safe-area-inset-bottom,0px))}
+  .topbar{margin-bottom:14px;gap:10px}
+  .crumb h1{font-size:19px;line-height:1.25}
+  .task-table th:nth-child(n+4),.task-table td:nth-child(n+4){display:none}
+  .finance-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+}
 .main{padding:26px 30px 50px;min-width:0}.topbar{display:flex;justify-content:space-between;gap:18px;align-items:center;margin-bottom:23px}.crumb small{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}.crumb h1{margin:0;font-size:25px;letter-spacing:-.03em}.top-actions{display:flex;gap:10px;align-items:center}.pill,.role-select{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:9px 12px;font-size:12px;color:var(--ink)}.role-select{outline:none}.avatar{width:38px;height:38px;border-radius:12px;background:#dce6e1;display:grid;place-items:center;font-weight:800;font-size:12px;color:#204439}
 .notice{display:flex;justify-content:space-between;align-items:center;background:#f1eee2;border:1px solid #e8dfc7;border-radius:14px;padding:11px 14px;margin-bottom:18px;font-size:12px}.notice b{font-weight:800}.notice span{color:#7c735f}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:17px;box-shadow:0 2px 0 rgba(0,0,0,.01)}.metric .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.metric .value{font-size:27px;font-weight:800;margin:8px 0 5px;letter-spacing:-.04em}.metric .delta{font-size:11px;color:var(--muted)}.up{color:var(--green)!important}.down{color:var(--red)!important}
@@ -109,7 +139,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <label class="nav-link" for="vr-issue" data-view="issue"><span class="ico">＋</span> Báo vấn đề</label>
 <label class="nav-link" for="vr-blueprint" data-view="blueprint"><span class="ico">◇</span> Sơ đồ hệ thống</label>
 </nav>
-<div class="side-bottom"><div class="demo">Bản mẫu + Prisma</div><strong>Dữ liệu form được lưu vào database</strong><p>Chốt ngày / chi phí / việc / báo vấn đề → API → Prisma (SQLite local).</p></div>
+<div class="side-bottom"><div class="demo">Prisma Postgres</div><strong>Form lưu chung trên cloud</strong><p>Chốt ngày · chi phí · việc · dự án · quyết định · báo vấn đề.</p></div>
 </aside>
 <label class="mobile-overlay" id="mobileOverlay" for="mobileMenuToggle" aria-label="Đóng menu"></label>
 <main class="main">
@@ -141,9 +171,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 </div>
 <div class="card">
 <div class="section-head"><div><h2>Việc chờ quyết định</h2><p>Việc lãnh đạo cần quyết định</p></div><button class="linkbtn" onclick="setView('decisions')">Xem tất cả</button></div>
-<div class="decision"><div class="decision-top"><h3>Duyệt thiết bị Bếp trung tâm</h3><span class="amount">68,0 triệu</span></div><p>Hạn hôm nay · Nếu chậm, lịch lắp đặt trễ 3–4 ngày.</p></div>
-<div class="decision"><div class="decision-top"><h3>Chọn phương án cải tạo Pickleball</h3><span class="amount">42–79 triệu</span></div><p>Cần chốt phương án A/B trước 15/09 để giữ lịch nhà thầu.</p></div>
-<div class="decision"><div class="decision-top"><h3>Quy tắc phân chia doanh thu Spa</h3><span class="amount">Chính sách</span></div><p>Cần xác nhận cách tính để phần đóng góp thuộc HHG trên bảng điều hành không sai.</p></div>
+<div id="dashDecisions"></div>
 </div>
 </div>
 <div class="section twocol">
@@ -171,31 +199,23 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 </div>
 </section>
 <section class="view" id="projects">
-<div class="section-head"><div><h2>Theo dõi dự án</h2><p>Mỗi dự án = nhóm việc + ngân sách + vướng mắc + quyết định</p></div><button class="btn primary">+ Dự án mới</button></div>
-<div class="project-grid">
-<div class="card project"><div class="row"><div><h3>Mở rộng Lòng Nướng</h3><p>Doanh thu / Mở rộng · Phụ trách: Vận hành</p></div><span class="tag amber">CÓ RỦI RO</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>68%</b></div><div class="bar"><i style="width:68%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>350 triệu</b></div><div class="meta-box"><span>Hạn</span><b>30/09</b></div><div class="meta-box"><span>Công việc</span><b>8 / 12</b></div></div><div class="foot"><span class="tag amber">1 vướng mắc</span><button class="btn soft" onclick="setView('tasks')">Xem việc →</button></div></div>
-<div class="card project"><div class="row"><div><h3>Bếp trung tâm</h3><p>Vận hành / Hạ tầng · Phụ trách: Vận hành chung</p></div><span class="tag red">ĐANG BỊ CHẶN</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>54%</b></div><div class="bar warn"><i style="width:54%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>480 triệu</b></div><div class="meta-box"><span>Hạn</span><b>24/09</b></div><div class="meta-box"><span>Công việc</span><b>6 / 14</b></div></div><div class="foot"><span class="tag red">Cần quyết định</span><button class="btn soft" onclick="setView('decisions')">Quyết định →</button></div></div>
-<div class="card project"><div class="row"><div><h3>Tái vận hành Pickleball</h3><p>Cải tiến / Tái vận hành · Phụ trách: Quản lý phân khu</p></div><span class="tag amber">CÓ RỦI RO</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>61%</b></div><div class="bar warn"><i style="width:61%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>120 triệu</b></div><div class="meta-box"><span>Hạn</span><b>02/10</b></div><div class="meta-box"><span>Công việc</span><b>9 / 17</b></div></div><div class="foot"><span class="tag amber">2 vướng mắc</span><button class="btn soft" onclick="setView('tasks')">Xem việc →</button></div></div>
-<div class="card project"><div class="row"><div><h3>Tái vận hành khu Gym</h3><p>Doanh thu / Tái vận hành · Phụ trách: Kinh doanh</p></div><span class="tag green">ĐÚNG TIẾN ĐỘ</span></div><div class="progressline"><span>Mức sẵn sàng</span><b>77%</b></div><div class="bar"><i style="width:77%"></i></div><div class="meta"><div class="meta-box"><span>Ngân sách</span><b>95 triệu</b></div><div class="meta-box"><span>Hạn</span><b>05/10</b></div><div class="meta-box"><span>Công việc</span><b>10 / 13</b></div></div><div class="foot"><span class="tag green">Không vướng</span><button class="btn soft" onclick="setView('tasks')">Xem việc →</button></div></div>
-</div>
+<div class="section-head"><div><h2>Theo dõi dự án</h2><p>Mỗi dự án = nhóm việc + ngân sách + vướng mắc + quyết định</p></div><button class="btn primary" type="button" onclick="openProjectModal()">+ Dự án mới</button></div>
+<div class="project-grid" id="projectGrid"></div>
 </section>
 <section class="view" id="tasks">
-<div class="task-toolbar"><div class="filters"><button class="filter active">Tất cả</button><button class="filter">P0/P1</button><button class="filter">Quá hạn</button><button class="filter">Bị chặn</button><button class="filter">Trước/Sau</button></div><button class="btn primary" onclick="openTaskModal()">+ Tạo việc</button></div>
-<table class="task-table"><thead><tr><th>Việc</th><th>Phân khu</th><th>Ưu tiên</th><th>Phụ trách</th><th>Hạn</th><th>Trạng thái</th><th>Chi phí</th></tr></thead><tbody>
-<tr onclick="openTaskDetail('layout')"><td class="task-title"><b>Chốt layout mở rộng khu nướng</b><small>Dự án: Mở rộng Lòng Nướng</small></td><td>Lòng Nướng</td><td><span class="tag amber">P1</span></td><td>Vận hành</td><td>14/09</td><td><span class="tag blue">Đang làm</span></td><td>—</td></tr>
-<tr onclick="openTaskDetail('kitchen')"><td class="task-title"><b>Duyệt danh sách thiết bị bếp</b><small>Dự án: Bếp trung tâm</small></td><td>Vận hành chung</td><td><span class="tag red">P1</span></td><td>Giám đốc vận hành</td><td>13/09</td><td><span class="tag red">Bị chặn</span></td><td>68 triệu</td></tr>
-<tr onclick="openTaskDetail('lights')"><td class="task-title"><b>Thay 4 đèn khu hồ trẻ em</b><small>Bảo trì · có ảnh Trước</small></td><td>Hồ bơi</td><td><span class="tag gray">P2</span></td><td>Kỹ thuật</td><td>13/09</td><td><span class="tag amber">Đang chờ</span></td><td>1,8 triệu</td></tr>
-<tr onclick="openTaskDetail('menu')"><td class="task-title"><b>Chụp lại menu và giá mới</b><small>Kinh doanh / Nội dung</small></td><td>Lòng Nướng</td><td><span class="tag gray">P2</span></td><td>Nội dung</td><td>15/09</td><td><span class="tag blue">Đang làm</span></td><td>—</td></tr>
-<tr onclick="openTaskDetail('clean')"><td class="task-title"><b>Xử lý vệ sinh kho phụ</b><small>Vấn đề #IS-0192</small></td><td>Spa</td><td><span class="tag gray">P2</span></td><td>Vệ sinh</td><td>13/09</td><td><span class="tag green">Hoàn tất</span></td><td>0,4 triệu</td></tr>
-</tbody></table>
+<div class="task-toolbar"><div class="filters">
+<button type="button" class="filter active" onclick="setTaskFilter('all',this)">Tất cả</button>
+<button type="button" class="filter" onclick="setTaskFilter('p01',this)">P0/P1</button>
+<button type="button" class="filter" onclick="setTaskFilter('overdue',this)">Quá hạn</button>
+<button type="button" class="filter" onclick="setTaskFilter('blocked',this)">Bị chặn</button>
+<button type="button" class="filter" onclick="setTaskFilter('ba',this)">Trước/Sau</button>
+</div><button class="btn primary" type="button" onclick="openTaskModal()">+ Tạo việc</button></div>
+<table class="task-table"><thead><tr><th>Việc</th><th>Phân khu</th><th>Ưu tiên</th><th>Phụ trách</th><th>Hạn</th><th>Trạng thái</th><th>Chi phí</th></tr></thead>
+<tbody id="taskTableBody"></tbody></table>
 </section>
 <section class="view" id="decisions">
-<div class="section-head"><div><h2>Việc chờ quyết định</h2><p>Giảm “chờ lãnh đạo” thành danh sách quyết định có hạn và tác động rõ ràng</p></div><button class="btn primary">+ Yêu cầu duyệt</button></div>
-<div class="card">
-<div class="decision"><div class="decision-top"><div><h3>Duyệt thiết bị Bếp trung tâm</h3><p>Người đề xuất: Vận hành chung · Người duyệt: Giám đốc vận hành · Hạn: 13/09</p></div><div><span class="amount">68,0 triệu</span> <span class="tag red">KHẨN</span></div></div><div class="priority-gate"><b>Tác động nếu chưa quyết</b><p>Nhà cung cấp chưa thể khóa lịch lắp đặt; mức sẵn sàng dự kiến trễ 3–4 ngày.</p></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn dark">Duyệt</button><button class="btn soft">Yêu cầu bổ sung</button><button class="btn danger">Từ chối</button></div></div>
-<div class="decision"><div class="decision-top"><div><h3>Chọn phương án cải tạo Pickleball</h3><p>Người đề xuất: Quản lý phân khu · Người duyệt: Giám đốc vận hành · Hạn: 15/09</p></div><div><span class="amount">42–79 triệu</span> <span class="tag amber">2 PHƯƠNG ÁN</span></div></div><p>Phương án A: sửa tối thiểu để tái vận hành nhanh · Phương án B: làm lại đồng bộ nhưng cần thêm thời gian.</p></div>
-<div class="decision"><div class="decision-top"><div><h3>Xác nhận quy tắc phân chia Spa</h3><p>Người đề xuất: Tài chính · Người duyệt: Lãnh đạo cấp cao / Giám đốc vận hành · Hạn: 16/09</p></div><div><span class="amount">Quy tắc hợp đồng</span></div></div><p>Bảng điều hành giữ nguyên Kết quả vận hành; phần đóng góp thuộc HHG chỉ tính sau khi quy tắc được xác nhận.</p></div>
-</div>
+<div class="section-head"><div><h2>Việc chờ quyết định</h2><p>Giảm “chờ lãnh đạo” thành danh sách quyết định có hạn và tác động rõ ràng</p></div><button class="btn primary" type="button" onclick="openDecisionModal()">+ Yêu cầu duyệt</button></div>
+<div class="card" id="decisionsList"></div>
 </section>
 <section class="view" id="finance">
 <div class="finance-alert"><div><b>Hôm nay còn 1 phân khu chưa nộp chốt ngày</b><span>Pickleball chưa có doanh thu / tiền thực thu. Số tổng trên Trung tâm điều hành vì vậy đang là số đã ghi nhận, chưa phải số chốt cuối cùng.</span></div><button class="btn primary" onclick="openDailyClose('Pickleball')">Nhập chốt ngày</button></div>
@@ -222,22 +242,21 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <div class="priority-gate"><b>Không nhập lại nếu đã có nguồn tốt</b><p>Khu có POS/file ổn định ưu tiên import. Nhập tay dành cho phần chưa có nguồn tự động hoặc cần số sớm để điều hành.</p></div></div>
 </div>
 <div class="section card"><div class="section-head"><div><h2>Chi phí phát sinh hôm nay</h2><p>Chi phí vận hành có thể ghi nhanh trước; Finance đối chiếu/chốt sau</p></div><button class="btn primary" onclick="openExpenseModal()">+ Ghi chi phí</button></div>
-<table class="finance-table"><thead><tr><th>Thời gian</th><th>Phân khu</th><th>Nhóm chi phí</th><th>Nội dung</th><th>Số tiền</th><th>Nguồn / chứng từ</th><th>Trạng thái</th></tr></thead><tbody>
-<tr><td>18:20</td><td>Lòng Nướng</td><td>OPEX</td><td>Mua bổ sung vật tư phục vụ</td><td><b>2,5 triệu</b></td><td><span class="source">Ảnh hóa đơn</span></td><td><span class="tag amber">Tạm ghi nhận</span></td></tr>
-<tr><td>15:05</td><td>Hồ bơi</td><td>Bảo trì</td><td>Đèn và vật tư điện</td><td><b>1,8 triệu</b></td><td><span class="source">Gắn CV-0241</span></td><td><span class="tag green">Đã đối chiếu</span></td></tr>
-<tr><td>11:30</td><td>Dùng chung</td><td>OPEX</td><td>Vật tư vệ sinh</td><td><b>1,6 triệu</b></td><td><span class="source">Chứng từ</span></td><td><span class="tag green">Đã chốt</span></td></tr>
-<tr><td>09:10</td><td>Pickleball</td><td>Cải tạo</td><td>Biển bảng khu sân</td><td><b>2,5 triệu</b></td><td><span class="source">Gắn CV-0239</span></td><td><span class="tag green">Đã đối chiếu</span></td></tr>
-</tbody></table></div>
+<table class="finance-table"><thead><tr><th>Thời gian</th><th>Phân khu</th><th>Nhóm chi phí</th><th>Nội dung</th><th>Số tiền</th><th>Nguồn / chứng từ</th><th>Trạng thái</th></tr></thead>
+<tbody id="expenseTableBody"></tbody></table></div>
 </section>
 <section class="view" id="staff">
 <div class="staff-wrap"><div class="mobile-shell"><div class="mobile-screen">
 <div class="mobile-head"><div><small>HHG Oasis · Nhân viên</small><h2>Việc của tôi</h2></div><div class="avatar">KT</div></div>
-<div class="hello"><small>Hôm nay · 13/09</small><h3>Còn 3 việc cần xử lý</h3></div>
-<div class="staff-task" onclick="openTaskDetail('lights')"><div class="top"><div><h3>Thay 4 đèn khu hồ trẻ em</h3><p>Hạn hôm nay · Khu Hồ bơi</p></div><span class="tag amber">Làm trước</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
-<div class="staff-task" onclick="openTaskDetail('socket')"><div class="top"><div><h3>Kiểm tra ổ điện quầy phụ</h3><p>Hạn hôm nay · Lòng Nướng</p></div><span class="tag gray">Tiếp theo</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
-<div class="staff-task" onclick="openTaskDetail('signage')"><div class="top"><div><h3>Chụp ảnh Sau khu biển bảng</h3><p>Hạn 14/09 · Pickleball</p></div><span class="tag gray">Tiếp theo</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
-<button class="report-big" onclick="setView('issue')">＋ BÁO VẤN ĐỀ MỚI</button>
-<div class="bottomnav"><div class="on">✓<br/>Việc của tôi</div><div>＋<br/>Báo vấn đề</div><div>◌<br/>Lịch sử</div></div>
+<div class="hello" id="staffHello"><small>Hôm nay</small><h3>Đang tải…</h3></div>
+<div id="staffTaskList"></div>
+<div id="staffHistory" style="display:none"></div>
+<button class="report-big" type="button" onclick="setView('issue')">＋ BÁO VẤN ĐỀ MỚI</button>
+<div class="bottomnav">
+<button type="button" class="on" data-tab="tasks" onclick="setStaffTab('tasks')">✓<br/>Việc của tôi</button>
+<button type="button" data-tab="issue" onclick="setStaffTab('issue')">＋<br/>Báo vấn đề</button>
+<button type="button" data-tab="history" onclick="setStaffTab('history')">◌<br/>Lịch sử</button>
+</div>
 </div></div></div>
 </section>
 <section class="view" id="issue">
@@ -245,7 +264,9 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <div class="mobile-head"><div><small>QR: Khu Hồ bơi</small><h2>Báo vấn đề</h2></div><span class="tag green">KHU VỰC tự gắn</span></div>
 <p style="font-size:12px;color:var(--muted);margin-top:-8px">Chọn loại vấn đề. Không cần nhập mã, tên khu hay thời gian.</p>
 <div class="issue-categories"><button type="button" class="issue-cat" data-cat="BROKEN" onclick="selectIssueCat(this)"><b>🔧 Hỏng / cần sửa</b><small>đèn, điện, thiết bị…</small></button><button type="button" class="issue-cat" data-cat="MISSING" onclick="selectIssueCat(this)"><b>📦 Thiếu đồ</b><small>vật tư, dụng cụ…</small></button><button type="button" class="issue-cat" data-cat="CLEANING" onclick="selectIssueCat(this)"><b>🧹 Vệ sinh</b><small>cần xử lý khu vực</small></button><button type="button" class="issue-cat" data-cat="SAFETY" onclick="selectIssueCat(this)"><b>⚠️ An toàn</b><small>rủi ro cần báo ngay</small></button></div>
-<div class="camera"><div><span>▣</span><strong>Chụp ảnh</strong><small>1 ảnh là đủ trong đa số trường hợp</small></div></div>
+<div class="camera" id="issueCameraBtn"><div><span>▣</span><strong>Chụp / chọn ảnh</strong><small id="issuePhotoPreview">Chưa có ảnh · chạm để mở camera/thư viện</small></div>
+<input id="issuePhotoInput" type="file" accept="image/*" capture="environment"/>
+</div>
 <input class="text-input" id="issueNote" placeholder="Ghi chú ngắn (không bắt buộc)"/>
 <button class="report-big" style="background:var(--green)" onclick="submitIssueDemo()">GỬI BÁO CÁO · 10 GIÂY</button>
 <div class="priority-gate"><b>Sau khi gửi</b><p>Điều phối / Quản lý sẽ quyết định: xử lý ngay, tạo việc, gắn ưu tiên và giao người phụ trách.</p></div>
@@ -291,57 +312,67 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <div class="modal-actions"><button class="btn soft" onclick="closeExpenseModal()">Hủy</button><button class="btn primary" onclick="saveExpenseDemo()">Ghi nhận tạm</button></div></div></div>
 <div class="toast" id="toast">Đã lưu bản mẫu</div>
 <div class="modal" id="detailModal"><div class="modal-card detail">
-<div class="detail-head"><div><small style="color:var(--muted);font-size:10px" id="detailCode">CÔNG VIỆC</small><h3 id="detailTitle">Chi tiết công việc</h3><div class="detail-sub" id="detailTags"></div></div><button class="btn soft" onclick="closeTaskDetail()">Đóng</button></div>
+<div class="detail-head"><div><small style="color:var(--muted);font-size:10px" id="detailCode">CÔNG VIỆC</small><h3 id="detailTitle">Chi tiết công việc</h3><div class="detail-sub" id="detailTags"></div></div><button class="btn soft" type="button" onclick="closeTaskDetail()">Đóng</button></div>
 <div class="detail-progress"><div class="line"><span>Tiến độ xử lý</span><b id="detailProgressText">0%</b></div><div class="bar"><i id="detailProgressBar" style="width:0%"></i></div></div>
 <div class="detail-grid">
 <div class="detail-panel"><h4>Ảnh Trước / Sau</h4><div class="photo-grid">
 <div class="photo-card"><div class="scene before"><span class="demo-label">ẢNH DEMO · TRƯỚC</span><div class="lamp"></div></div><div class="photo-cap"><b id="beforeCaption">Ảnh trước khi xử lý</b><span id="beforeTime">Đã ghi nhận</span></div></div>
 <div class="photo-card"><div class="scene" id="afterScene"><span class="demo-label" id="afterLabel">ẢNH DEMO · SAU</span><div class="lamp" id="afterLamp"></div><strong id="pendingText" style="display:none;font-size:12px">Chưa có ảnh Sau</strong></div><div class="photo-cap"><b id="afterCaption">Ảnh sau khi xử lý</b><span id="afterTime">Chờ cập nhật</span></div></div>
-</div><div class="history-note">Trong bản chạy thật, ảnh được lưu theo từng lần cập nhật. Boss có thể mở ảnh gốc, xem thời gian, người chụp và toàn bộ lịch sử thay đổi.</div></div>
+</div><div class="history-note">Ảnh demo minh họa. Tiến độ / lịch sử / chứng từ lấy từ Prisma.</div></div>
 <div><div class="detail-panel"><h4>Thông tin xử lý</h4><div class="detail-kv"><div class="kv"><span>Phân khu</span><b id="dUnit"></b></div><div class="kv"><span>Phụ trách</span><b id="dOwner"></b></div><div class="kv"><span>Hạn</span><b id="dDeadline"></b></div><div class="kv"><span>Chi phí</span><b id="dCost"></b></div><div class="kv"><span>Trạng thái</span><b id="dStatus"></b></div><div class="kv"><span>Vướng mắc</span><b id="dBlocker"></b></div></div></div>
 <div class="detail-panel" style="margin-top:10px"><h4>Lịch sử tiến độ</h4><div class="timeline" id="detailTimeline"></div></div></div>
-</div><div class="detail-actions"><button class="btn soft">Xem chứng từ / chi phí</button><button class="btn soft">Xem toàn bộ lịch sử</button><button class="btn primary">Cập nhật tiến độ</button></div>
+</div><div class="detail-actions">
+<button class="btn soft" type="button" onclick="openDocsModal()">Xem chứng từ / chi phí</button>
+<button class="btn soft" type="button" onclick="openHistoryModal()">Xem toàn bộ lịch sử</button>
+<button class="btn primary" type="button" onclick="openProgressModal()">Cập nhật tiến độ</button>
+</div>
 </div></div>
-<script>
-const titles={dashboard:['QUẢN TRỊ HHG','Trung tâm điều hành'],projects:['DANH MỤC DỰ ÁN','Dự án'],tasks:['THỰC THI','Công việc'],decisions:['PHÊ DUYỆT & QUYẾT ĐỊNH','Việc chờ quyết định'],finance:['TÀI CHÍNH QUẢN TRỊ','Chốt ngày & tài chính'],staff:['NHÂN VIÊN','Việc của tôi'],issue:['NHÂN VIÊN','Báo vấn đề'],blueprint:['THIẾT KẾ HỆ THỐNG','Sơ đồ hệ thống']};
-const taskDetails={
-  lights:{code:'CV-0241 · BẢO TRÌ',title:'Thay 4 đèn khu hồ trẻ em',priority:'P2',unit:'Hồ bơi',owner:'Kỹ thuật',deadline:'13/09',cost:'1,8 triệu',status:'Đang xử lý',blocker:'Chờ 2 bóng đúng công suất',progress:65,before:'Ảnh trước: 4 vị trí đèn yếu/hỏng',beforeTime:'12/09 · 16:42 · NV vận hành',after:null,afterTime:'Chờ hoàn tất',timeline:[['12/09 · 16:42','Nhân viên báo vấn đề từ QR Hồ bơi, kèm ảnh hiện trạng.'],['12/09 · 17:05','Quản lý xác nhận tạo công việc và giao Kỹ thuật.'],['13/09 · 09:20','Đã kiểm tra 4 vị trí; thay được 2/4 bóng.'],['13/09 · 11:10','Đang chờ 2 bóng đúng công suất để hoàn tất.']]},
-  layout:{code:'CV-0231 · DỰ ÁN',title:'Chốt layout mở rộng khu nướng',priority:'P1',unit:'Lòng Nướng',owner:'Vận hành',deadline:'14/09',cost:'—',status:'Đang làm',blocker:'Chờ xác nhận luồng khách',progress:55,before:'Hiện trạng mặt bằng trước bố trí',beforeTime:'11/09 · 10:15',after:null,afterTime:'Chờ phương án chốt',timeline:[['11/09','Ghi nhận hiện trạng và đo kích thước.'],['12/09','Hoàn thành phương án layout A/B.'],['13/09','Đang rà soát luồng khách và khoảng cách bàn.']]},
-  kitchen:{code:'CV-0228 · BẾP TRUNG TÂM',title:'Duyệt danh sách thiết bị bếp',priority:'P1',unit:'Vận hành chung',owner:'Giám đốc vận hành',deadline:'13/09',cost:'68 triệu',status:'Bị chặn',blocker:'Cần quyết định',progress:40,before:'Danh sách và vị trí thiết bị hiện tại',beforeTime:'12/09 · 14:00',after:null,afterTime:'Chưa thể triển khai',timeline:[['12/09','Vận hành gửi danh sách thiết bị đề xuất.'],['13/09 · 08:30','Tài chính đối chiếu báo giá 68 triệu.'],['13/09 · 10:00','Chuyển vào Việc chờ quyết định.']]},
-  menu:{code:'CV-0245 · NỘI DUNG',title:'Chụp lại menu và giá mới',priority:'P2',unit:'Lòng Nướng',owner:'Nội dung',deadline:'15/09',cost:'—',status:'Đang làm',blocker:'Không',progress:45,before:'Menu hiện tại trước khi cập nhật',beforeTime:'13/09 · 09:10',after:null,afterTime:'Chờ buổi chụp',timeline:[['13/09 · 09:10','Đã chụp hiện trạng menu cũ.'],['13/09 · 11:30','Đã nhận bảng giá mới từ quản lý.']]},
-  clean:{code:'CV-0219 · VỆ SINH',title:'Xử lý vệ sinh kho phụ',priority:'P2',unit:'Spa',owner:'Vệ sinh',deadline:'13/09',cost:'0,4 triệu',status:'Hoàn tất',blocker:'Không',progress:100,before:'Kho phụ trước khi xử lý',beforeTime:'13/09 · 07:48',after:'Kho phụ sau khi xử lý',afterTime:'13/09 · 09:06',timeline:[['13/09 · 07:48','Báo vấn đề #IS-0192 kèm ảnh.'],['13/09 · 08:00','Giao đội Vệ sinh xử lý.'],['13/09 · 09:06','Hoàn tất, tải ảnh Sau và đóng công việc.']]},
-  socket:{code:'CV-0247 · KỸ THUẬT',title:'Kiểm tra ổ điện quầy phụ',priority:'P2',unit:'Lòng Nướng',owner:'Kỹ thuật',deadline:'13/09',cost:'Chưa phát sinh',status:'Chưa bắt đầu',blocker:'Không',progress:10,before:'Ảnh vị trí ổ điện cần kiểm tra',beforeTime:'13/09 · 08:15',after:null,afterTime:'Chưa xử lý',timeline:[['13/09 · 08:15','Quản lý giao việc, kèm ảnh vị trí.']]},
-  signage:{code:'CV-0239 · CẢI TIẾN',title:'Chụp ảnh Sau khu biển bảng',priority:'P2',unit:'Pickleball',owner:'Nhân viên phân khu',deadline:'14/09',cost:'3,2 triệu',status:'Chờ ảnh Sau',blocker:'Không',progress:90,before:'Biển bảng cũ trước khi thay',beforeTime:'10/09 · 15:20',after:null,afterTime:'Chờ nhân viên tải ảnh xác nhận',timeline:[['10/09','Ghi nhận biển bảng cũ.'],['11/09','Duyệt phương án thay mới.'],['13/09','Thi công đã xong; còn thiếu ảnh Sau để nghiệm thu.']]}
-};
-function openTaskDetail(key){const d=taskDetails[key]||taskDetails.lights;document.getElementById('detailCode').textContent=d.code;document.getElementById('detailTitle').textContent=d.title;document.getElementById('detailTags').innerHTML=`<span class="tag ${d.priority==='P1'?'amber':'gray'}">${d.priority}</span><span class="tag blue">${d.unit}</span>`;document.getElementById('detailProgressText').textContent=d.progress+'%';document.getElementById('detailProgressBar').style.width=d.progress+'%';document.getElementById('dUnit').textContent=d.unit;document.getElementById('dOwner').textContent=d.owner;document.getElementById('dDeadline').textContent=d.deadline;document.getElementById('dCost').textContent=d.cost;document.getElementById('dStatus').textContent=d.status;document.getElementById('dBlocker').textContent=d.blocker;document.getElementById('beforeCaption').textContent=d.before;document.getElementById('beforeTime').textContent=d.beforeTime;const scene=document.getElementById('afterScene'),lamp=document.getElementById('afterLamp'),pending=document.getElementById('pendingText'),label=document.getElementById('afterLabel');if(d.after){scene.className='scene after';lamp.style.display='block';pending.style.display='none';label.textContent='ẢNH DEMO · SAU';document.getElementById('afterCaption').textContent=d.after;document.getElementById('afterTime').textContent=d.afterTime}else{scene.className='scene pending';lamp.style.display='none';pending.style.display='block';label.textContent='CHỜ ẢNH SAU';document.getElementById('afterCaption').textContent='Chưa có ảnh sau';document.getElementById('afterTime').textContent=d.afterTime}document.getElementById('detailTimeline').innerHTML=d.timeline.map((x,i)=>`<div class="time-row"><i class="time-dot ${i===d.timeline.length-1&&d.progress<100?'wait':''}"></i><div><b>${x[0]}</b><span>${x[1]}</span></div></div>`).join('');document.getElementById('detailModal').classList.add('show')}
-function closeTaskDetail(){document.getElementById('detailModal').classList.remove('show')}
 
-function setView(id){const r=document.getElementById('vr-'+id);if(r)r.checked=true;document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.nav [data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));document.getElementById('eyebrow').textContent=titles[id][0];document.getElementById('pageTitle').textContent=titles[id][1];history.replaceState(null,'','?view='+id);closeMobileMenu();window.scrollTo(0,0)}
-function toggleMobileMenu(){const t=document.getElementById('mobileMenuToggle');if(t)t.checked=!t.checked}
-function closeMobileMenu(){const t=document.getElementById('mobileMenuToggle');if(t)t.checked=false;document.body.style.overflow=''}
-document.querySelectorAll('.nav [data-view]').forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.view;if(titles[id]){document.getElementById('eyebrow').textContent=titles[id][0];document.getElementById('pageTitle').textContent=titles[id][1];history.replaceState(null,'','?view='+id);setTimeout(closeMobileMenu,80);window.scrollTo(0,0)}}));
-document.querySelectorAll('.ui-view-radio').forEach(r=>r.addEventListener('change',()=>{if(r.checked){const id=r.id.replace('vr-','');document.querySelectorAll('.nav [data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));if(titles[id]){document.getElementById('eyebrow').textContent=titles[id][0];document.getElementById('pageTitle').textContent=titles[id][1]}}}));
-function openTaskModal(){document.getElementById('taskModal').classList.add('show')} function closeTaskModal(){document.getElementById('taskModal').classList.remove('show')}
-function toggleGate(){const p=document.getElementById('prioritySelect').value;document.getElementById('replaceGate').style.display=(p==='P1'||p==='P0')?'block':'none'}
-document.getElementById('taskModal').addEventListener('click',e=>{if(e.target.id==='taskModal')closeTaskModal()});
-document.getElementById('detailModal').addEventListener('click',e=>{if(e.target.id==='detailModal')closeTaskDetail()});
-function openDailyClose(unit){if(unit)document.getElementById('closeUnit').value=unit;document.getElementById('dailyCloseModal').classList.add('show')}
-function closeDailyClose(){document.getElementById('dailyCloseModal').classList.remove('show')}
-function openExpenseModal(){document.getElementById('expenseModal').classList.add('show')}
-function closeExpenseModal(){document.getElementById('expenseModal').classList.remove('show')}
-function moneyDemo(v){const n=Number(v||0);return n?((n/1000000).toLocaleString('vi-VN',{maximumFractionDigits:1})+' triệu'):'—'}
-function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
-async function api(path,opts){const res=await fetch(path,{headers:{'Content-Type':'application/json'},...opts});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||('HTTP '+res.status));return data}
-const sourceLabel={MANUAL:'Nhập tay',EXCEL:'File Excel',POS:'Import file',FINANCE:'Finance tổng hợp',AUTO:'Tự động'};
-let selectedIssueCat='BROKEN';
-function selectIssueCat(btn){selectedIssueCat=btn.dataset.cat;document.querySelectorAll('.issue-cat').forEach(b=>b.style.outline='');btn.style.outline='2px solid var(--green)'}
-async function saveDailyCloseDemo(){const unit=document.getElementById('closeUnit').value,rev=document.getElementById('closeRevenue').value,cash=document.getElementById('closeCash').value,src=document.getElementById('closeSource').value,date=document.querySelector('#dailyCloseModal input[type=date]')?.value||'2026-09-13';try{await api('/api/daily-closes',{method:'POST',body:JSON.stringify({unitName:unit,date,revenue:Number(rev||0),cashCollected:Number(cash||0),source:src})});if(unit==='Pickleball'){document.getElementById('pickleRev').textContent=moneyDemo(rev);document.getElementById('pickleCash').textContent=moneyDemo(cash);document.getElementById('pickleSource').textContent=sourceLabel[src]||src;document.getElementById('pickleTime').textContent='vừa cập nhật';document.getElementById('pickleStatus').innerHTML='<span class="tag amber">Tạm ghi nhận</span>'}closeDailyClose();showToast('Đã lưu DB · chờ Finance đối chiếu')}catch(e){showToast('Lỗi lưu: '+e.message)}}
-async function saveExpenseDemo(){const amount=document.getElementById('expenseAmount').value;try{await api('/api/expenses',{method:'POST',body:JSON.stringify({unitName:document.getElementById('expenseUnit').value,category:document.getElementById('expenseCategory').value,amount:Number(amount||0),content:document.getElementById('expenseContent').value,taskRef:document.getElementById('expenseTaskRef').value||null,source:'Ảnh hóa đơn'})});closeExpenseModal();showToast('Đã lưu chi phí vào DB')}catch(e){showToast('Lỗi lưu: '+e.message)}}
-async function saveTaskDemo(){const title=document.getElementById('taskTitle').value;try{await api('/api/tasks',{method:'POST',body:JSON.stringify({title,priority:document.getElementById('prioritySelect').value,owner:document.getElementById('taskOwner').value,deadline:document.getElementById('taskDeadline').value})});closeTaskModal();showToast('Đã tạo việc trong DB')}catch(e){showToast('Lỗi lưu: '+e.message)}}
-async function submitIssueDemo(){try{await api('/api/issues',{method:'POST',body:JSON.stringify({category:selectedIssueCat,note:document.getElementById('issueNote').value||null,areaLabel:'QR: Khu Hồ bơi',unitName:'Hồ bơi'})});showToast('Đã gửi báo cáo · lưu DB');document.getElementById('issueNote').value=''}catch(e){showToast('Lỗi gửi: '+e.message)}}
-document.getElementById('dailyCloseModal').addEventListener('click',e=>{if(e.target.id==='dailyCloseModal')closeDailyClose()});
-document.getElementById('expenseModal').addEventListener('click',e=>{if(e.target.id==='expenseModal')closeExpenseModal()});
-const params=new URLSearchParams(location.search); const q=params.get('view'); if(q&&document.getElementById(q))setView(q); const taskQ=params.get('task'); if(taskQ&&taskDetails[taskQ])openTaskDetail(taskQ);
-</script>
+<div class="modal" id="projectModal"><div class="modal-card finance"><h3>Tạo dự án mới</h3><p>Lưu vào Prisma · hiện ngay trong danh mục dự án.</p>
+<div class="form-grid">
+<div class="field"><label>Tên dự án</label><input id="projectName" placeholder="Ví dụ: Nâng cấp quầy check-in"/></div>
+<div class="field"><label>Phân loại</label><input id="projectCategory" placeholder="Doanh thu / Cải tiến…"/></div>
+<div class="field"><label>Phụ trách</label><select id="projectOwner"><option>Vận hành</option><option>Kinh doanh</option><option>Vận hành chung</option><option>Quản lý phân khu</option></select></div>
+<div class="field"><label>Phân khu</label><select id="projectUnit"><option value="">— Không gắn —</option><option>Lòng Nướng</option><option>Spa</option><option>Hồ bơi</option><option>Gym</option><option>Pickleball</option><option>Khác</option></select></div>
+<div class="field"><label>Ngân sách (VND)</label><input id="projectBudget" type="number" placeholder="95000000"/></div>
+<div class="field"><label>Hạn</label><input id="projectDeadline" placeholder="30/09"/></div>
+<div class="field"><label>Sẵn sàng %</label><input id="projectReadiness" type="number" value="10" min="0" max="100"/></div>
+<div class="field"><label>Trạng thái</label><select id="projectStatus"><option value="ON_TRACK">Đúng tiến độ</option><option value="AT_RISK">Có rủi ro</option><option value="BLOCKED">Bị chặn</option></select></div>
+</div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeProjectModal()">Hủy</button><button class="btn primary" type="button" onclick="saveProjectDemo()">Tạo dự án</button></div>
+</div></div>
+
+<div class="modal" id="decisionModal"><div class="modal-card finance"><h3>Yêu cầu duyệt</h3><p>Tạo việc chờ lãnh đạo quyết định.</p>
+<div class="field"><label>Tiêu đề</label><input id="decisionTitle" placeholder="Duyệt…"/></div>
+<div class="form-grid">
+<div class="field"><label>Số tiền / nhãn</label><input id="decisionAmount" placeholder="68 triệu"/></div>
+<div class="field"><label>Hạn</label><input id="decisionDeadline" placeholder="16/09"/></div>
+<div class="field"><label>Người đề xuất</label><input id="decisionProposer" value="Vận hành"/></div>
+<div class="field"><label>Người duyệt</label><input id="decisionApprover" value="Giám đốc vận hành"/></div>
+</div>
+<div class="field"><label>Tác động nếu chưa quyết</label><textarea id="decisionImpact" rows="3" placeholder="Mô tả tác động…"></textarea></div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeDecisionModal()">Hủy</button><button class="btn primary" type="button" onclick="saveDecisionDemo()">Gửi yêu cầu</button></div>
+</div></div>
+
+<div class="modal" id="progressModal"><div class="modal-card"><h3>Cập nhật tiến độ</h3><p>Ghi nhận % hoàn thành và trạng thái vào DB.</p>
+<div class="form-grid">
+<div class="field"><label>Tiến độ %</label><input id="progressValue" type="number" min="0" max="100" value="50"/></div>
+<div class="field"><label>Trạng thái</label><select id="progressStatus"><option value="TODO">Chưa bắt đầu</option><option value="DOING">Đang làm</option><option value="WAITING">Đang chờ</option><option value="BLOCKED">Bị chặn</option><option value="DONE">Hoàn tất</option></select></div>
+</div>
+<div class="field"><label>Ghi chú</label><textarea id="progressNote" rows="3" placeholder="Đã làm gì / còn gì thiếu"></textarea></div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeProgressModal()">Hủy</button><button class="btn primary" type="button" onclick="saveProgressDemo()">Lưu tiến độ</button></div>
+</div></div>
+
+<div class="modal" id="docsModal"><div class="modal-card finance"><h3>Chứng từ / chi phí liên quan</h3><p>Lấy từ bảng Expense theo phân khu của việc.</p>
+<div id="docsModalBody"></div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeDocsModal()">Đóng</button></div>
+</div></div>
+
+<div class="modal" id="historyModal"><div class="modal-card"><h3>Toàn bộ lịch sử</h3><p>Các lần cập nhật đã lưu trong Prisma.</p>
+<div class="timeline" id="historyModalBody"></div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeHistoryModal()">Đóng</button></div>
+</div></div>
+
+<script src="/app.js"></script>
 </body>
 </html>
