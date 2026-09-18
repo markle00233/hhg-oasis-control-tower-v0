@@ -7,7 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Phân khu doanh thu
 model Unit {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -30,22 +29,24 @@ model Project {
   budget    Float?
   deadline  String?
   readiness Int      @default(0)
-  status    String   @default("ON_TRACK") // ON_TRACK | AT_RISK | BLOCKED
+  status    String   @default("ON_TRACK")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  unitId String?
-  unit   Unit?   @relation(fields: [unitId], references: [id])
-  tasks  Task[]
+  unitId    String?
+  unit      Unit?      @relation(fields: [unitId], references: [id])
+  tasks     Task[]
+  decisions Decision[]
 }
 
 model Task {
   id        String   @id @default(cuid())
+  code      String?
   title     String
-  priority  String   @default("P2") // P0 | P1 | P2
+  priority  String   @default("P2")
   owner     String?
   deadline  String?
-  status    String   @default("TODO") // TODO | DOING | BLOCKED | DONE | WAITING
+  status    String   @default("TODO")
   cost      Float?
   blocker   String?
   progress  Int      @default(0)
@@ -53,11 +54,15 @@ model Task {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  unitId    String?
-  unit      Unit?    @relation(fields: [unitId], references: [id])
-  projectId String?
-  project   Project? @relation(fields: [projectId], references: [id])
-  events    TaskEvent[]
+  unitId          String?
+  unit            Unit?      @relation(fields: [unitId], references: [id])
+  projectId       String?
+  project         Project?   @relation(fields: [projectId], references: [id])
+  events          TaskEvent[]
+  decisions       Decision[]
+  expenses        Expense[]
+  sourceMessageId String?
+  sourceDraftId   String?
 }
 
 model TaskEvent {
@@ -71,28 +76,38 @@ model TaskEvent {
 }
 
 model Decision {
-  id          String   @id @default(cuid())
-  title       String
-  amountLabel String?
-  proposer    String?
-  approver    String?
-  deadline    String?
-  impact      String?
-  status      String   @default("PENDING") // PENDING | APPROVED | NEEDS_INFO | REJECTED
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String    @id @default(cuid())
+  code           String?   @unique
+  title          String
+  description    String?
+  amountLabel    String?
+  proposer       String?
+  approver       String?
+  deadline       String?
+  impact         String?
+  isBlocking     Boolean   @default(true)
+  status         String    @default("PENDING") // PENDING | APPROVED | NEEDS_INFO | REJECTED
+  resolutionNote String?
+  resolvedBy     String?
+  resolvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  linkedTaskId    String?
+  linkedTask      Task?     @relation(fields: [linkedTaskId], references: [id])
+  linkedProjectId String?
+  linkedProject   Project?  @relation(fields: [linkedProjectId], references: [id])
 }
 
-/// Chốt ngày theo phân khu
 model DailyClose {
   id            String   @id @default(cuid())
-  date          String // YYYY-MM-DD
+  date          String
   revenue       Float    @default(0)
   cashCollected Float    @default(0)
   guestCount    Int?
-  source        String   @default("MANUAL") // MANUAL | EXCEL | POS | FINANCE | AUTO
+  source        String   @default("MANUAL")
   note          String?
-  status        String   @default("PROVISIONAL") // PROVISIONAL | RECONCILED | LOCKED
+  status        String   @default("PROVISIONAL")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -103,13 +118,35 @@ model DailyClose {
 }
 
 model Expense {
+  id              String   @id @default(cuid())
+  code            String?
+  /// Technical code: OPERATING | MAINTENANCE | IMPROVEMENT | ASSET_PURCHASE | SHARED | UNCLASSIFIED
+  category        String
+  /// Vietnamese label shown in UI
+  categoryLabel   String?
+  amount          Float
+  content         String?
+  source          String?
+  taskRef         String?
+  status          String   @default("PROVISIONAL")
+  aiSuggestion    String?
+  aiConfidence    Int?
+  humanConfirmed  Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  unitId       String?
+  unit         Unit?   @relation(fields: [unitId], references: [id])
+  linkedTaskId String?
+  linkedTask   Task?   @relation(fields: [linkedTaskId], references: [id])
+}
+
+model Issue {
   id        String   @id @default(cuid())
-  category  String // OPEX | MAINTENANCE | RENOVATION | CAPEX | SHARED
-  amount    Float
-  content   String?
-  source    String?
-  taskRef   String?
-  status    String   @default("PROVISIONAL") // PROVISIONAL | RECONCILED | LOCKED
+  category  String
+  note      String?
+  areaLabel String?
+  status    String   @default("OPEN")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -117,16 +154,36 @@ model Expense {
   unit   Unit?   @relation(fields: [unitId], references: [id])
 }
 
-/// Báo vấn đề từ QR / staff app
-model Issue {
-  id        String   @id @default(cuid())
-  category  String // BROKEN | MISSING | CLEANING | SAFETY
-  note      String?
-  areaLabel String? // ví dụ: QR: Khu Hồ bơi
-  status    String   @default("OPEN") // OPEN | ASSIGNED | CLOSED
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model MessageInbox {
+  id                 String   @id @default(cuid())
+  sourceChannel      String   @default("manual")
+  rawText            String
+  senderDisplayName  String?
+  status             String   @default("NEW") // NEW | ANALYZED | REVIEWED | ARCHIVED
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  unitId String?
-  unit   Unit?   @relation(fields: [unitId], references: [id])
+  drafts AiTaskDraft[]
+}
+
+model AiTaskDraft {
+  id                 String   @id @default(cuid())
+  parentGroup        String?
+  suggestedTitle     String
+  suggestedUnit      String?
+  suggestedType      String?
+  suggestedOwner     String?
+  suggestedPriority  String?
+  suggestedDeadline  String?
+  duplicateTaskId    String?
+  duplicateHint      String?
+  confidence         Int      @default(70)
+  reason             String?
+  reviewStatus       String   @default("PENDING") // PENDING | CONFIRMED | EDITED | MERGED | SKIPPED
+  createdTaskId      String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  messageId String
+  message   MessageInbox @relation(fields: [messageId], references: [id], onDelete: Cascade)
 }

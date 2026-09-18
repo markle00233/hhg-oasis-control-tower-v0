@@ -1,0 +1,61 @@
+{
+  "task_message_example": {
+    "source": "manual_copy_from_chat",
+    "raw_text": "Dạ e gửi Task tracking ạ ...",
+    "expected_behaviors": [
+      "split_parent_and_child_tasks",
+      "suggest_unit_and_type",
+      "extract_owner_when_explicit",
+      "flag_missing_owner_deadline_priority",
+      "search_duplicate_tasks",
+      "require_human_confirmation_before_write"
+    ],
+    "examples": [
+      {
+        "title": "Lắp quạt Bếp Trung Tâm",
+        "unitSuggestion": "Bếp Trung Tâm",
+        "typeSuggestion": "Sửa chữa / Hạ tầng",
+        "confidence": 92,
+        "duplicateCandidate": "CV-0228",
+        "humanCheck": true
+      },
+      {
+        "title": "Chương trình bán tour/combo trải nghiệm cho đoàn thể/công ty",
+        "ownerSuggestion": "Vy",
+        "typeSuggestion": "Doanh thu / Kinh doanh",
+        "confidence": 98,
+        "humanCheck": true
+      }
+    ]
+  },
+  "expense_examples": [
+    {
+      "input": "Mua 4 quạt công nghiệp cho Bếp Trung Tâm, 12,8 triệu",
+      "suggestedCategory": "Mua sắm tài sản / thiết bị",
+      "suggestedUnit": "Bếp Trung Tâm",
+      "linkedTaskCandidate": "Lắp quạt Bếp Trung Tâm",
+      "confidence": 84
+    },
+    {
+      "input": "Thay motor quạt hút bếp 2,4 triệu",
+      "suggestedCategory": "Sửa chữa / bảo trì",
+      "confidence": 91
+    },
+    {
+      "input": "Làm lại biển hiệu Lòng Nướng 18 triệu",
+      "suggestedCategoryCandidates": [
+        "Cải tạo / nâng cấp",
+        "Truyền thông / quảng bá"
+      ],
+      "confidence": 55,
+      "action": "human_check_required"
+    }
+  ],
+  "revenue_example": {
+    "input": "Đoàn công ty mua combo trải nghiệm + ăn uống",
+    "suggestedRevenueType": "Tour / combo trải nghiệm + ăn uống",
+    "suggestedCustomerGroup": "Đoàn thể / công ty",
+    "humanCheck": true,
+    "note": "Không tự tính phần doanh thu thuộc HHG nếu có rule chia với đối tác."
+  }
+}

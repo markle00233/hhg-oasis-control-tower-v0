@@ -7,3 +7,8 @@ prisma/dev.db-journal
 *.db
 .DS_Store
 .env.sqlite.bak
+.vercel
+.env*
+HHG_OASIS_UPDATE_AFTER_LIVE_PACKAGE.zip
+public/index.baseline.html
+public/app.baseline.js
