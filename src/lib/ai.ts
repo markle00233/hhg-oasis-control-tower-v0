@@ -126,8 +126,19 @@ export function suggestRevenue(
   };
 }
 
+export type AiDraftSuggestion = {
+  parentGroup: string | null;
+  suggestedTitle: string;
+  suggestedUnit: string;
+  suggestedType: string;
+  suggestedOwner: string | null;
+  confidence: number;
+  reason: string;
+  duplicateHint: string | null;
+};
+
 /** Seed drafts matching demo / 03_AI_EXAMPLES when raw text looks like tracking list. */
-export const DEMO_AI_DRAFTS = [
+export const DEMO_AI_DRAFTS: AiDraftSuggestion[] = [
   {
     parentGroup: "Phiếu thoả thuận công việc",
     suggestedTitle: "Ký phiếu thỏa thuận với nhóm Hồ bơi",
