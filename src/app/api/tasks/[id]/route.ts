@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -18,6 +19,9 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 }
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const gate = await requireAuth();
+  if ("error" in gate) return gate.error;
+
   const { id } = await ctx.params;
   const body = await req.json();
   const {

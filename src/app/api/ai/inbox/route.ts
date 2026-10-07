@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseTrackingMessage } from "@/lib/ai";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   const messages = await prisma.messageInbox.findMany({
@@ -12,6 +13,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireAuth();
+  if ("error" in gate) return gate.error;
+
   const body = await req.json();
   const {
     rawText,

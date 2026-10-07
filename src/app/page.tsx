@@ -6,6 +6,9 @@ export default function Home() {
         Demo UI: <a href="/index.html">/index.html</a>
       </p>
       <p>
+        Quầy Administration (laptop): <a href="/desk">/desk</a>
+      </p>
+      <p>
         API health: <a href="/api/dashboard">/api/dashboard</a>
       </p>
     </main>

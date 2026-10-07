@@ -1,5 +1,7 @@
 node_modules
+**/node_modules/
 .next
+**/.next/
 .env
 .env*.local
 prisma/dev.db
@@ -8,7 +10,23 @@ prisma/dev.db-journal
 .DS_Store
 .env.sqlite.bak
 .vercel
+**/.vercel/
 .env*
+# Keep env templates (not secrets)
+!.env.example
+!**/.env.example
 HHG_OASIS_UPDATE_AFTER_LIVE_PACKAGE.zip
 public/index.baseline.html
 public/app.baseline.js
+
+public/uploads/
+
+# Build / cache
+**/tsconfig.tsbuildinfo
+*.tsbuildinfo
+.turbo/
+coverage/
+
+# Vendor / reference AI chatbot (nested repo; has own .env)
+c.o-chatbot/
+c.o-chatbot/APP1/.venv/

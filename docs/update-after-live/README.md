@@ -19,3 +19,11 @@ Nội dung lấy từ `HHG_OASIS_UPDATE_AFTER_LIVE_PACKAGE` (18/09/2026).
 4. **Module Chi phí** riêng trong menu + hồ sơ chi tiết  
 
 Chi tiết nghiệm thu: mục 12–14 trong `01_MASTER_HANDOFF.md`.
+
+## QA Task & liên kết (23/09/2026)
+
+Báo cáo black-box sau live: [`../QA_TASK_LIEN_KET_2026-09-23.md`](../QA_TASK_LIEN_KET_2026-09-23.md).
+
+- **P0 (chặn phát hành):** scope collaborator Task; RBAC Chi phí; RBAC Quyết định  
+- **P1 (trước vận hành):** COMPLETE Task; ghi chi phí từ Task; modal click-through; upload docs; Issue triage; đối chiếu Expense  
+- Checklist nghiệm thu và dữ liệu `TEST QA` nằm trong file QA trên.

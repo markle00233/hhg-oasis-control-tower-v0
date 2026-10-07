@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+:root {
+  /* Figma CRM Dashboard inspired tokens */
+  --background: #f7f7f8;
+  --foreground: #111827;
+  --card: #ffffff;
+  --sidebar: #ffffff;
+  --sidebar-border: #ececef;
+  --sidebar-muted: #6b7280;
+  --sidebar-active: #f3f4f6;
+  --primary: #111827;
+  --primary-hover: #000000;
+  --primary-soft: #f3f4f6;
+  --accent: #111827;
+  --border: #e5e7eb;
+  --muted: #6b7280;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --vip: #7c3aed;
+  --chart-1: #111827;
+  --chart-2: #9ca3af;
+  --chart-3: #d1d5db;
+  --ring: #e5e7eb;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-sidebar: var(--sidebar);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-vip: var(--vip);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+img,
+svg,
+video {
+  max-width: 100%;
+}
+
+/* Tables / wide panels: allow horizontal swipe on phone */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}

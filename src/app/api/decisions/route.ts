@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
+import { canViewDecision, forbidden } from "@/lib/rbac";
 
 async function nextDecisionCode() {
   const count = await prisma.decision.count();
@@ -7,6 +9,9 @@ async function nextDecisionCode() {
 }
 
 export async function GET() {
+  const gate = await requireAuth();
+  if ("error" in gate) return gate.error;
+
   const decisions = await prisma.decision.findMany({
     include: {
       linkedTask: { include: { unit: true, project: true } },
@@ -14,10 +19,18 @@ export async function GET() {
     },
     orderBy: { updatedAt: "desc" },
   });
-  return NextResponse.json(decisions);
+
+  const visible = [];
+  for (const d of decisions) {
+    if (await canViewDecision(gate.user, d)) visible.push(d);
+  }
+  return NextResponse.json(visible);
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireAuth();
+  if ("error" in gate) return gate.error;
+
   const body = await req.json();
   const {
     title,
@@ -57,7 +70,7 @@ export async function POST(req: NextRequest) {
         title,
         description: description || null,
         amountLabel: amountLabel || null,
-        proposer: proposer || null,
+        proposer: proposer || gate.user.displayName || gate.user.username,
         approver: approver || null,
         deadline: deadline || null,
         impact: impact || null,
@@ -85,6 +98,22 @@ export async function POST(req: NextRequest) {
           taskId: linkedTaskId,
           label: "Yêu cầu quyết định",
           detail: `${code} · ${title}`,
+        },
+      });
+    }
+
+    if (projectId && isBlocking) {
+      await tx.project.update({
+        where: { id: projectId },
+        data: { status: "BLOCKED" },
+      });
+      await tx.projectEvent.create({
+        data: {
+          projectId,
+          action: "DECISION",
+          detail: `Yêu cầu quyết định ${code}`,
+          actorUserId: gate.user.id,
+          newValue: "BLOCKED",
         },
       });
     }

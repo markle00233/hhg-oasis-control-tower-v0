@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
+  const gate = await requireAuth();
+  if ("error" in gate) return gate.error;
+
   const issues = await prisma.issue.findMany({
     include: { unit: true },
     orderBy: { createdAt: "desc" },
@@ -10,6 +14,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireAuth();
+  if ("error" in gate) return gate.error;
+
   const body = await req.json();
   const {
     category,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get("date") ?? undefined;
@@ -12,6 +13,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireAuth();
+  if ("error" in gate) return gate.error;
+
   const body = await req.json();
   const {
     unitName,

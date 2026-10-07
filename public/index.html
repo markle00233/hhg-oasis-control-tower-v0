@@ -5,24 +5,73 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width,initial-scale=1" name="viewport"/>
 <title>HHG Oasis — Trung tâm điều hành V0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
 :root{
-  --bg:#f4f5f1; --panel:#ffffff; --panel2:#f8f9f6; --ink:#17211e; --muted:#6e7873;
-  --line:#e2e6e1; --green:#0f6b50; --green2:#e7f3ee; --amber:#a75e06; --amber2:#fff3df;
-  --red:#b43b33; --red2:#fdecea; --blue:#245b8e; --blue2:#eaf1f8; --shadow:0 12px 40px rgba(24,37,31,.08);
-  --radius:18px;
+  /* Palette: trắng · xanh biển nhạt · cam (ứng dụng từ design-resources tone) */
+  --bg:#ffffff;
+  --panel:#ffffff;
+  --panel2:#eaf6ff;
+  --ink:#0f172a;
+  --muted:#64748b;
+  --line:#d7ebf8;
+  --green:#0f6b50;
+  --green2:#e7f3ee;
+  --amber:#c2410c;
+  --amber2:#fff1e6;
+  --red:#b43b33;
+  --red2:#fdecea;
+  --blue:#0284c7;
+  --blue2:#e0f2fe;
+  --shadow:0 12px 40px rgba(14,165,233,.10);
+  --radius:28px;
+  --radius-card:32px;
+  --cal-accent:#ff7a29;
+  --cal-accent-soft:#ffe8d6;
+  --cal-yellow:#ffe0c2;
+  --widget-blue:#e8f4fc;
+  --widget-blue-strong:#cfeafe;
 }
 *{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
 button,input,select,textarea{font:inherit} button{cursor:pointer}
 .app{display:grid;grid-template-columns:246px 1fr;min-height:100vh}
 .sidebar{background:#17211e;color:#fff;padding:22px 16px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:22px}
 .brand{display:flex;align-items:center;gap:11px;padding:4px 8px 12px}.mark{width:38px;height:38px;border-radius:12px;background:linear-gradient(140deg,#56a786,#d6c89d);display:grid;place-items:center;color:#10231c;font-weight:900}.brand b{display:block;font-size:15px;letter-spacing:.02em}.brand small{color:#aeb9b3;font-size:11px}
-.nav{display:flex;flex-direction:column;gap:6px}.nav button,.nav .nav-link{border:0;background:transparent;color:#cbd3cf;text-align:left;padding:11px 12px;border-radius:11px;display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer}.nav button:hover,.nav button.active,.nav .nav-link:hover{background:#26332e;color:#fff}.nav .ico{width:22px;height:22px;border-radius:7px;background:#32413b;display:grid;place-items:center;font-size:11px}
+.nav{display:flex;flex-direction:column;gap:6px}.nav button,.nav .nav-link{border:0;background:#1e2a25;color:#cbd3cf;text-align:left;padding:11px 12px;border-radius:11px;display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer}.nav button:hover,.nav button.active,.nav .nav-link:hover{background:#26332e;color:#fff}.nav .ico{width:22px;height:22px;border-radius:7px;background:#32413b;display:grid;place-items:center;font-size:11px}
 .side-bottom{margin-top:auto;padding:12px;background:#202d28;border:1px solid #2e3a35;border-radius:15px}.side-bottom .demo{font-size:11px;color:#9fb1a8;text-transform:uppercase;letter-spacing:.11em}.side-bottom strong{display:block;margin:4px 0 3px;font-size:13px}.side-bottom p{margin:0;color:#9fb1a8;font-size:11px;line-height:1.45}
 .main{padding:26px 30px 50px;min-width:0}.topbar{display:flex;justify-content:space-between;gap:18px;align-items:center;margin-bottom:23px}.crumb small{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}.crumb h1{margin:0;font-size:25px;letter-spacing:-.03em}.top-actions{display:flex;gap:10px;align-items:center}.pill,.role-select{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:9px 12px;font-size:12px;color:var(--ink)}.role-select{outline:none}.avatar{width:38px;height:38px;border-radius:12px;background:#dce6e1;display:grid;place-items:center;font-weight:800;font-size:12px;color:#204439}
+.account-switcher{position:relative;z-index:40}
+.account-trigger{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 8px 6px 12px;cursor:pointer;font:inherit;color:var(--ink);max-width:min(280px,62vw)}
+.account-trigger:hover{border-color:#b7c5bc;background:#f7faf7}
+.account-trigger:focus-visible{outline:2px solid rgba(32,68,57,.35);outline-offset:2px}
+.account-trigger-label{font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+.account-trigger-caret{font-size:10px;color:var(--muted);margin-right:2px}
+.account-trigger .avatar{width:30px;height:30px;border-radius:10px;font-size:10px;flex:0 0 auto}
+.account-menu{display:none;position:absolute;right:0;top:calc(100% + 8px);width:min(320px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 40px rgba(16,32,26,.16);padding:10px;z-index:50;max-height:min(70vh,520px);overflow:auto}
+.account-menu.open{display:block}
+.account-menu-section{margin:6px 0 4px;padding:0 8px;font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.account-menu-item{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;border-radius:12px;padding:9px 8px;cursor:pointer;text-align:left;font:inherit;color:var(--ink)}
+.account-menu-item:hover,.account-menu-item:focus-visible{background:#eef3ef;outline:none}
+.account-menu-item.active{background:#e5f2ec}
+.account-menu-item .avatar{width:32px;height:32px;font-size:10px}
+.account-menu-item .meta{min-width:0;flex:1}
+.account-menu-item .meta b{display:block;font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.account-menu-item .meta small{display:block;font-size:10px;color:var(--muted);margin-top:1px}
+.account-menu-item .check{font-size:12px;font-weight:900;color:var(--green);width:14px}
+.account-menu-divider{height:1px;background:var(--line);margin:8px 4px}
+.pw-modal .modal-card{max-width:420px}
+.pw-user-chip{display:flex;align-items:center;gap:10px;margin:4px 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:#f7faf7}
+.pw-user-chip .avatar{width:36px;height:36px}
+.pw-user-chip b{display:block;font-size:13px}
+.pw-user-chip small{display:block;font-size:10px;color:var(--muted)}
+.pw-row{display:flex;gap:8px;align-items:center}
+.pw-row input{flex:1}
+.pw-error{color:var(--red);font-size:11px;font-weight:700;margin-top:8px;min-height:16px}
 .notice{display:flex;justify-content:space-between;align-items:center;background:#f1eee2;border:1px solid #e8dfc7;border-radius:14px;padding:11px 14px;margin-bottom:18px;font-size:12px}.notice b{font-weight:800}.notice span{color:#7c735f}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:17px;box-shadow:0 2px 0 rgba(0,0,0,.01)}.metric .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.metric .value{font-size:27px;font-weight:800;margin:8px 0 5px;letter-spacing:-.04em}.metric .delta{font-size:11px;color:var(--muted)}.up{color:var(--green)!important}.down{color:var(--red)!important}
-.section{margin-top:18px}.section-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.section-head h2{margin:0;font-size:15px}.section-head p{margin:3px 0 0;color:var(--muted);font-size:11px}.linkbtn{border:0;background:transparent;color:var(--green);font-size:12px;font-weight:700}
+.section{margin-top:18px}.section-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.section-head h2{margin:0;font-size:15px}.section-head p{margin:3px 0 0;color:var(--muted);font-size:11px}.linkbtn{border:0;background:var(--green2);color:var(--green);font-size:12px;font-weight:700;border-radius:10px;padding:8px 12px;cursor:pointer}
 .twocol{display:grid;grid-template-columns:1.35fr .85fr;gap:15px}.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:17px;box-shadow:0 2px 0 rgba(0,0,0,.01)}
 .priority-list{display:grid;gap:10px}.priority{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:12px}.prio-num{width:30px;height:30px;border-radius:10px;background:#17211e;color:white;display:grid;place-items:center;font-size:12px;font-weight:800}.priority h3{font-size:13px;margin:0 0 4px}.priority p{font-size:11px;color:var(--muted);margin:0}.tag{display:inline-flex;align-items:center;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:800;white-space:nowrap}.tag.green{background:var(--green2);color:var(--green)}.tag.amber{background:var(--amber2);color:var(--amber)}.tag.red{background:var(--red2);color:var(--red)}.tag.blue{background:var(--blue2);color:var(--blue)}.tag.gray{background:#eef0ee;color:#606966}
 .decision{padding:11px 0;border-bottom:1px solid var(--line)}.decision:last-child{border-bottom:0}.decision-top{display:flex;justify-content:space-between;gap:10px}.decision h3{font-size:12px;margin:0}.decision p{font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.45}.amount{font-size:12px;font-weight:800;white-space:nowrap}
@@ -30,12 +79,100 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .risk-list{display:grid;gap:8px}.risk{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}.risk:last-child{border-bottom:0}.dot{width:8px;height:8px;border-radius:50%;background:var(--red)}.dot.amber{background:var(--amber)}.dot.green{background:var(--green)}.risk b{font-size:12px}.risk small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
 .view{display:none}.view.active{display:block}
 .project-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.project{padding:18px}.project .row{display:flex;justify-content:space-between;gap:12px}.project h3{font-size:15px;margin:0 0 4px}.project p{font-size:11px;color:var(--muted);margin:0}.project .progressline{display:flex;justify-content:space-between;margin-top:15px;font-size:11px}.project .meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}.meta-box{background:var(--panel2);border-radius:10px;padding:9px}.meta-box span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.meta-box b{font-size:11px}.project .foot{display:flex;justify-content:space-between;align-items:center;margin-top:13px;padding-top:13px;border-top:1px solid var(--line)}
-.btn{border:0;border-radius:11px;padding:10px 13px;font-size:11px;font-weight:800}.btn.primary{background:var(--green);color:#fff}.btn.dark{background:#17211e;color:white}.btn.soft{background:#edf1ee;color:#31423b}.btn.danger{background:var(--red2);color:var(--red)}
-.task-toolbar{display:flex;justify-content:space-between;gap:10px;margin-bottom:12px}.filters{display:flex;gap:7px;flex-wrap:wrap}.filter{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 10px;font-size:10px}.filter.active{background:#17211e;color:#fff;border-color:#17211e}.task-table{width:100%;border-collapse:separate;border-spacing:0;background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}.task-table th{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:10px 12px;text-align:left;background:var(--panel2)}.task-table td{font-size:11px;padding:12px;border-top:1px solid var(--line)}.task-title b{display:block;font-size:12px;margin-bottom:3px}.task-title small{color:var(--muted)}
-.staff-wrap{max-width:620px;margin:0 auto}.mobile-shell{background:#eef0ec;border:1px solid #dfe4de;border-radius:34px;padding:12px;box-shadow:var(--shadow)}.mobile-screen{background:#fbfcfa;border-radius:25px;min-height:700px;padding:20px;overflow:hidden}.mobile-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.mobile-head h2{margin:0;font-size:20px}.mobile-head small{color:var(--muted)}.hello{background:#18221e;color:white;border-radius:19px;padding:16px;margin-bottom:14px}.hello small{color:#b7c3bd}.hello h3{margin:4px 0 0;font-size:17px}.staff-task{background:#fff;border:1px solid var(--line);border-radius:17px;padding:15px;margin-bottom:10px}.staff-task .top{display:flex;justify-content:space-between;gap:10px}.staff-task h3{font-size:14px;margin:0 0 5px}.staff-task p{font-size:11px;color:var(--muted);margin:0}.staff-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:13px}.staff-actions button{border:0;border-radius:10px;padding:10px 6px;font-size:10px;font-weight:800}.start{background:#e8f2ed;color:#0f6b50}.done{background:#17211e;color:#fff}.problem{background:#fff0e8;color:#9d4b10}.report-big{width:100%;border:0;border-radius:16px;padding:15px;background:#b43b33;color:white;font-size:13px;font-weight:900;margin-top:8px}.bottomnav{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:17px}.bottomnav div{text-align:center;color:var(--muted);font-size:9px;padding:8px}.bottomnav .on{color:var(--green);font-weight:800}
-.issue-categories{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}.issue-cat{border:1px solid var(--line);border-radius:15px;background:#fff;padding:17px 12px;text-align:left}.issue-cat b{display:block;font-size:12px}.issue-cat small{color:var(--muted);font-size:10px}.camera{height:160px;border-radius:16px;border:1.5px dashed #cfd5d1;background:#f5f7f4;display:grid;place-items:center;text-align:center;color:var(--muted);margin-top:12px}.camera strong{display:block;color:#4a5651;font-size:12px}.camera span{font-size:28px}.text-input{width:100%;border:1px solid var(--line);border-radius:13px;padding:12px;margin-top:10px;outline:none;background:#fff;font-size:11px}
+.owner-clusters{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.owner-cluster{border:1px solid var(--line);border-radius:16px;background:var(--panel2);overflow:hidden}
+.owner-cluster.active{border-color:#7aa892;box-shadow:0 0 0 2px rgba(32,68,57,.12)}
+.owner-cluster-head{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;background:#fff;border-bottom:1px solid var(--line)}
+.owner-cluster-head:hover{background:#f4f7f4}
+.owner-cluster-head .avatar{width:34px;height:34px;border-radius:11px;background:#17211e;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800;flex:0 0 auto}
+.owner-cluster-head .meta{min-width:0;flex:1}
+.owner-cluster-head .meta b{display:block;font-size:13px;font-weight:800}
+.owner-cluster-head .meta small{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.owner-cluster-head .count{font-size:11px;font-weight:800;color:var(--green);background:var(--green2);border-radius:999px;padding:4px 8px}
+.owner-work-list{display:flex;flex-direction:column;gap:0;max-height:220px;overflow:auto}
+.owner-work-item{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 14px;border-top:1px solid #e8ebe8;cursor:pointer;background:#fff}
+.owner-work-item:first-child{border-top:0}
+.owner-work-item:hover{background:#f7faf7}
+.owner-work-main{min-width:0;flex:1}
+.owner-work-main b{font-size:12px;display:block;margin-bottom:5px}
+.owner-work-energy{flex:0 0 auto;width:72px;text-align:right}
+.owner-work-energy b{display:block;font-size:13px;font-weight:800;margin-bottom:5px;color:var(--ink)}
+.energy-bar.mini{height:6px;margin:0;background:#e6e9e5;border-radius:99px;overflow:hidden}
+.energy-bar.mini>i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#3d8f6e,#56a786)}
+.deadline-chip{display:inline-block;font-size:10px;font-weight:800;padding:3px 7px;border-radius:999px;line-height:1.3}
+.deadline-chip.none{background:#eef0ee;color:#606966}
+.deadline-chip.ok{background:var(--green2);color:var(--green)}
+.deadline-chip.soon{background:var(--amber2);color:var(--amber)}
+.deadline-chip.late{background:var(--red2);color:var(--red)}
+.task-edit-steps{display:grid;gap:8px;margin-top:6px}
+.task-edit-step{display:grid;grid-template-columns:1fr 150px;gap:8px;align-items:end;padding:10px;border:1px solid var(--line);border-radius:12px;background:#fafcfa}
+.task-edit-step .field{margin:0}
+.task-edit-step label{font-size:9px}
+.task-detail-panel{margin-top:4px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fafcfa}
+.task-detail-panel .member-row,.task-detail-panel .cost-row,.task-detail-panel .doc-row,.docs-row{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:12px}
+.task-detail-panel .member-row:last-child,.task-detail-panel .cost-row:last-child,.task-detail-panel .doc-row:last-child,.docs-row:last-child{border-bottom:0}
+.task-detail-panel .empty,.docs-empty{color:var(--muted);font-size:12px;padding:8px 0}
+.status-pill{display:inline-block;font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;background:#eef2f0;color:#52605a}
+.status-pill.DOING{background:#e8f2ed;color:#0f6b50}
+.status-pill.BLOCKED{background:var(--red2);color:var(--red)}
+.status-pill.DONE{background:#17211e;color:#fff}
+.status-pill.WAITING{background:var(--amber2);color:var(--amber)}
+.collab-picker{border:1px solid var(--line);border-radius:10px;background:#fff;max-height:160px;overflow:auto;padding:4px}
+.collab-picker label{display:flex;align-items:center;gap:8px;padding:8px 10px;margin:0;font-size:11px;color:#31423b;cursor:pointer;border-radius:8px}
+.collab-picker label:hover{background:#f3f6f4}
+.collab-picker input{width:auto;margin:0;accent-color:var(--green)}
+.collab-picker .collab-empty{padding:10px;font-size:11px;color:var(--muted)}
+.owner-work-empty{padding:14px;font-size:12px;color:var(--muted)}
+.owner-focus{margin-bottom:14px;padding:14px;border:1px solid #c5d8cc;border-radius:16px;background:#eef6f1}
+.owner-focus h3{margin:0 0 4px;font-size:15px}
+.owner-focus p{margin:0 0 12px;font-size:12px;color:var(--muted)}
+.owner-name-btn{background:none;border:0;padding:0;font:inherit;font-weight:800;color:var(--green);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.owner-name-btn:hover{color:#14352b}
+@media(max-width:1050px){.owner-clusters{grid-template-columns:1fr}}
+@media(max-width:760px){.owner-clusters{grid-template-columns:1fr}}
+.btn{border:0;border-radius:999px;padding:10px 16px;font-size:11px;font-weight:800;background:var(--widget-blue);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:transform .18s ease,opacity .15s ease}.btn.primary{background:var(--cal-accent);color:#fff}.btn.dark{background:var(--ink);color:white}.btn.soft{background:var(--widget-blue);color:var(--ink)}.btn.danger{background:var(--red2);color:var(--red)}
+.btn-circle{width:44px;height:44px;min-width:44px;padding:0;border-radius:50%;background:var(--cal-accent);color:#fff;border:0;display:inline-grid;place-items:center;font-size:16px;font-weight:900;cursor:pointer;box-shadow:0 8px 18px rgba(255,122,41,.28);transition:transform .18s ease}
+.btn-circle:hover{transform:scale(1.06)}.btn-circle.soft{background:#fff;color:var(--cal-accent);border:1px solid var(--line)}
+.btn.loading,.btn[data-busy="1"],.btn-circle.loading{opacity:.72;pointer-events:none;cursor:wait}
+.btn-spin{width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;display:inline-block;animation:btnSpin .7s linear infinite;flex:0 0 auto}
+@keyframes btnSpin{to{transform:rotate(360deg)}}
+
+/* Calendar-mechanism filters (day-circle selection) */
+.cal-strip{background:var(--cal-accent);border-radius:var(--radius-card);padding:16px 14px 18px;margin-bottom:14px;color:#fff}
+.cal-strip-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:0 4px}
+.cal-strip-head b{font-size:18px;font-weight:800;letter-spacing:-.02em}
+.cal-days{display:flex;gap:4px;justify-content:space-between;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.cal-days::-webkit-scrollbar{display:none}
+.cal-day{flex:1;min-width:52px;border:0;background:transparent;color:rgba(255,255,255,.82);padding:6px 4px 10px;border-radius:18px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;font:inherit;position:relative}
+.cal-day .dow{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.cal-day .dom{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-size:15px;font-weight:800;background:transparent;color:#fff;transition:background .2s ease,color .2s ease,transform .2s ease}
+.cal-day.active .dow{color:#fff;font-weight:900}
+.cal-day.active .dom{background:#fff;color:var(--cal-accent);transform:scale(1.05);box-shadow:0 6px 16px rgba(0,0,0,.12)}
+.cal-day:hover .dom{background:rgba(255,255,255,.18)}
+.cal-subfilters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px;align-items:center}
+.cal-pill{border:0;background:var(--widget-blue);color:var(--ink);border-radius:999px;padding:8px 14px;font-size:11px;font-weight:800;cursor:pointer}
+.cal-pill.active{background:var(--cal-accent);color:#fff}
+
+.task-toolbar{display:flex;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}.filters{display:flex;gap:7px;flex-wrap:wrap}.filter{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 10px;font-size:10px;cursor:pointer}.filter.active{background:var(--cal-accent);color:#fff;border-color:var(--cal-accent)}.task-table{width:100%;border-collapse:separate;border-spacing:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-card);overflow:hidden}.task-table th{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:10px 12px;text-align:left;background:var(--panel2)}.task-table td{font-size:11px;padding:12px;border-top:1px solid var(--line)}.task-title b{display:block;font-size:12px;margin-bottom:3px}.task-title small{color:var(--muted)}
+
+/* Soft widgets — xanh biển nhạt */
+.card,.metric,.unit,.project,.staff-task,.decision,.draft,.owner-cluster{border-radius:var(--radius-card)!important}
+.card,.metric{background:var(--widget-blue);border:1px solid var(--line)}
+.project-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.card.project{padding:18px;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;border:1px solid var(--line);background:var(--widget-blue);box-shadow:0 2px 0 rgba(2,132,199,.04)}
+.card.project:hover{transform:translateY(-2px);box-shadow:0 14px 32px rgba(2,132,199,.12)}
+.card.project.is-priority{background:var(--cal-yellow);border-color:#ffd0a8}
+.project-widget-foot{display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:10px}
+.meta-pill{display:inline-flex;align-items:center;gap:6px;background:#fff;border-radius:999px;padding:7px 12px;font-size:11px;font-weight:800;color:var(--ink);border:1px solid var(--line)}
+.avatar-stack{display:flex;align-items:center}
+.avatar-stack .av{width:28px;height:28px;border-radius:50%;border:2px solid #fff;background:var(--widget-blue-strong);margin-left:-8px;display:grid;place-items:center;font-size:9px;font-weight:800;color:#0369a1}
+.avatar-stack .av:first-child{margin-left:0}
+.avatar-stack .av.more{background:var(--cal-accent);color:#fff}
+.staff-wrap{max-width:620px;margin:0 auto}.mobile-shell{background:#eef0ec;border:1px solid #dfe4de;border-radius:34px;padding:12px;box-shadow:var(--shadow)}.mobile-screen{background:#fbfcfa;border-radius:25px;min-height:700px;padding:20px;overflow:hidden}.mobile-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.mobile-head h2{margin:0;font-size:20px}.mobile-head small{color:var(--muted)}.hello{background:#18221e;color:white;border-radius:19px;padding:16px;margin-bottom:14px}.hello small{color:#b7c3bd}.hello h3{margin:4px 0 0;font-size:17px}.staff-task{background:#fff;border:1px solid var(--line);border-radius:17px;padding:15px;margin-bottom:10px}.staff-task .top{display:flex;justify-content:space-between;gap:10px}.staff-task h3{font-size:14px;margin:0 0 5px}.staff-task p{font-size:11px;color:var(--muted);margin:0}.staff-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:13px}.staff-actions button{border:0;border-radius:10px;padding:10px 6px;font-size:10px;font-weight:800}.staff-actions .start{background:#e8f2ed;color:#0f6b50}.staff-actions .done{background:#17211e;color:#fff}.staff-actions .problem{background:#fff0e8;color:#9d4b10}.report-big{width:100%;border:0;border-radius:16px;padding:15px;background:#b43b33;color:white;font-size:13px;font-weight:900;margin-top:8px;cursor:pointer}.bottomnav{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:17px}.bottomnav button{border:0;background:#eef0ec;text-align:center;color:var(--muted);font-size:9px;padding:8px;cursor:pointer;border-radius:10px}.bottomnav button.on{color:var(--green);font-weight:800;background:#e8f2ed}
+.issue-categories{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}.issue-cat{border:1px solid var(--line);border-radius:15px;background:#fff;padding:17px 12px;text-align:left;cursor:pointer}.issue-cat.selected,.issue-cat:focus{outline:2px solid var(--green)}.issue-cat b{display:block;font-size:12px}.issue-cat small{color:var(--muted);font-size:10px}.camera{height:160px;border-radius:16px;border:1.5px dashed #cfd5d1;background:#f5f7f4;display:grid;place-items:center;text-align:center;color:var(--muted);margin-top:12px;cursor:pointer;position:relative}.camera input[type=file]{display:none}.camera strong{display:block;color:#4a5651;font-size:12px}.camera span{font-size:28px}.text-input{width:100%;border:1px solid var(--line);border-radius:13px;padding:12px;margin-top:10px;outline:none;background:#fff;font-size:11px}
 .arch{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:stretch}.arch-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;text-align:center}.arch-box b{display:block;font-size:11px}.arch-box span{display:block;font-size:9px;color:var(--muted);margin-top:5px;line-height:1.4}.arch-arrow{display:none}.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:13px}.rule{border-radius:14px;padding:14px;background:var(--panel);border:1px solid var(--line)}.rule b{font-size:11px}.rule p{font-size:10px;color:var(--muted);line-height:1.45;margin:6px 0 0}
-.modal{position:fixed;inset:0;background:rgba(10,18,15,.48);display:none;place-items:center;padding:18px;z-index:20}.modal.show{display:grid}.modal-card{width:min(520px,100%);background:#fff;border-radius:20px;padding:19px;box-shadow:var(--shadow)}.modal-card h3{margin:0 0 5px;font-size:17px}.modal-card p{margin:0 0 15px;color:var(--muted);font-size:11px}.field{margin-top:10px}.field label{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;outline:none;background:#fff;font-size:11px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.modal{position:fixed;inset:0;background:rgba(10,18,15,.48);display:none;place-items:center;padding:18px;z-index:20}.modal.show{display:grid}.modal-card{width:min(520px,100%);background:#fff;border-radius:20px;padding:19px;box-shadow:var(--shadow);pointer-events:auto;position:relative;z-index:1}.modal-card h3{margin:0 0 5px;font-size:17px}.modal-card p{margin:0 0 15px;color:var(--muted);font-size:11px}.field{margin-top:10px}.field label{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;outline:none;background:#fff;font-size:11px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+#expenseModal.show{z-index:40}#taskEnergyModal.show{z-index:25}#expenseDetailModal.show{z-index:35}
 .priority-gate{background:#fff5e7;border:1px solid #f0d8b2;border-radius:13px;padding:11px;margin-top:10px}.priority-gate b{font-size:11px;color:#85520c}.priority-gate p{font-size:10px;color:#8a6c42;margin:4px 0 0}
 
 /* Chốt ngày & tài chính quản trị */
@@ -60,21 +197,27 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .ui-view-radio,.mobile-menu-toggle{position:fixed;left:-9999px;opacity:0;pointer-events:none}
 #vr-dashboard:checked ~ .app #dashboard,
 #vr-projects:checked ~ .app #projects,
+#vr-adminOps:checked ~ .app #adminOps,
+#vr-staffOps:checked ~ .app #staffOps,
 #vr-tasks:checked ~ .app #tasks,
 #vr-ai:checked ~ .app #ai,
 #vr-decisions:checked ~ .app #decisions,
 #vr-finance:checked ~ .app #finance,
 #vr-expenses:checked ~ .app #expenses,
+#vr-docs:checked ~ .app #docs,
 #vr-staff:checked ~ .app #staff,
 #vr-issue:checked ~ .app #issue,
 #vr-blueprint:checked ~ .app #blueprint{display:block!important}
 #vr-dashboard:not(:checked) ~ .app #dashboard.active{display:none}
 #vr-projects:checked ~ .app #dashboard.active,
+#vr-adminOps:checked ~ .app #dashboard.active,
+#vr-staffOps:checked ~ .app #dashboard.active,
 #vr-tasks:checked ~ .app #dashboard.active,
 #vr-ai:checked ~ .app #dashboard.active,
 #vr-decisions:checked ~ .app #dashboard.active,
 #vr-finance:checked ~ .app #dashboard.active,
 #vr-expenses:checked ~ .app #dashboard.active,
+#vr-docs:checked ~ .app #dashboard.active,
 #vr-staff:checked ~ .app #dashboard.active,
 #vr-issue:checked ~ .app #dashboard.active,
 #vr-blueprint:checked ~ .app #dashboard.active{display:none!important}
@@ -99,16 +242,196 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .expense-filterbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:12px}.expense-filterbar .field{margin:0;min-width:145px}.expense-filterbar .field label{font-size:9px}.expense-overview{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.expense-breakdown{display:grid;grid-template-columns:1fr 1fr;gap:14px}.breakdown-list{display:flex;flex-direction:column;gap:12px}.breakdown-row{display:grid;grid-template-columns:minmax(130px,1fr) 2.2fr auto;gap:10px;align-items:center}.breakdown-row .name{font-size:11px;font-weight:800}.breakdown-row .amount{font-size:11px;font-weight:900;white-space:nowrap}.mini-bar{height:8px;background:#edf0ec;border-radius:999px;overflow:hidden}.mini-bar i{display:block;height:100%;background:var(--green);border-radius:999px}.mini-bar.amber i{background:#c8903c}.mini-bar.red i{background:#bb6155}.expense-row{cursor:pointer;transition:.15s ease}.expense-row:hover{background:#f5f8f4}.expense-code{font-size:9px;font-weight:900;color:var(--muted);letter-spacing:.05em}.expense-detail-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.expense-detail-amount{font-size:25px;font-weight:900;letter-spacing:-.04em}.expense-detail-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin-top:14px}.expense-status-flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}.expense-status-flow span{padding:7px 9px;border-radius:999px;background:#f0f2ef;color:var(--muted);font-size:10px;font-weight:800}.expense-status-flow span.on{background:#e5f2ec;color:var(--green)}.expense-status-flow b{color:#a4aba5}.expense-doc{border:1px dashed var(--line);background:#fafbf9;border-radius:12px;padding:12px;display:flex;justify-content:space-between;gap:10px;align-items:center}.expense-doc strong{font-size:11px}.expense-doc span{font-size:10px;color:var(--muted)}.click-hint{font-size:10px;color:var(--muted);margin-top:6px}.metric.clickable{cursor:pointer}.metric.clickable:hover{border-color:#bdc9c0;transform:translateY(-1px)}
 @media(max-width:920px){.expense-overview,.expense-breakdown,.expense-detail-grid{grid-template-columns:1fr}.breakdown-row{grid-template-columns:minmax(115px,1fr) 1.8fr auto}}
 @media(max-width:620px){.expense-filterbar{display:grid;grid-template-columns:1fr 1fr}.expense-filterbar .field{min-width:0}.breakdown-row{grid-template-columns:1fr auto}.breakdown-row .mini-bar{grid-column:1/-1;grid-row:2}.expense-detail-amount{font-size:22px}}
+
+/* Diagnostic health states — from SYSTEM_AUDIT / TARGET_ARCHITECTURE §13 */
+.health-mock,.health-not-connected,.health-not-implemented,.health-dead{
+  background:#FFF1F0!important;
+  border:1px solid #F5C2C0!important;
+  border-radius:14px;
+  position:relative;
+}
+.health-partial{
+  background:#FFF8EB!important;
+  border:1px solid #F0D8B2!important;
+  border-radius:14px;
+  position:relative;
+}
+.health-live{position:relative}
+.health-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+  border-radius:999px;padding:4px 8px;white-space:nowrap;flex:0 0 auto;
+}
+.health-badge.mock,.health-badge.not-connected,.health-badge.not-implemented,.health-badge.dead{
+  background:#FDECEA;color:#B43B33;border:1px solid #F5C2C0;
+}
+.health-badge.partial{background:#FFF3DF;color:#A75E06;border:1px solid #F0D8B2}
+.health-badge.live{background:#E7F3EE;color:#0F6B50;border:1px solid #BCDCCD}
+.health-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.health-head:last-child{margin-bottom:0}
+.health-disabled{opacity:.72;cursor:not-allowed!important;pointer-events:none}
+button.health-disabled,select.health-disabled{pointer-events:none}
+.metric.health-mock,.metric.health-partial{box-shadow:none}
+.card.health-mock,.card.health-partial,.card.health-dead{padding:14px}
+.section-head .health-badge{margin-left:auto;align-self:center}
+
+/* CORE MVP — hide unfinished / diagnostic UI unless ?debug=1 */
+.nav-group-label{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#7f8f87;padding:12px 12px 4px}
+body:not(.hhg-debug) .mvp-deferred,
+body:not(.hhg-debug) .health-badge,
+body:not(.hhg-debug) .dev-banner,
+body:not(.hhg-debug) .side-bottom.dev-banner{display:none!important}
+body.hhg-overview .nav-account-only{display:none!important}
+body:not(.hhg-debug) .detail-grid{grid-template-columns:1fr}
+body:not(.hhg-debug) .finance-layout{grid-template-columns:1fr}
+body.hhg-debug .mvp-deferred{/* visible in debug */}
+body.hhg-debug .dev-banner{display:block}
+
+/* Task (Project) energy checklist */
+.card.project{cursor:pointer;transition:border-color .15s ease,transform .15s ease}
+.card.project:hover{border-color:#b7c5bc;transform:translateY(-1px)}
+.energy-label{display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-top:10px}
+.energy-label b{font-size:12px}
+.energy-bar{height:10px;background:#e6e9e5;border-radius:99px;overflow:hidden;margin-top:6px}
+.energy-bar>i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#3d8f6e,#56a786)}
+.task-step-list{display:grid;gap:10px;margin-top:14px}
+.task-step-list[hidden],.task-detail-panel[hidden]{display:none!important}
+.task-step{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:#f7faf7;flex-wrap:wrap}
+.task-step.done{background:#eef7f2;border-color:#c5ddd1;color:var(--ink)}
+.task-step-num{width:28px;height:28px;border-radius:9px;background:#17211e;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800;flex:0 0 auto}
+.task-step.done .task-step-num{background:var(--green);color:#fff}
+.task-step-body{flex:1;min-width:140px}
+.task-step-body b{display:block;font-size:13px;color:var(--ink)}
+.task-step.done .task-step-body b{color:#1a2e28}
+.task-step-body small{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.task-step-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-left:auto}
+.task-step .btn{flex:0 0 auto;white-space:nowrap}
+.task-step-proof{display:flex;align-items:flex-start;gap:8px;width:100%;margin-top:4px;padding-top:8px;border-top:1px dashed var(--line);min-width:0}
+.task-step-proof img{width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:#fff;flex:0 0 auto}
+.task-step-proof>div,.task-proof-meta{min-width:0;overflow:hidden;flex:1}
+.task-step-proof b,.task-proof-meta b{display:block;font-size:11px;color:var(--ink);margin-bottom:6px}
+.task-step-proof span{font-size:10px;color:var(--muted)}
+.task-step-proof a,.task-proof-meta>a{font-size:11px;font-weight:800;color:var(--green)}
+.task-proof-thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.task-proof-thumb{position:relative;display:block;width:56px;height:56px;flex:0 0 auto}
+.task-proof-thumb img{width:56px;height:56px;display:block}
+.task-proof-del{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:0;border-radius:999px;background:#17211e;color:#fff;font-size:12px;line-height:1;cursor:pointer;padding:0}
+.task-add-wrap{display:grid;gap:8px;margin-top:4px}
+.task-energy-head-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;flex:0 0 auto}
+.task-add-step{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:14px;border:1.5px dashed var(--line);border-radius:14px;background:#fafcfa;color:var(--ink);font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.task-add-step.compact{width:auto;padding:8px 12px;border-style:solid;border-color:var(--line);background:#edf1ee;font-size:11px;gap:8px}
+.task-add-step:hover{border-color:var(--green);background:#eef7f2}
+.task-add-plus{width:28px;height:28px;border-radius:9px;background:var(--green);color:#fff;display:grid;place-items:center;font-size:18px;line-height:1;font-weight:800}
+.task-add-step.compact .task-add-plus{width:22px;height:22px;font-size:15px;border-radius:7px}
+.task-add-form{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff;display:grid;gap:10px;margin:0 0 12px}
+.task-add-form[hidden]{display:none!important}
+.task-add-form input{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:inherit;font-size:13px;outline:none}
+.task-add-form input:focus{border-color:var(--green)}
+.task-add-form-actions{display:flex;justify-content:flex-end;gap:8px}
+#taskEnergyModal .modal-card{max-width:620px;max-height:min(92vh,860px);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+
+/* ── Admin Ops · Leaders / Schedule / Assign (ref pastel bento) ── */
+.nav-admin-only{display:none!important}
+body.hhg-admin .nav-admin-only{display:flex!important}
+.nav-staff-only{display:none!important}
+body.hhg-staff .nav-staff-only{display:flex!important}
+.adm-staff-light{background:#f7f9fc!important;color:#0b0f14!important}
+.adm-staff-light .adm-timeline{max-height:none}
+.adm-staff-hint{font-size:10px;font-weight:700;color:#2f8cff;margin-top:6px}
+.adm-wrap{max-width:440px;margin:0 auto}
+.adm-phone{background:#0b0f14;border-radius:36px;padding:10px;box-shadow:0 28px 60px rgba(8,18,28,.28);overflow:hidden}
+.adm-screen{min-height:720px;border-radius:28px;overflow:hidden;position:relative;font-family:"Outfit",ui-sans-serif,system-ui,sans-serif;background:#0b0f14;color:#fff}
+.adm-screen[hidden]{display:none!important}
+.adm-hero{background:linear-gradient(145deg,#2f8cff 0%,#1a6fe8 55%,#0d5bd6 100%);border-radius:0 0 28px 28px;padding:22px 20px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.adm-hero-left{display:flex;align-items:center;gap:12px;min-width:0}
+.adm-avatar{width:52px;height:52px;border-radius:50%;background:#fff;color:#0b0f14;display:grid;place-items:center;font-weight:800;font-size:15px;flex:0 0 auto;box-shadow:0 8px 20px rgba(0,0,0,.18)}
+.adm-hero small{display:block;font-size:11px;opacity:.85;letter-spacing:.04em}
+.adm-hero b{display:block;font-size:20px;font-weight:800;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.adm-bell{width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.18);color:#fff;font-size:18px;display:grid;place-items:center;cursor:pointer}
+.adm-bell:hover{background:rgba(255,255,255,.28)}
+.adm-body{padding:18px 16px 28px}
+.adm-section-label{margin:0 0 12px;font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#9aa3ad}
+.adm-leader-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.adm-leader-card{border:0;border-radius:26px;padding:16px 14px 14px;min-height:128px;display:flex;flex-direction:column;justify-content:space-between;text-align:left;cursor:pointer;color:#0b0f14;box-shadow:0 10px 28px rgba(0,0,0,.12);transition:transform .18s ease}
+.adm-leader-card:hover{transform:translateY(-2px)}
+.adm-leader-card .adm-leader-top{display:flex;align-items:center;gap:8px}
+.adm-leader-card .adm-mini-av{width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,.12);display:grid;place-items:center;font-size:10px;font-weight:800}
+.adm-leader-card .adm-leader-name{font-size:16px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
+.adm-leader-card .adm-overall{display:inline-flex;align-items:center;gap:6px;background:#fff;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.adm-leader-card .adm-overall span{opacity:.55;font-weight:600;font-size:10px;text-transform:lowercase}
+.adm-c0{background:#9fd0ff}.adm-c1{background:#c9b6ff}.adm-c2{background:#7aa6ff}.adm-c3{background:#ff8f8a}.adm-c4{background:#ffe08a}.adm-c5{background:#9ef0c8}.adm-c6{background:#ffc2e0}.adm-c7{background:#b8e4ff}
+.adm-empty{color:#8b949e;font-size:13px;padding:18px 4px;line-height:1.5}
+.adm-sched-hero{background:linear-gradient(145deg,#2f8cff,#1570e6);border-radius:0 0 28px 28px;padding:18px 18px 22px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.adm-close-x{width:44px;height:44px;border-radius:14px;border:0;background:#0b0f14;color:#fff;font-size:22px;font-weight:700;cursor:pointer;display:grid;place-items:center;line-height:1}
+.adm-cal-panel{margin:-8px 14px 0;background:#fff;color:#0b0f14;border-radius:28px;padding:18px 16px 20px;box-shadow:0 18px 40px rgba(0,0,0,.22);position:relative;z-index:2}
+.adm-cal-date{margin:0 0 12px;font-size:18px;font-weight:800;letter-spacing:-.02em}
+.adm-day-strip{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.adm-day-strip::-webkit-scrollbar{display:none}
+.adm-day{flex:0 0 auto;width:54px;border:0;border-radius:18px;padding:10px 6px;background:#f1f4f8;color:#64748b;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px}
+.adm-day .dow{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.adm-day .dom{font-size:16px;font-weight:800}
+.adm-day.on{background:#ff7a29;color:#fff;box-shadow:0 8px 18px rgba(255,122,41,.35)}
+.adm-timeline{margin-top:16px;display:flex;flex-direction:column;gap:0;max-height:420px;overflow:auto}
+.adm-slot{display:grid;grid-template-columns:52px 1fr;gap:10px;min-height:72px}
+.adm-slot-time{font-size:11px;font-weight:700;color:#94a3b8;padding-top:4px}
+.adm-slot-card{border-radius:18px;padding:12px 12px 12px 14px;background:#f8fafc;border-left:4px solid #2f8cff;position:relative;cursor:pointer}
+.adm-slot-card.q-DO_NOW{border-left-color:#ef4444;background:#fff5f5}
+.adm-slot-card.q-PLAN{border-left-color:#3b82f6;background:#f0f7ff}
+.adm-slot-card.q-QUICK_ACTION{border-left-color:#f59e0b;background:#fffbeb}
+.adm-slot-card.q-BACKLOG{border-left-color:#94a3b8;background:#f8fafc}
+.adm-slot-card b{display:block;font-size:13px;font-weight:800;margin-bottom:4px;letter-spacing:-.01em}
+.adm-slot-card small{display:block;font-size:10px;color:#64748b;font-weight:600}
+.adm-slot-meta{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px}
+.adm-slot-av{display:flex}
+.adm-slot-av i{width:22px;height:22px;border-radius:50%;background:#0b0f14;color:#fff;font-style:normal;font-size:8px;font-weight:800;display:grid;place-items:center;margin-left:-6px;border:2px solid #fff}
+.adm-slot-av i:first-child{margin-left:0}
+.adm-slot-empty{padding:28px 8px;text-align:center;color:#94a3b8;font-size:13px;line-height:1.5}
+.adm-fab{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);width:64px;height:64px;border-radius:50%;border:0;background:#fff;color:#0b0f14;font-size:32px;font-weight:700;box-shadow:0 14px 36px rgba(0,0,0,.35);cursor:pointer;z-index:5;line-height:1;display:grid;place-items:center}
+.adm-fab:hover{transform:translateX(-50%) scale(1.05)}
+.adm-fab:active{transform:translateX(-50%) scale(.96)}
+#projectModal.adm-assign-mode{background:rgba(8,14,22,.72);backdrop-filter:blur(6px)}
+#projectModal.adm-assign-mode .modal-card{
+  max-width:440px;width:min(94vw,440px);margin:auto;background:#0b0f14;color:#fff;border:0;border-radius:32px;
+  padding:22px 18px 18px;max-height:min(92vh,860px);overflow-y:auto;box-shadow:0 30px 70px rgba(0,0,0,.45);
+  font-family:"Outfit",ui-sans-serif,system-ui,sans-serif;
+}
+#projectModal.adm-assign-mode .modal-card h3{color:#fff;font-size:22px;font-weight:800;letter-spacing:-.03em;margin:0 0 6px}
+#projectModal.adm-assign-mode .adm-form-sub{color:#8b949e;font-size:12px;margin:0 0 16px}
+#projectModal.adm-assign-mode .adm-sec{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#ff7a29;margin:16px 0 8px}
+#projectModal.adm-assign-mode .field label{color:#9aa3ad;font-size:10px;letter-spacing:.04em}
+#projectModal.adm-assign-mode input,#projectModal.adm-assign-mode select,#projectModal.adm-assign-mode textarea{
+  background:#161b22;border:1px solid #2a3340;color:#fff;border-radius:14px;padding:12px 12px
+}
+#projectModal.adm-assign-mode input:focus,#projectModal.adm-assign-mode select:focus,#projectModal.adm-assign-mode textarea:focus{
+  border-color:#2f8cff;outline:none;box-shadow:0 0 0 3px rgba(47,140,255,.2)
+}
+#projectModal.adm-assign-mode .collab-picker{background:#161b22;border-color:#2a3340;color:#fff}
+#projectModal.adm-assign-mode .collab-picker label{color:#e2e8f0}
+#projectModal.adm-assign-mode .collab-picker label:hover{background:#1e2630}
+#projectModal.adm-assign-mode .matrix-btn.soft{background:#161b22;border:1px solid #2a3340;color:#cbd5e1}
+#projectModal.adm-assign-mode .matrix-btn.primary{background:#2f8cff;border-color:#2f8cff;color:#fff}
+#projectModal.adm-assign-mode #projectQuadrantPreview{color:#9ef0c8;font-size:12px}
+#projectModal.adm-assign-mode .modal-actions{margin-top:18px;display:flex;justify-content:space-between;gap:10px}
+#projectModal.adm-assign-mode .btn.soft{background:#1e2630;color:#cbd5e1;border:0}
+#projectModal.adm-assign-mode .btn.primary{background:#ff7a29;border:0;color:#fff;font-weight:800;border-radius:999px;padding:12px 22px;letter-spacing:.02em}
+@media(max-width:760px){
+  .adm-wrap{max-width:100%}
+  .adm-phone{border-radius:0;padding:0;box-shadow:none;background:transparent}
+  .adm-screen{border-radius:0;min-height:calc(100vh - 120px)}
+}
 </style>
 </head>
-<body>
+<body class="hhg-overview">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-dashboard" checked>
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-projects">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-adminOps">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-staffOps">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-tasks">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-ai">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-decisions">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-finance">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-expenses">
+<input class="ui-view-radio" type="radio" name="uiView" id="vr-docs">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-staff">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-issue">
 <input class="ui-view-radio" type="radio" name="uiView" id="vr-blueprint">
@@ -117,20 +440,33 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <div class="app">
 <aside class="sidebar">
 <label class="mobile-close" for="mobileMenuToggle" aria-label="Đóng menu">×</label>
-<div class="brand"><div class="mark">O</div><div><b>HHG OASIS</b><small>Trung tâm điều hành · V0</small></div></div>
+<div class="brand"><div class="mark">O</div><div><b>HHG OASIS</b><small>Quản trị vận hành</small></div></div>
 <nav class="nav">
-<label class="nav-link" for="vr-dashboard" data-view="dashboard"><span class="ico">⌂</span> Trung tâm điều hành</label>
-<label class="nav-link" for="vr-projects" data-view="projects"><span class="ico">◫</span> Dự án</label>
-<label class="nav-link" for="vr-tasks" data-view="tasks"><span class="ico">✓</span> Công việc</label>
-<label class="nav-link" for="vr-ai" data-view="ai"><span class="ico">AI</span> Hộp thư AI</label>
-<label class="nav-link" for="vr-decisions" data-view="decisions"><span class="ico">!</span> Việc chờ quyết định</label>
-<label class="nav-link" for="vr-finance" data-view="finance"><span class="ico">₫</span> Doanh thu & chốt ngày</label>
+<div class="nav-group-label">Điều hành</div>
+<label class="nav-link" for="vr-dashboard" data-view="dashboard"><span class="ico">⌂</span> Tổng quan</label>
+
+<div class="nav-group-label nav-account-only">Công việc</div>
+<label class="nav-link mvp-deferred" for="vr-tasks" data-view="tasks"><span class="ico">✓</span> Công việc (cũ)</label>
+<label class="nav-link nav-admin-only" for="vr-adminOps" data-view="adminOps"><span class="ico">◎</span> Leaders</label>
+<label class="nav-link nav-staff-only" for="vr-staffOps" data-view="staffOps"><span class="ico">▣</span> Lịch của tôi</label>
+<label class="nav-link nav-account-only" for="vr-projects" data-view="projects"><span class="ico">◫</span> Task</label>
+<label class="nav-link nav-account-only" for="vr-issue" data-view="issue"><span class="ico">＋</span> Vấn đề</label>
+<label class="nav-link nav-account-only" for="vr-decisions" data-view="decisions"><span class="ico">!</span> Quyết định</label>
+
+<div class="nav-group-label">Vận hành</div>
+<label class="nav-link" for="vr-finance" data-view="finance"><span class="ico">₫</span> Chốt ngày</label>
 <label class="nav-link" for="vr-expenses" data-view="expenses"><span class="ico">▤</span> Chi phí</label>
-<label class="nav-link" for="vr-staff" data-view="staff"><span class="ico">◎</span> Ứng dụng Lead/Tổ trưởng</label>
-<label class="nav-link" for="vr-issue" data-view="issue"><span class="ico">＋</span> Báo vấn đề</label>
+<label class="nav-link nav-account-only" for="vr-docs" data-view="docs"><span class="ico">▣</span> Kho tài liệu</label>
+
+<!-- Deferred modules — code retained; visible only with ?debug=1 -->
+<div class="mvp-deferred">
+<div class="nav-group-label">Debug / chưa mở</div>
+<label class="nav-link" for="vr-ai" data-view="ai"><span class="ico">AI</span> Hộp thư AI</label>
+<label class="nav-link" for="vr-staff" data-view="staff"><span class="ico">◎</span> Lead / Tổ trưởng</label>
 <label class="nav-link" for="vr-blueprint" data-view="blueprint"><span class="ico">◇</span> Sơ đồ hệ thống</label>
+</div>
 </nav>
-<div class="side-bottom"><div class="demo">Bản mẫu thử nghiệm</div><strong>Dữ liệu đang hiển thị là DỮ LIỆU MẪU</strong><p>Thiết kế để thử luồng quản trị trước khi nối Google Sheets / AppSheet.</p></div>
+<div class="side-bottom dev-banner mvp-deferred"><div class="health-head"><div class="demo">Bản mẫu thử nghiệm</div><span class="health-badge mock">DỮ LIỆU MẪU</span></div><strong>Chế độ debug</strong><p>Module AI / Lead / Blueprint chỉ hiện khi ?debug=1</p></div>
 </aside>
 <label class="mobile-overlay" id="mobileOverlay" for="mobileMenuToggle" aria-label="Đóng menu"></label>
 <main class="main">
@@ -138,134 +474,151 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <label class="mobile-menu-btn" id="mobileMenuBtn" for="mobileMenuToggle" aria-label="Mở menu">☰</label>
 <div class="crumb"><small id="eyebrow">QUẢN TRỊ HHG</small><h1 id="pageTitle">Trung tâm điều hành</h1></div>
 <div class="top-actions">
-<span class="pill">Chủ nhật · 13/09/2026</span>
-<select class="role-select" id="roleSelect"><option>Giám đốc vận hành</option><option>Lãnh đạo cấp cao</option><option>Cố vấn / Quản trị hệ thống</option><option>Quản lý phân khu</option><option>Lead / Tổ trưởng</option><option>Nhân viên cấp thấp (giai đoạn sau)</option></select>
-<div class="avatar">PN</div>
+<span class="pill" id="opsDatePill" title="Ngày vận hành đang xem"><span id="opsDateLabel">Đang tải…</span></span>
+<div class="account-switcher" id="accountSwitcher">
+<button type="button" class="account-trigger" id="accountTrigger" aria-haspopup="listbox" aria-expanded="false" title="Chọn tài khoản / ngữ cảnh">
+<span class="account-trigger-label" id="accountTriggerLabel">Tổng quan HHG Oasis</span>
+<span class="account-trigger-caret" aria-hidden="true">▼</span>
+<span class="avatar" id="accountAvatar">HH</span>
+</button>
+<div class="account-menu" id="accountMenu" role="listbox" aria-label="Chọn tài khoản"></div>
 </div>
 </div>
-<div class="notice"><div><b>Bản mẫu V0</b> · Giao diện mô phỏng luồng quản trị chuyển tiếp</div><span>Không phải dữ liệu tài chính thật</span></div>
+</div>
+<div class="notice health-partial dev-banner mvp-deferred"><div><b>Diagnostic UI</b> · Badge đỏ = MOCK / CHƯA KẾT NỐI / DEAD · Vàng = PARTIAL · Xanh = LIVE</div><span>Chỉ hiện ở chế độ debug</span></div>
 <section class="view active" id="dashboard">
-<div class="grid4">
-<div class="metric"><div class="label">Doanh thu đã ghi nhận</div><div class="value">116,7 triệu</div><div class="delta down">5/6 phân khu đã nộp · chưa gồm Pickleball</div></div>
-<div class="metric"><div class="label">Tiền thực thu đã ghi nhận</div><div class="value">110,1 triệu</div><div class="delta">94,3% doanh thu đang có dữ liệu</div></div>
-<div class="metric clickable" onclick="setView('expenses')"><div class="label">Chi phí hôm nay</div><div class="value">8,4 triệu</div><div class="delta">5,9 triệu đã đối chiếu · 2,5 triệu tạm ghi nhận · Xem chi tiết →</div></div>
-<div class="metric"><div class="label">Tình trạng chốt ngày</div><div class="value">5 / 6</div><div class="delta down">1 phân khu chưa nộp dữ liệu cuối ngày</div></div>
+<div class="grid4" id="dashMetrics">
+<div class="metric"><div class="label">Doanh thu đã ghi nhận</div><div class="value">—</div><div class="delta">Đang tải…</div></div>
+<div class="metric"><div class="label">Tiền thực thu đã ghi nhận</div><div class="value">—</div><div class="delta">Đang tải…</div></div>
+<div class="metric clickable" onclick="setView('expenses')"><div class="label">Chi phí</div><div class="value">—</div><div class="delta">Xem chi tiết →</div></div>
+<div class="metric"><div class="label">Tình trạng chốt ngày</div><div class="value">—</div><div class="delta">Đang tải…</div></div>
 </div>
+
+<div class="section">
+<div class="card" id="dashOwnerClustersCard">
+<div class="section-head">
+  <div>
+    <h2>Tổng quan theo tài khoản</h2>
+    <p>Bấm một account để xem Task của người đó · đăng nhập thì chỉ thấy Task của mình</p>
+  </div>
+  <button type="button" class="linkbtn" id="dashOwnerClear" style="display:none" onclick="clearOverviewOwner()">Xem tất cả cụm</button>
+</div>
+<div id="dashOwnerFocus" class="owner-focus" style="display:none"></div>
+<div class="owner-clusters" id="dashOwnerClusters">
+  <div class="owner-cluster"><div class="owner-cluster-head"><b>Đang tải…</b></div></div>
+</div>
+</div>
+</div>
+
 <div class="section twocol">
 <div class="card">
-<div class="section-head"><div><h2>3 ưu tiên cấp HHG</h2><p>Tối đa 3 ưu tiên đang chạy cùng lúc</p></div><button class="linkbtn" onclick="openTaskModal()">+ Đề xuất ưu tiên mới</button></div>
-<div class="priority-list">
-<div class="priority"><div class="prio-num">01</div><div><h3>Mở rộng Lòng Nướng</h3><p>Phụ trách: Vận hành · Hạn: 30/09 · 8/12 việc hoàn tất</p></div><span class="tag amber">P1 · CÓ RỦI RO</span></div>
-<div class="priority"><div class="prio-num">02</div><div><h3>Mức sẵn sàng Bếp trung tâm</h3><p>Phụ trách: Vận hành chung · Hạn: 24/09 · đang chờ quyết định thiết bị</p></div><span class="tag red">P1 · ĐANG BỊ CHẶN</span></div>
-<div class="priority"><div class="prio-num">03</div><div><h3>Tăng doanh thu hoạt động cốt lõi Oasis</h3><p>Phụ trách: Kinh doanh · rà soát mỗi 7 ngày · 3 thử nghiệm đang chạy</p></div><span class="tag green">P1 · ĐÚNG TIẾN ĐỘ</span></div>
-</div>
-</div>
-<div class="card">
-<div class="section-head"><div><h2>Việc chờ quyết định</h2><p>Việc lãnh đạo cần quyết định</p></div><button class="linkbtn" onclick="setView('decisions')">Xem tất cả</button></div>
+<div class="section-head"><div><h2>Quyết định đang mở</h2><p>Cần xử lý</p></div><button class="linkbtn" onclick="setView('decisions')">Xem tất cả</button></div>
 <div id="dashDecisions"></div>
 </div>
-</div>
-<div class="section twocol">
-<div class="card">
-<div class="section-head"><div><h2>Các phân khu doanh thu</h2><p>Số hiện theo dữ liệu đã nộp · luôn hiển thị nguồn và trạng thái</p></div><button class="linkbtn" onclick="setView('finance')">Chốt ngày / xem chi tiết</button></div>
-<div class="units">
-<div class="unit"><div class="unit-top"><h3>Lòng Nướng</h3><span class="tag amber">TẠM GHI NHẬN</span></div><div class="money">42,6 triệu</div><div class="micro">Mục tiêu ngày 45,0 triệu</div><div class="bar"><i style="width:94%"></i></div><div class="data-line"><small>Nguồn: <b>Nhập tay</b><br/>22:14 · Quản lý phân khu</small><span class="source">Chờ đối chiếu</span></div></div>
-<div class="unit"><div class="unit-top"><h3>Spa</h3><span class="tag green">ĐÃ ĐỐI CHIẾU</span></div><div class="money">28,1 triệu</div><div class="micro">Mục tiêu ngày 30,0 triệu</div><div class="bar"><i style="width:88%"></i></div><div class="data-line"><small>Nguồn: <b>Import file</b><br/>21:50 · Finance</small><span class="source">File bán hàng</span></div></div>
-<div class="unit"><div class="unit-top"><h3>Hồ bơi</h3><span class="tag green">ĐÃ CHỐT</span></div><div class="money">19,8 triệu</div><div class="micro">Mục tiêu ngày 24,0 triệu</div><div class="bar warn"><i style="width:76%"></i></div><div class="data-line"><small>Nguồn: <b>Nhập tay</b><br/>20:58 · đã Finance xác nhận</small><span class="source">Chốt</span></div></div>
-<div class="unit"><div class="unit-top"><h3>Gym</h3><span class="tag amber">CHỜ ĐỐI CHIẾU</span></div><div class="money">11,2 triệu</div><div class="micro">Mục tiêu ngày 16,0 triệu</div><div class="bar warn"><i style="width:70%"></i></div><div class="data-line"><small>Nguồn: <b>File Excel</b><br/>21:18 · Quản lý phân khu</small><span class="source">Import</span></div></div>
-<div class="unit missing"><div class="unit-top"><h3>Pickleball</h3><span class="tag red">CHƯA NỘP</span></div><div class="money">—</div><div class="micro">Chưa cộng vào tổng doanh thu hôm nay</div><div class="bar warn"><i style="width:0%"></i></div><div class="data-line"><small>Chưa có dữ liệu cuối ngày</small><button class="linkbtn" onclick="openDailyClose('Pickleball')">Nhập ngay</button></div></div>
-<div class="unit"><div class="unit-top"><h3>Khác</h3><span class="tag green">ĐÃ CHỐT</span></div><div class="money">15,0 triệu</div><div class="micro">Nguồn thu phụ trợ / dùng chung</div><div class="bar"><i style="width:82%"></i></div><div class="data-line"><small>Nguồn: <b>Tổng hợp Finance</b><br/>22:20</small><span class="source">Chốt</span></div></div>
+<div class="card" id="dashRiskCard">
+<div class="section-head"><div><h2>Cần chú ý</h2><p>Từ chốt ngày, công việc và quyết định</p></div></div>
+<div class="risk-list" id="dashRisks"></div>
 </div>
 </div>
-<div class="card">
-<div class="section-head"><div><h2>Cần chú ý</h2><p>Chỉ những gì cần hành động</p></div></div>
-<div class="risk-list">
-<div class="risk"><i class="dot"></i><div><b>Pickleball chưa nộp chốt ngày</b><small>Doanh thu tổng hiện tại chưa bao gồm phân khu này</small></div><span class="tag red">THIẾU DỮ LIỆU</span></div>
-<div class="risk"><i class="dot"></i><div><b>Bếp trung tâm: chờ duyệt thiết bị</b><small>Vướng mắc cấp quản lý · 1 ngày</small></div><span class="tag red">CẦN QUYẾT</span></div>
-<div class="risk"><i class="dot amber"></i><div><b>Pickleball: nhà thầu chưa chốt lịch</b><small>Nguy cơ trễ tái vận hành</small></div><span class="tag amber">CẦN BÁM</span></div>
-<div class="risk"><i class="dot amber"></i><div><b>4 việc quá hạn</b><small>2 Bảo trì · 1 Trang trí · 1 Tài chính</small></div><span class="tag amber">CẦN ĐÔN ĐỐC</span></div>
-<div class="risk"><i class="dot green"></i><div><b>4/5 chốt ngày đã được đối chiếu hoặc chốt</b><small>Lòng Nướng đang ở trạng thái tạm ghi nhận</small></div><span class="tag green">CÓ NGUỒN</span></div>
-</div>
+<div class="section">
+<div class="card" id="dashUnitsCard">
+<div class="section-head"><div><h2>Doanh thu theo phân khu</h2><p id="dashUnitsSub">Theo DailyClose ngày đang xem</p></div><button class="linkbtn" onclick="setView('finance')">Chốt ngày</button></div>
+<div class="units" id="dashUnits"></div>
 </div>
 </div>
 </section>
 <section class="view" id="projects">
-<div class="section-head"><div><h2>Theo dõi dự án</h2><p>Mỗi dự án = nhóm việc + ngân sách + vướng mắc + quyết định</p></div><button class="btn primary">+ Dự án mới</button></div>
+<div class="section-head"><div><h2>Task</h2><p id="projectGridSub" style="display:none"></p></div>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <button class="btn soft" type="button" id="projectOwnerClear" style="display:none" onclick="clearOverviewOwner()">Xóa lọc</button>
+  <button class="btn primary" type="button" onclick="openProjectModal()">+ Task mới</button>
+</div>
+</div>
+<div class="cal-strip" id="projectCalStrip">
+  <div class="cal-strip-head">
+    <b id="projectCalMonth">Phạm vi</b>
+    <span style="font-size:12px;opacity:.85" id="projectCalCount"></span>
+  </div>
+  <div class="cal-days" id="projectScopeFilters" role="tablist" aria-label="Phạm vi Task">
+    <button type="button" class="cal-day active" data-scope="mine" onclick="setProjectScope('mine',this)">
+      <span class="dow">Mine</span><span class="dom">1</span>
+    </button>
+    <button type="button" class="cal-day" data-scope="collab" onclick="setProjectScope('collab',this)">
+      <span class="dow">Join</span><span class="dom">2</span>
+    </button>
+    <button type="button" class="cal-day" data-scope="all" onclick="setProjectScope('all',this)">
+      <span class="dow">All</span><span class="dom">3</span>
+    </button>
+    <button type="button" class="cal-day" data-scope="review" onclick="setProjectScope('review',this)">
+      <span class="dow">Review</span><span class="dom">R</span>
+    </button>
+  </div>
+</div>
+<div class="cal-subfilters">
+  <button type="button" class="cal-pill" data-pfilter="overdue" onclick="setProjectFilter('overdue',this)">OVERDUE</button>
+  <button type="button" class="cal-pill" data-pfilter="critical" onclick="setProjectFilter('critical',this)">CRITICAL</button>
+  <button type="button" class="cal-pill" data-pfilter="atrisk" onclick="setProjectFilter('atrisk',this)">AT RISK</button>
+  <button type="button" class="cal-pill" data-pfilter="blocked" onclick="setProjectFilter('blocked',this)">BLOCKED</button>
+  <button type="button" class="cal-pill" data-pfilter="awaiting_ack" onclick="setProjectFilter('awaiting_ack',this)">Awaiting Ack</button>
+  <button type="button" class="cal-pill" data-pfilter="done" onclick="setProjectFilter('done',this)">DONE</button>
+  <input id="projectSearch" type="search" placeholder="Tìm Task…" style="border:0;background:var(--widget-blue);border-radius:999px;padding:8px 14px;font-size:11px;min-width:160px;flex:1" oninput="renderProjects()"/>
+</div>
 <div class="project-grid" id="projectGrid"></div>
 </section>
-<section class="view" id="tasks">
-<div class="task-toolbar"><div class="filters"><button class="filter active">Tất cả</button><button class="filter">P0/P1</button><button class="filter">Quá hạn</button><button class="filter">Bị chặn</button><button class="filter">Trước/Sau</button></div><button class="btn primary" onclick="openTaskModal()">+ Tạo việc</button></div>
+<section class="view" id="docs">
+<div class="section-head"><div><h2>Kho tài liệu</h2></div>
+<button class="btn primary" type="button" onclick="openDocUpload()">+ Tải lên</button>
+</div>
+<div class="filters" style="margin-bottom:12px">
+  <button type="button" class="filter active" onclick="setDocView('all',this)">Tất cả</button>
+  <button type="button" class="filter" onclick="setDocView('unlinked',this)">Chưa gắn Task</button>
+</div>
+<div id="docsList" class="card" style="padding:0"></div>
+<input type="file" id="docFileInput" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none"/>
+</section>
+<section class="view mvp-deferred" id="tasks">
+<div class="task-toolbar"><div class="filters">
+<button type="button" class="filter active" onclick="setTaskFilter('all',this)">Tất cả</button>
+<button type="button" class="filter" onclick="setTaskFilter('p01',this)">P0/P1</button>
+<button type="button" class="filter" onclick="setTaskFilter('overdue',this)">Quá hạn</button>
+<button type="button" class="filter" onclick="setTaskFilter('blocked',this)">Bị chặn</button>
+<button type="button" class="filter mvp-deferred" onclick="setTaskFilter('ba',this)">Trước/Sau</button>
+</div><button class="btn primary" type="button" onclick="openTaskModal()">+ Tạo việc</button></div>
 <table class="task-table"><thead><tr><th>Việc</th><th>Phân khu</th><th>Ưu tiên</th><th>Phụ trách</th><th>Hạn</th><th>Trạng thái</th><th>Chi phí</th></tr></thead><tbody id="taskTableBody">
 <tr><td colspan="7" style="padding:16px;color:var(--muted)">Đang tải dữ liệu…</td></tr>
 </tbody></table>
 </section>
-<section class="view" id="ai">
-<div class="section-head"><div><h2>Hộp thư AI · Chờ xác nhận</h2><p>Nhận tin nhắn tự nhiên, AI tách việc và gợi ý phân loại; người quản lý xác nhận trước khi ghi vào hệ thống</p></div><span class="phase-badge">GIAI ĐOẠN 1 · LEAD/TỔ TRƯỞNG</span></div>
+<section class="view mvp-deferred" id="ai">
+<div class="section-head"><div><h2>Hộp thư AI · Chờ xác nhận</h2><p>Nhận tin nhắn tự nhiên, AI tách việc và gợi ý phân loại; người quản lý xác nhận trước khi ghi vào hệ thống</p></div><span class="health-badge live">LIVE</span><span class="phase-badge">GIAI ĐOẠN 1 · LEAD/TỔ TRƯỞNG</span></div>
 <div class="human-check"><b>AI không tự tạo việc chính thức khi chưa được xác nhận</b>AI được phép tách nhóm, nhận diện phân khu, đề xuất người phụ trách, tìm việc có khả năng trùng và gợi ý mức ưu tiên. Owner, deadline, ưu tiên và các trường hợp mơ hồ vẫn cần người quản lý kiểm tra.</div>
 <div class="ai-layout">
 <div class="card ai-source"><div class="section-head"><div><h2>Tin nhắn nguồn</h2><p>Có thể copy từ Zalo / chat / email / ghi chú</p></div></div>
-<textarea id="aiSourceText">Dạ e gửi Task tracking ạ
-
-1. Phiếu thoả thuận công việc
-- ký với các nhóm : hồ bơi, làm vườn & vệ sinh, pickleball
-2. Trung thu
-- dời đèn trên cây
-- đặt thêm đèn bóng trứng
-- phụ kiện decor
-- lh MC, PB PG Chú Cuội - Chị Hằng
-3. Truyền thông
-- plan triển khai
-- chụp món
-- làm biển hiệu
-4. CRM update
-- kiểm tra liên hệ KH đã hết hạn
-5. Thu thập chứng từ Spa
-6. Lắp quạt Bếp Trung Tâm
-7. Dời đá gọn vào ở cổng 27
-8. Tuyển/Training nhân sự Mía Ơi
-9. Kiosk Mía Ơi ở cổng 27
-10. Vệ sinh sàn pick
-- thi công dính bụi lên sàn pick
-11. Phương án diệt chuột
-- đặt bẫy
-12. Merchandise
-- ly mới
-- áo/nón/dù/túi mới
-- đồng phục mới
-13. Kế hoạch Sale Event
-- Chương trình bán tour/combo trải nghiệm cho đoàn thể/công ty (Vy)
-14. Pallete cho loa LNCP
-15. Triển khai canteen ở Hồ Bơi Olympic bán món ăn vặt</textarea>
+<textarea id="aiSourceText" placeholder="Dán tin nhắn từ Zalo / chat / email / ghi chú…"></textarea>
 <div class="ai-toolbar"><button class="btn primary" onclick="analyzeMessageDemo()">AI phân tích tin nhắn</button><button class="btn soft" onclick="resetAiInbox()">Đặt lại</button></div>
 <div class="priority-gate" style="margin-top:10px"><b>Tin nhắn nguồn luôn được lưu</b><p>Khi tạo việc thật, hệ thống giữ nguồn, người gửi, thời gian và phiên bản AI đã đề xuất để có thể truy vết.</p></div></div>
-<div class="card"><div class="ai-summary"><div class="ai-mini"><span>Nhóm chính</span><b id="aiGroups">15</b></div><div class="ai-mini"><span>Việc đề xuất</span><b id="aiDraftCount">25</b></div><div class="ai-mini"><span>Cần người xác nhận</span><b id="aiNeedCheck">8</b></div><div class="ai-mini"><span>Nghi trùng</span><b id="aiDuplicates">2</b></div></div>
+<div class="card"><div class="ai-summary"><div class="ai-mini"><span>Nhóm chính</span><b id="aiGroups">0</b></div><div class="ai-mini"><span>Việc đề xuất</span><b id="aiDraftCount">0</b></div><div class="ai-mini"><span>Cần người xác nhận</span><b id="aiNeedCheck">0</b></div><div class="ai-mini"><span>Nghi trùng</span><b id="aiDuplicates">0</b></div></div>
 <div class="section-head"><div><h2>Bản nháp AI</h2><p>Chưa ghi vào danh sách Công việc cho tới khi bấm Xác nhận</p></div><button class="btn dark" onclick="confirmHighConfidence()">Xác nhận các mục rõ</button></div>
 <div class="draft-list" id="aiDraftList"></div></div>
 </div>
 </section>
 <section class="view" id="decisions">
-<div class="section-head"><div><h2>Việc chờ quyết định</h2><p>Mỗi yêu cầu duyệt phải gắn được với công việc hoặc dự án để quyết định quay lại đúng luồng thực thi</p></div><button class="btn primary" onclick="openDecisionModal()">+ Yêu cầu duyệt</button></div>
+<div class="section-head"><div><h2>Quyết định</h2></div><button class="btn primary" onclick="openDecisionModal()">+ Yêu cầu duyệt</button></div>
 <div class="card" id="decisionList"></div>
 </section>
 <section class="view" id="finance">
-<div class="finance-alert"><div><b>Hôm nay còn 1 phân khu chưa nộp chốt ngày</b><span>Pickleball chưa có doanh thu / tiền thực thu. Số tổng trên Trung tâm điều hành vì vậy đang là số đã ghi nhận, chưa phải số chốt cuối cùng.</span></div><button class="btn primary" onclick="openDailyClose('Pickleball')">Nhập chốt ngày</button></div>
-<div class="grid4">
-<div class="metric"><div class="label">Phân khu đã nộp</div><div class="value">5 / 6</div><div class="delta down">Pickleball chưa nộp</div></div>
-<div class="metric"><div class="label">Doanh thu đã ghi nhận</div><div class="value">116,7 triệu</div><div class="delta">Tổng của 5 phân khu có dữ liệu</div></div>
-<div class="metric"><div class="label">Tiền thực thu</div><div class="value">110,1 triệu</div><div class="delta">94,3% doanh thu đã ghi nhận</div></div>
-<div class="metric"><div class="label">Dữ liệu đã xác nhận</div><div class="value">3 / 6</div><div class="delta">2 đã chốt · 1 đã đối chiếu</div></div>
+<div class="finance-alert" id="financeAlert"><div><b>Đang tải…</b><span></span></div><button class="btn primary" onclick="openDailyClose()">Nhập chốt ngày</button></div>
+<div class="grid4" id="financeMetrics">
+<div class="metric"><div class="label">Phân khu đã nộp</div><div class="value">—</div><div class="delta">Đang tải…</div></div>
+<div class="metric"><div class="label">Doanh thu đã ghi nhận</div><div class="value">—</div><div class="delta">Theo DailyClose</div></div>
+<div class="metric"><div class="label">Tiền thực thu</div><div class="value">—</div><div class="delta">Theo DailyClose</div></div>
+<div class="metric"><div class="label">Đã đối chiếu / chốt</div><div class="value">—</div><div class="delta">Xác nhận</div></div>
 </div>
 <div class="section finance-layout">
-<div class="card"><div class="section-head"><div><h2>Tình trạng chốt ngày theo phân khu</h2><p>Nhập tay, import hay tự động đều về cùng một bảng; nguồn dữ liệu luôn được giữ lại</p></div><button class="btn primary" onclick="openDailyClose()">+ Nhập chốt ngày</button></div>
-<table class="finance-table"><thead><tr><th>Phân khu</th><th>Doanh thu</th><th>Tiền thực thu</th><th>Nguồn</th><th>Cập nhật</th><th>Trạng thái</th><th></th></tr></thead><tbody>
-<tr><td><b>Lòng Nướng</b></td><td>42,6 triệu</td><td>39,8 triệu</td><td><span class="source">Nhập tay</span></td><td>22:14</td><td><span class="tag amber">Tạm ghi nhận</span></td><td><button class="linkbtn" onclick="openDailyClose('Lòng Nướng')">Sửa</button></td></tr>
-<tr><td><b>Spa</b></td><td>28,1 triệu</td><td>26,9 triệu</td><td><span class="source">Import file</span></td><td>21:50</td><td><span class="tag green">Đã đối chiếu</span></td><td><button class="linkbtn" onclick="openDailyClose('Spa')">Xem</button></td></tr>
-<tr><td><b>Hồ bơi</b></td><td>19,8 triệu</td><td>19,8 triệu</td><td><span class="source">Nhập tay</span></td><td>20:58</td><td><span class="tag green">Đã chốt</span></td><td><button class="linkbtn" onclick="openDailyClose('Hồ bơi')">Xem</button></td></tr>
-<tr><td><b>Gym</b></td><td>11,2 triệu</td><td>10,7 triệu</td><td><span class="source">File Excel</span></td><td>21:18</td><td><span class="tag amber">Chờ đối chiếu</span></td><td><button class="linkbtn" onclick="openDailyClose('Gym')">Sửa</button></td></tr>
-<tr id="pickleCloseRow"><td><b>Pickleball</b></td><td id="pickleRev">—</td><td id="pickleCash">—</td><td><span class="source" id="pickleSource">Chưa có</span></td><td id="pickleTime">—</td><td id="pickleStatus"><span class="tag red">Chưa nộp</span></td><td><button class="linkbtn" onclick="openDailyClose('Pickleball')">Nhập ngay</button></td></tr>
-<tr><td><b>Khác</b></td><td>15,0 triệu</td><td>12,9 triệu</td><td><span class="source">Finance tổng hợp</span></td><td>22:20</td><td><span class="tag green">Đã chốt</span></td><td><button class="linkbtn" onclick="openDailyClose('Khác')">Xem</button></td></tr>
+<div class="card" id="financeTableCard"><div class="section-head"><div><h2>Chốt ngày theo phân khu</h2><p id="financeTableSub">DailyClose</p></div><button class="btn primary" onclick="openDailyClose()">+ Nhập chốt ngày</button></div>
+<table class="finance-table"><thead><tr><th>Phân khu</th><th>Doanh thu</th><th>Tiền thực thu</th><th>Nguồn</th><th>Cập nhật</th><th>Trạng thái</th><th></th></tr></thead><tbody id="financeTableBody">
+<tr><td colspan="7" style="padding:16px;color:var(--muted)">Đang tải…</td></tr>
 </tbody></table></div>
-<div class="card"><div class="section-head"><div><h2>3 trạng thái dữ liệu</h2><p>Để lãnh đạo biết con số đáng tin tới đâu</p></div></div>
+<div class="card mvp-deferred"><div class="section-head"><div><h2>3 trạng thái dữ liệu</h2><p>Để lãnh đạo biết con số đáng tin tới đâu</p></div></div>
 <div class="finance-rule"><b><span class="num">1</span>Tạm ghi nhận</b><p>Quản lý phân khu nhập tay hoặc dữ liệu vừa import. Số được hiển thị ngay để vận hành không phải chờ.</p></div>
 <div class="finance-rule"><b><span class="num">2</span>Đã đối chiếu</b><p>Finance đã so với POS, file nguồn, tiền mặt/chuyển khoản hoặc chứng từ liên quan.</p></div>
 <div class="finance-rule"><b><span class="num">3</span>Đã chốt</b><p>Số được khóa cho ngày đó. Nếu điều chỉnh sau chốt phải để lại lịch sử thay đổi.</p></div>
@@ -273,68 +626,137 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 </div>
 </section>
 <section class="view" id="expenses">
-<div class="section-head"><div><h2>Quản lý chi phí</h2><p>Theo dõi từng khoản chi, nhóm chi phí, phân khu, chứng từ và công việc/dự án liên quan</p></div><button class="btn primary" onclick="openExpenseModal()">+ Ghi chi phí</button></div>
-<div class="grid4">
-<div class="metric"><div class="label">Chi phí hôm nay</div><div class="value">8,4 triệu</div><div class="delta">4 khoản đã ghi nhận</div></div>
-<div class="metric"><div class="label">Đã đối chiếu / chốt</div><div class="value">5,9 triệu</div><div class="delta">70,2% tổng chi phí hôm nay</div></div>
-<div class="metric"><div class="label">Tạm ghi nhận</div><div class="value">2,5 triệu</div><div class="delta down">1 khoản cần Finance kiểm tra</div></div>
-<div class="metric"><div class="label">Gắn với công việc</div><div class="value">4,3 triệu</div><div class="delta">2 khoản có thể truy về task</div></div>
+<div class="section-head"><div><h2>Chi phí</h2></div><button class="btn primary" onclick="openExpenseModal()">+ Ghi chi phí</button></div>
+<div class="grid4" id="expenseMetrics">
+<div class="metric"><div class="label">Tổng chi phí</div><div class="value">—</div><div class="delta">Từ dữ liệu thật</div></div>
+<div class="metric"><div class="label">Đã đối chiếu / chốt</div><div class="value">—</div><div class="delta">RECONCILED + LOCKED</div></div>
+<div class="metric"><div class="label">Tạm ghi nhận</div><div class="value">—</div><div class="delta">PROVISIONAL</div></div>
+<div class="metric"><div class="label">Gắn với công việc</div><div class="value">—</div><div class="delta">Có liên kết</div></div>
 </div>
 <div class="expense-overview">
-<div class="card"><div class="section-head"><div><h2>Tổng hợp theo nhóm chi phí</h2><p>Giúp nhìn tiền đang đi vào loại hoạt động nào</p></div><span class="source">Hôm nay</span></div>
-<div class="breakdown-list">
-<div class="breakdown-row"><div class="name">Vận hành thường xuyên</div><div class="mini-bar"><i style="width:49%"></i></div><div class="amount">4,1 triệu · 49%</div></div>
-<div class="breakdown-row"><div class="name">Cải tạo / nâng cấp</div><div class="mini-bar amber"><i style="width:30%"></i></div><div class="amount">2,5 triệu · 30%</div></div>
-<div class="breakdown-row"><div class="name">Sửa chữa / bảo trì</div><div class="mini-bar"><i style="width:21%"></i></div><div class="amount">1,8 triệu · 21%</div></div>
-<div class="breakdown-row"><div class="name">Mua sắm tài sản / thiết bị</div><div class="mini-bar"><i style="width:0%"></i></div><div class="amount">0</div></div>
-</div></div>
-<div class="card"><div class="section-head"><div><h2>Theo trạng thái</h2><p>Độ tin cậy của số liệu</p></div></div>
-<div class="finance-rule"><b><span class="num">1</span>Tạm ghi nhận</b><p><b>2,5 triệu</b> · chưa đối chiếu đủ chứng từ/nguồn.</p></div>
-<div class="finance-rule"><b><span class="num">2</span>Đã đối chiếu</b><p><b>4,3 triệu</b> · đã kiểm tra với chứng từ hoặc công việc liên quan.</p></div>
-<div class="finance-rule"><b><span class="num">3</span>Đã chốt</b><p><b>1,6 triệu</b> · số đã khóa cho ngày.</p></div>
+<div class="card" id="expenseByCategoryCard"><div class="section-head"><div><h2>Theo nhóm chi phí</h2><p>Tổng hợp từ Expense</p></div></div>
+<div class="breakdown-list" id="expenseByCategory"></div></div>
+<div class="card" id="expenseByStatusCard"><div class="section-head"><div><h2>Theo trạng thái</h2><p>Độ tin cậy số liệu</p></div></div>
+<div id="expenseByStatus"></div>
 </div>
 </div>
 <div class="expense-breakdown section">
-<div class="card"><div class="section-head"><div><h2>Theo phân khu</h2><p>Phân khu nào đang phát sinh chi nhiều</p></div></div><div class="breakdown-list">
-<div class="breakdown-row"><div class="name">Lòng Nướng</div><div class="mini-bar amber"><i style="width:100%"></i></div><div class="amount">2,5 triệu</div></div>
-<div class="breakdown-row"><div class="name">Pickleball</div><div class="mini-bar amber"><i style="width:100%"></i></div><div class="amount">2,5 triệu</div></div>
-<div class="breakdown-row"><div class="name">Hồ bơi</div><div class="mini-bar"><i style="width:72%"></i></div><div class="amount">1,8 triệu</div></div>
-<div class="breakdown-row"><div class="name">Dùng chung</div><div class="mini-bar"><i style="width:64%"></i></div><div class="amount">1,6 triệu</div></div>
-</div></div>
-<div class="card"><div class="section-head"><div><h2>Điểm cần kiểm tra</h2><p>Chỉ những khoản cần hành động</p></div></div>
-<div class="risk-list"><div class="risk"><span class="risk-dot red"></span><div><b>1 khoản còn tạm ghi nhận</b><p>2,5 triệu · Lòng Nướng · cần đối chiếu hóa đơn.</p></div></div><div class="risk"><span class="risk-dot amber"></span><div><b>2 khoản đã gắn với công việc</b><p>Cho phép mở ngược task để kiểm tra lý do chi và tiến độ.</p></div></div></div></div>
+<div class="card" id="expenseByUnitCard"><div class="section-head"><div><h2>Theo phân khu</h2><p>Phân khu phát sinh chi</p></div></div><div class="breakdown-list" id="expenseByUnit"></div></div>
+<div class="card" id="expenseAttentionCard"><div class="section-head"><div><h2>Điểm cần kiểm tra</h2><p>Từ dữ liệu Expense</p></div></div>
+<div class="risk-list" id="expenseAttention"></div></div>
 </div>
-<div class="section card"><div class="section-head"><div><h2>Danh sách khoản chi</h2><p>Bấm vào từng dòng để xem người ghi, chứng từ, lịch sử, công việc/dự án liên quan và phân loại AI</p></div></div>
-<div class="expense-filterbar"><div class="field"><label>Khoảng thời gian</label><select><option>Hôm nay</option><option>7 ngày gần nhất</option><option>Tháng này</option></select></div><div class="field"><label>Phân khu</label><select id="expenseUnitFilter" onchange="filterExpenseRows()"><option value="all">Tất cả</option><option>Lòng Nướng</option><option>Hồ bơi</option><option>Pickleball</option><option>Dùng chung</option></select></div><div class="field"><label>Nhóm chi phí</label><select id="expenseCategoryFilter" onchange="filterExpenseRows()"><option value="all">Tất cả</option><option>Vận hành thường xuyên</option><option>Sửa chữa / bảo trì</option><option>Cải tạo / nâng cấp</option><option>Mua sắm tài sản / thiết bị</option></select></div><div class="field"><label>Trạng thái</label><select id="expenseStatusFilter" onchange="filterExpenseRows()"><option value="all">Tất cả</option><option>Tạm ghi nhận</option><option>Đã đối chiếu</option><option>Đã chốt</option></select></div></div>
+<div class="section card"><div class="section-head"><div><h2>Danh sách khoản chi</h2><p>Bấm dòng để xem chi tiết</p></div></div>
+<div class="expense-filterbar"><div class="field mvp-deferred health-dead"><label>Khoảng thời gian <span class="health-badge dead">DEAD</span></label><select class="health-disabled" disabled title="Chưa có handler lọc theo thời gian"><option>Tất cả (hiện tại)</option><option>7 ngày gần nhất</option><option>Tháng này</option></select></div><div class="field"><label>Phân khu</label><select id="expenseUnitFilter" onchange="filterExpenseRows()"><option value="all">Tất cả</option></select></div><div class="field"><label>Nhóm chi phí</label><select id="expenseCategoryFilter" onchange="filterExpenseRows()"><option value="all">Tất cả</option></select></div><div class="field"><label>Trạng thái</label><select id="expenseStatusFilter" onchange="filterExpenseRows()"><option value="all">Tất cả</option><option>Tạm ghi nhận</option><option>Đã đối chiếu</option><option>Đã chốt</option></select></div></div>
 <table class="finance-table"><thead><tr><th>Mã / giờ</th><th>Phân khu</th><th>Nhóm chi phí</th><th>Nội dung</th><th>Số tiền</th><th>Liên kết</th><th>Trạng thái</th></tr></thead><tbody id="expenseTableBody">
 <tr><td colspan="7" style="padding:16px;color:var(--muted)">Đang tải…</td></tr>
-</tbody></table><div class="click-hint">Mỗi khoản chi là một hồ sơ riêng, không chỉ là một dòng số liệu.</div></div>
+</tbody></table></div>
 </section>
-<section class="view" id="staff">
-<div class="staff-wrap"><div class="mobile-shell"><div class="mobile-screen">
+<section class="view" id="staffOps">
+<div class="adm-wrap">
+  <div class="adm-phone" style="background:transparent;box-shadow:none;padding:0">
+    <div class="adm-screen adm-staff-light" id="staffHome">
+      <header class="adm-hero" style="border-radius:28px;margin:0 0 8px">
+        <div class="adm-hero-left">
+          <div class="adm-avatar" id="staffHelloAvatar">ME</div>
+          <div>
+            <small>HELLO,</small>
+            <b id="staffHelloName">STAFF</b>
+          </div>
+        </div>
+        <button type="button" class="adm-bell" onclick="setView('decisions')" aria-label="Quyết định">●</button>
+      </header>
+      <div class="adm-body" style="padding-top:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px">
+          <h3 class="adm-cal-date" id="staffCalDateLabel" style="margin:0;color:#0b0f14">—</h3>
+          <div class="adm-slot-av" id="staffAvatarStack"></div>
+        </div>
+        <div class="adm-day-strip" id="staffDayStrip"></div>
+        <div style="text-align:center;margin:8px 0 4px;color:#94a3b8">◎</div>
+        <div class="adm-timeline" id="staffTimeline"></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+<section class="view" id="adminOps">
+<div class="adm-wrap">
+  <div class="adm-phone">
+    <!-- Screen 1: Leaders home -->
+    <div class="adm-screen" id="admHome">
+      <header class="adm-hero">
+        <div class="adm-hero-left">
+          <div class="adm-avatar" id="admAdminAvatar">AD</div>
+          <div>
+            <small>HELLO,</small>
+            <b id="admAdminHello">ADMIN</b>
+          </div>
+        </div>
+        <button type="button" class="adm-bell" aria-label="Thông báo" onclick="setView('decisions')">●</button>
+      </header>
+      <div class="adm-body">
+        <h3 class="adm-section-label">Leaders</h3>
+        <div class="adm-leader-grid" id="admLeaderGrid"></div>
+      </div>
+    </div>
+    <!-- Screen 2: Leader day schedule -->
+    <div class="adm-screen" id="admSchedule" hidden>
+      <header class="adm-sched-hero">
+        <div class="adm-hero-left">
+          <div class="adm-avatar" id="admLeaderAvatar">—</div>
+          <div>
+            <small>SCHEDULE</small>
+            <b id="admLeaderHello">—</b>
+          </div>
+        </div>
+        <button type="button" class="adm-close-x" onclick="closeAdminLeaderSchedule()" aria-label="Đóng">×</button>
+      </header>
+      <div class="adm-cal-panel">
+        <h3 class="adm-cal-date" id="admCalDateLabel">—</h3>
+        <div class="adm-day-strip" id="admDayStrip"></div>
+        <div class="adm-timeline" id="admTimeline"></div>
+      </div>
+      <button type="button" class="adm-fab" id="admFab" onclick="openAdminAssign(event)" aria-label="Giao task">+</button>
+    </div>
+  </div>
+</div>
+</section>
+<section class="view mvp-deferred" id="staff">
+<div class="staff-wrap"><div class="mobile-shell"><div class="mobile-screen health-partial" style="padding:16px">
+<div class="health-head"><small style="color:var(--muted)">Scope hiện tại: mọi việc chưa DONE (chưa lọc theo User)</small><span class="health-badge partial">PARTIAL</span></div>
 <div class="mobile-head"><div><small>HHG Oasis · Lead / Tổ trưởng</small><h2>Việc của tôi</h2></div><div class="avatar">KT</div></div>
-<div class="hello"><small>Hôm nay · 13/09</small><h3>Còn 3 việc cần xử lý</h3></div>
-<div class="staff-task" onclick="openTaskDetail('lights')"><div class="top"><div><h3>Thay 4 đèn khu hồ trẻ em</h3><p>Hạn hôm nay · Khu Hồ bơi</p></div><span class="tag amber">Làm trước</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
-<div class="staff-task" onclick="openTaskDetail('socket')"><div class="top"><div><h3>Kiểm tra ổ điện quầy phụ</h3><p>Hạn hôm nay · Lòng Nướng</p></div><span class="tag gray">Tiếp theo</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
-<div class="staff-task" onclick="openTaskDetail('signage')"><div class="top"><div><h3>Chụp ảnh Sau khu biển bảng</h3><p>Hạn 14/09 · Pickleball</p></div><span class="tag gray">Tiếp theo</span></div><div class="staff-actions"><button class="start">BẮT ĐẦU</button><button class="done">ĐÃ XONG</button><button class="problem">CÓ VẤN ĐỀ</button></div></div>
-<button class="report-big" onclick="setView('issue')">＋ BÁO VẤN ĐỀ MỚI</button>
-<div class="bottomnav"><div class="on">✓<br/>Việc của tôi</div><div>＋<br/>Báo vấn đề</div><div>◌<br/>Lịch sử</div></div>
+<div class="hello" id="staffHello"><small>Hôm nay · 13/09</small><h3>Đang tải…</h3></div>
+<div id="staffTaskList"></div>
+<div id="staffHistory" style="display:none"></div>
+<button class="report-big" type="button" onclick="setView('issue')">＋ BÁO VẤN ĐỀ MỚI</button>
+<div class="bottomnav">
+<button type="button" class="on" data-tab="tasks" onclick="setStaffTab('tasks')">✓<br/>Việc của tôi</button>
+<button type="button" data-tab="issue" onclick="setStaffTab('issue')">＋<br/>Báo vấn đề</button>
+<button type="button" data-tab="history" onclick="setStaffTab('history')">◌<br/>Lịch sử</button>
+</div>
 </div></div></div>
 </section>
 <section class="view" id="issue">
-<div class="staff-wrap"><div class="mobile-shell"><div class="mobile-screen">
-<div class="mobile-head"><div><small>QR: Khu Hồ bơi</small><h2>Báo vấn đề</h2></div><span class="tag green">KHU VỰC tự gắn</span></div>
-<p style="font-size:12px;color:var(--muted);margin-top:-8px">Chọn loại vấn đề. Không cần nhập mã, tên khu hay thời gian.</p>
-<div class="issue-categories"><button class="issue-cat"><b>🔧 Hỏng / cần sửa</b><small>đèn, điện, thiết bị…</small></button><button class="issue-cat"><b>📦 Thiếu đồ</b><small>vật tư, dụng cụ…</small></button><button class="issue-cat"><b>🧹 Vệ sinh</b><small>cần xử lý khu vực</small></button><button class="issue-cat"><b>⚠️ An toàn</b><small>rủi ro cần báo ngay</small></button></div>
-<div class="camera"><div><span>▣</span><strong>Chụp ảnh</strong><small>1 ảnh là đủ trong đa số trường hợp</small></div></div>
-<input class="text-input" placeholder="Ghi chú ngắn (không bắt buộc)"/>
-<button class="report-big" style="background:var(--green)">GỬI BÁO CÁO · 10 GIÂY</button>
-<div class="priority-gate"><b>Sau khi gửi</b><p>Điều phối / Quản lý sẽ quyết định: xử lý ngay, tạo việc, gắn ưu tiên và giao người phụ trách.</p></div>
-</div></div></div>
+<div class="section-head"><div><h2>Vấn đề</h2><p>Ghi nhận sự cố · triage sang Task hoặc Quyết định</p></div></div>
+<div class="card" style="max-width:560px">
+<p style="font-size:12px;color:var(--muted);margin-top:0">Chọn loại và gửi. Sau đó chuyển thành Task hoặc Quyết định từ danh sách bên dưới.</p>
+<div class="issue-categories">
+<button type="button" class="issue-cat" data-cat="BROKEN" onclick="selectIssueCat(this)"><b>Hỏng / cần sửa</b><small>đèn, điện, thiết bị…</small></button>
+<button type="button" class="issue-cat" data-cat="MISSING" onclick="selectIssueCat(this)"><b>Thiếu đồ</b><small>vật tư, dụng cụ…</small></button>
+<button type="button" class="issue-cat" data-cat="CLEANING" onclick="selectIssueCat(this)"><b>Vệ sinh</b><small>cần xử lý khu vực</small></button>
+<button type="button" class="issue-cat" data-cat="SAFETY" onclick="selectIssueCat(this)"><b>An toàn</b><small>rủi ro cần báo ngay</small></button>
+</div>
+<div class="camera mvp-deferred" id="issueCameraBtn"><div><span>▣</span><strong>Chụp / chọn ảnh</strong><small id="issuePhotoPreview">Chưa có ảnh · chạm để mở camera/thư viện</small></div>
+<input id="issuePhotoInput" type="file" accept="image/*" capture="environment"/>
+</div>
+<input class="text-input" id="issueNote" placeholder="Ghi chú ngắn (không bắt buộc)" style="margin-top:12px"/>
+<button class="btn primary" type="button" style="margin-top:12px;width:100%" onclick="submitIssueDemo(event)">Gửi báo cáo</button>
+</div>
+<div class="section-head" style="margin-top:22px"><div><h2>Inbox triage</h2><p>Issue mở → chuyển Task / Quyết định</p></div></div>
+<div id="issueInboxList"></div>
 </section>
-<section class="view" id="blueprint">
-<div class="card">
-<div class="section-head"><div><h2>Hệ quản trị chuyển tiếp · Logic V0</h2><p>Chuẩn hóa hành vi trước, số hóa sau</p></div></div>
+<section class="view mvp-deferred" id="blueprint">
+<div class="card health-dead">
+<div class="section-head"><div><h2>Hệ quản trị chuyển tiếp · Logic V0</h2><p>Trang tài liệu tĩnh — không nối workflow runtime</p></div><span class="health-badge dead">DEAD / ISOLATED</span></div>
 <div class="arch">
 <div class="arch-box"><b>DỮ LIỆU VÀO</b><span>Chốt ngày<br/>Báo vấn đề / QR<br/>Tin nhắn / cập nhật tự nhiên<br/>Ghi nhận tài chính</span></div>
 <div class="arch-box"><b>KIỂM SOÁT</b><span>AI gợi ý phân loại<br/>Người duyệt xác nhận<br/>Ưu tiên / Phụ trách / Hạn<br/>Trạng thái / Bằng chứng</span></div>
@@ -351,59 +773,206 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 </section>
 </main>
 </div>
+<div class="modal" id="passwordGateModal"><div class="modal-card pw-modal">
+<h3>Vào tài khoản</h3>
+<p>Nhập mật khẩu để xác thực. Không chuyển tài khoản nếu mật khẩu sai.</p>
+<div class="pw-user-chip"><span class="avatar" id="pwGateAvatar">—</span><div><b id="pwGateName">—</b><small id="pwGateSub">Tài khoản HHG Oasis</small></div></div>
+<div class="field"><label for="pwGateInput">Mật khẩu</label>
+<div class="pw-row">
+<input id="pwGateInput" type="password" autocomplete="current-password" placeholder="••••••••"/>
+<button type="button" class="btn soft" id="pwGateToggle" onclick="togglePasswordVisibility()">Hiện</button>
+</div>
+<div class="pw-error" id="pwGateError" aria-live="polite"></div>
+</div>
+<div class="modal-actions">
+<button class="btn soft" type="button" onclick="closePasswordGate()">Hủy</button>
+<button class="btn primary" type="button" id="pwGateSubmit" onclick="submitPasswordGate()">Vào tài khoản</button>
+</div>
+</div></div>
 <div class="modal" id="taskModal"><div class="modal-card"><h3>Tạo việc / ưu tiên mới</h3><p>Bản mẫu minh họa cổng kiểm soát ưu tiên. Nếu đẩy việc mới vào nhóm ưu tiên cao nhất, phải chọn việc bị thay thế.</p>
-<div class="field"><label>Tên việc</label><input value="Ví dụ: sửa khu check-in Oasis"/></div>
-<div class="field"><label>Ưu tiên</label><select id="prioritySelect" onchange="toggleGate()"><option>P2 — Cải thiện / chuẩn hóa</option><option>P1 — Ảnh hưởng trực tiếp doanh thu/tiền</option><option>P0 — An toàn / pháp lý / mất tiền ngay</option></select></div>
-<div class="priority-gate" id="replaceGate" style="display:none"><b>Thêm việc mới = chọn việc bị đẩy xuống</b><p>Ba ưu tiên hiện tại đã đầy. Chọn 1 ưu tiên đang chạy sẽ bị tạm dừng/đẩy xuống.</p><select class="text-input"><option>01 · Mở rộng Lòng Nướng</option><option>02 · Mức sẵn sàng Bếp trung tâm</option><option>03 · Tăng doanh thu hoạt động cốt lõi Oasis</option></select></div>
-<div class="field"><label>Phụ trách</label><select><option>Vận hành</option><option>Kinh doanh</option><option>Vận hành chung</option><option>Quản lý phân khu</option></select></div>
-<div class="field"><label>Hạn</label><input type="date" value="2026-09-16"/></div>
-<div class="modal-actions"><button class="btn soft" onclick="closeTaskModal()">Hủy</button><button class="btn primary" onclick="closeTaskModal()">Tạo việc mẫu</button></div>
+<div class="field"><label>Tên việc</label><input id="taskTitle" value="Ví dụ: sửa khu check-in Oasis"/></div>
+<div class="field"><label>Ưu tiên</label><select id="prioritySelect" onchange="toggleGate()"><option value="P2">P2 — Cải thiện / chuẩn hóa</option><option value="P1">P1 — Ảnh hưởng trực tiếp doanh thu/tiền</option><option value="P0">P0 — An toàn / pháp lý / mất tiền ngay</option></select></div>
+<div class="priority-gate health-not-connected mvp-deferred" id="replaceGate" style="display:none"><div class="health-head"><b>Thêm việc mới = chọn việc bị đẩy xuống</b><span class="health-badge not-connected">CHƯA KẾT NỐI</span></div><p>UI minh họa — giá trị không được gửi khi tạo việc.</p><select class="text-input health-disabled" disabled><option>01 · Mở rộng Lòng Nướng</option><option>02 · Mức sẵn sàng Bếp trung tâm</option><option>03 · Tăng doanh thu hoạt động cốt lõi Oasis</option></select></div>
+<div class="field"><label>Phụ trách</label><select id="taskOwner"><option>Vận hành</option><option>Kinh doanh</option><option>Vận hành chung</option><option>Quản lý phân khu</option></select></div>
+<div class="field"><label>Hạn</label><input id="taskDeadline" type="date" value="2026-09-16"/></div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeTaskModal()">Hủy</button><button class="btn primary" type="button" onclick="saveTaskDemo(event)">Tạo việc</button></div>
 </div></div>
 <div class="modal" id="dailyCloseModal"><div class="modal-card finance"><h3>Chốt doanh thu cuối ngày</h3><p>Nhập số quản trị tối thiểu. Nếu chưa đối chiếu, hệ thống vẫn cho hiển thị nhưng gắn trạng thái “Tạm ghi nhận”.</p>
-<div class="form-grid"><div class="field"><label>Phân khu</label><select id="closeUnit"><option>Lòng Nướng</option><option>Spa</option><option>Hồ bơi</option><option>Gym</option><option>Pickleball</option><option>Khác</option></select></div><div class="field"><label>Ngày</label><input type="date" value="2026-09-13"/></div>
+<div class="form-grid"><div class="field"><label>Phân khu</label><select id="closeUnit"></select></div><div class="field"><label>Ngày</label><input id="closeDate" type="date"/></div>
 <div class="field"><label>Doanh thu</label><input id="closeRevenue" type="number" placeholder="Ví dụ 12500000"/></div><div class="field"><label>Tiền thực thu</label><input id="closeCash" type="number" placeholder="Ví dụ 12000000"/></div>
-<div class="field"><label>Số khách / bill</label><input type="number" placeholder="Ví dụ 84"/></div><div class="field"><label>Nguồn dữ liệu</label><select id="closeSource"><option>Nhập tay</option><option>Import file Excel</option><option>Import file từ POS/app</option><option>Finance tổng hợp</option><option>Kết nối tự động</option></select></div></div>
+<div class="field"><label>Số khách / bill</label><input type="number" placeholder="Ví dụ 84"/></div><div class="field"><label>Nguồn dữ liệu</label><select id="closeSource"><option value="MANUAL">Nhập tay</option><option value="EXCEL">Import file Excel</option><option value="POS">Import file từ POS/app</option><option value="FINANCE">Finance tổng hợp</option><option value="AUTO">Kết nối tự động</option></select></div></div>
 <div class="field"><label>Ghi chú / sự cố trong ngày</label><textarea id="closeNote" rows="3" placeholder="Chỉ ghi khi có điểm bất thường hoặc cần giải thích"></textarea></div>
 <div class="field"><label>Nếu nguồn doanh thu chưa phân loại rõ (không bắt buộc)</label><input id="revenueSourceNote" placeholder="Ví dụ: đoàn công ty mua combo trải nghiệm + ăn uống"/></div>
-<div class="ai-toolbar"><button class="btn soft" type="button" onclick="suggestRevenueDemo()">AI gợi ý phân loại doanh thu</button></div>
-<div class="ai-suggest-box" id="revenueSuggestBox"><h4>AI gợi ý · cần người xác nhận</h4><div class="ai-suggest-grid"><div class="ai-suggest-item"><span>Nguồn tạo doanh thu</span><b id="revSuggestType">—</b></div><div class="ai-suggest-item"><span>Phân khu</span><b id="revSuggestUnit">—</b></div><div class="ai-suggest-item"><span>Nhóm khách</span><b id="revSuggestCustomer">—</b></div><div class="ai-suggest-item"><span>Độ tin cậy</span><b id="revSuggestConfidence">—</b></div></div><div class="ai-warning">AI chỉ gợi ý lớp vận hành. Các quy tắc phân chia doanh thu với đối tác vẫn phải chạy theo quy tắc hợp đồng và bước đối chiếu của Finance.</div></div>
+<div class="ai-toolbar health-not-connected mvp-deferred" style="padding:8px;margin-top:10px"><span class="health-badge not-connected">CHƯA KẾT NỐI</span><button class="btn soft health-disabled" type="button" disabled title="Gợi ý AI không được lưu vào DailyClose">AI gợi ý phân loại doanh thu</button></div>
+<div class="ai-suggest-box mvp-deferred" id="revenueSuggestBox"><h4>AI gợi ý · cần người xác nhận</h4><div class="ai-suggest-grid"><div class="ai-suggest-item"><span>Nguồn tạo doanh thu</span><b id="revSuggestType">—</b></div><div class="ai-suggest-item"><span>Phân khu</span><b id="revSuggestUnit">—</b></div><div class="ai-suggest-item"><span>Nhóm khách</span><b id="revSuggestCustomer">—</b></div><div class="ai-suggest-item"><span>Độ tin cậy</span><b id="revSuggestConfidence">—</b></div></div><div class="ai-warning">Chưa gắn vào payload lưu chốt ngày — đã vô hiệu hóa nút để tránh hiểu nhầm.</div></div>
 <div class="priority-gate"><b>Khi bấm lưu</b><p>Số xuất hiện ngay trên bảng điều hành với trạng thái <b>Tạm ghi nhận</b>. Finance có thể chuyển sang Đã đối chiếu / Đã chốt sau.</p></div>
-<div class="modal-actions"><button class="btn soft" onclick="closeDailyClose()">Hủy</button><button class="btn primary" onclick="saveDailyCloseDemo()">Lưu số tạm ghi nhận</button></div></div></div>
+<div class="modal-actions"><button class="btn soft" onclick="closeDailyClose()">Hủy</button><button class="btn primary" onclick="saveDailyCloseDemo(event)">Lưu số tạm ghi nhận</button></div></div></div>
 <div class="modal" id="expenseModal"><div class="modal-card finance"><h3>Ghi chi phí phát sinh</h3><p>Nhập nội dung theo cách tự nhiên. AI gợi ý phân khu, nhóm chi phí và công việc liên quan; người dùng xác nhận trước khi lưu.</p>
 <div class="form-grid"><div class="field"><label>Phân khu</label><select id="expenseUnit"><option value="">Chưa xác định</option><option>Lòng Nướng</option><option>Spa</option><option>Hồ bơi</option><option>Gym</option><option>Pickleball</option><option>Bếp Trung Tâm</option><option>Mía Ơi</option><option>Dùng chung</option></select></div><div class="field"><label>Số tiền</label><input id="expenseAmount" type="number" placeholder="Số tiền"/></div></div>
 <div class="field"><label>Nội dung chi phí</label><input id="expenseText" value="Mua 4 quạt công nghiệp cho Bếp Trung Tâm" placeholder="Ví dụ: thay motor quạt hút bếp"/></div>
-<div class="ai-toolbar"><button class="btn dark" type="button" onclick="suggestExpenseDemo()">AI gợi ý phân loại</button></div>
+<div class="ai-toolbar"><button class="btn dark" type="button" onclick="suggestExpenseDemo(event)">AI gợi ý phân loại</button></div>
 <div class="ai-suggest-box" id="expenseSuggestBox"><h4>AI gợi ý · chưa phải phân loại cuối cùng</h4><div class="ai-suggest-grid"><div class="ai-suggest-item"><span>Nhóm chi phí</span><b id="expenseSuggestCategory">—</b></div><div class="ai-suggest-item"><span>Phân khu</span><b id="expenseSuggestUnit">—</b></div><div class="ai-suggest-item"><span>Việc liên quan</span><b id="expenseSuggestTask">—</b></div><div class="ai-suggest-item"><span>Độ tin cậy</span><b id="expenseSuggestConfidence">—</b></div></div><div class="ai-warning" id="expenseSuggestReason">AI sẽ giải thích ngắn vì sao gợi ý như vậy. Trường hợp mơ hồ được đẩy cho Finance/người quản lý xác nhận.</div></div>
-<div class="form-grid"><div class="field"><label>Nhóm chi phí sau khi xác nhận</label><select id="expenseCategory"><option>Chưa xác định</option><option>Vận hành thường xuyên</option><option>Sửa chữa / bảo trì</option><option>Cải tạo / nâng cấp</option><option>Mua sắm tài sản / thiết bị</option><option>Chi phí dùng chung</option></select></div><div class="field"><label>Gắn với công việc / dự án</label><input id="expenseLinkedTask" placeholder="Không bắt buộc"/></div></div>
-<div class="field"><label>Chứng từ</label><div class="camera" style="height:95px;margin-top:0"><div><span style="font-size:20px">▣</span><strong>Chụp / tải ảnh hóa đơn</strong><small>Có thể bổ sung sau nếu chưa có ngay</small></div></div></div>
+<div class="form-grid"><div class="field"><label>Nhóm chi phí sau khi xác nhận</label><select id="expenseCategory"><option>Chưa xác định</option><option>Vận hành thường xuyên</option><option>Sửa chữa / bảo trì</option><option>Cải tạo / nâng cấp</option><option>Mua sắm tài sản / thiết bị</option><option>Chi phí dùng chung</option></select></div><div class="field"><label>Gắn với Task</label><select id="expenseLinkedProject"><option value="">— Chưa xác định —</option></select></div></div>
+<input type="hidden" id="expenseLinkedTask" value=""/>
+<div class="field mvp-deferred"><label>Chứng từ</label><div class="camera health-mock" style="height:95px;margin-top:0;cursor:default"><div><span style="font-size:20px">▣</span><strong>Chụp / tải ảnh hóa đơn</strong><small>Chưa nối upload · <span class="health-badge mock">DỮ LIỆU MẪU</span></small></div></div></div>
 <div class="priority-gate"><b>Nguyên tắc</b><p>AI chỉ đề xuất. Khoản chi vẫn được lưu với trạng thái <b>Tạm ghi nhận</b> cho tới khi Finance/người có quyền xác nhận phân loại và đối chiếu chứng từ.</p></div>
-<div class="modal-actions"><button class="btn soft" onclick="closeExpenseModal()">Hủy</button><button class="btn primary" onclick="saveExpenseDemo()">Ghi nhận tạm</button></div></div></div>
+<div class="modal-actions"><button class="btn soft" onclick="closeExpenseModal()">Hủy</button><button class="btn primary" onclick="saveExpenseDemo(event)">Ghi nhận tạm</button></div></div></div>
 <div class="modal" id="expenseDetailModal"><div class="modal-card detail">
 <div class="expense-detail-top"><div><small class="expense-code" id="expenseDetailCode">CP-0000</small><h3 id="expenseDetailTitle">Chi tiết khoản chi</h3><p id="expenseDetailMeta" style="margin:4px 0 0;color:var(--muted);font-size:11px"></p></div><div style="text-align:right"><div class="expense-detail-amount" id="expenseDetailAmount">0</div><span id="expenseDetailStatus" class="tag amber">Tạm ghi nhận</span></div></div>
 <div class="expense-status-flow"><span id="expenseFlow1" class="on">Tạm ghi nhận</span><b>→</b><span id="expenseFlow2">Đã đối chiếu</span><b>→</b><span id="expenseFlow3">Đã chốt</span></div>
 <div class="expense-detail-grid"><div class="detail-panel"><h4>Thông tin khoản chi</h4><div class="detail-kv"><div class="kv"><span>Phân khu</span><b id="edUnit"></b></div><div class="kv"><span>Nhóm chi phí</span><b id="edCategory"></b></div><div class="kv"><span>Người ghi nhận</span><b id="edReporter"></b></div><div class="kv"><span>Thời gian</span><b id="edTime"></b></div><div class="kv"><span>Công việc / dự án</span><b id="edLinked"></b></div><div class="kv"><span>Nguồn thanh toán</span><b id="edPayment"></b></div></div>
 <div class="linked-decision-panel" style="margin-top:12px"><h4>AI hỗ trợ phân loại</h4><p id="edAi"></p></div></div>
-<div><div class="detail-panel"><h4>Chứng từ</h4><div class="expense-doc"><div><strong id="edDocTitle">Ảnh hóa đơn</strong><br/><span id="edDocMeta">Đã đính kèm</span></div><button class="btn soft" onclick="showToast('Demo: mở chứng từ gốc')">Mở chứng từ</button></div></div>
+<div><div class="detail-panel mvp-deferred"><h4>Chứng từ</h4><div class="expense-doc"><div><strong id="edDocTitle">Ảnh hóa đơn</strong><br/><span id="edDocMeta">Đã đính kèm</span></div><button class="btn soft health-disabled" disabled title="Chưa có storage chứng từ" onclick="return false">Mở chứng từ · <span class="health-badge mock">DỮ LIỆU MẪU</span></button></div></div>
 <div class="detail-panel" style="margin-top:12px"><h4>Lịch sử xử lý</h4><div class="timeline" id="expenseDetailTimeline"></div></div></div></div>
-<div class="modal-actions"><button class="btn soft" onclick="closeExpenseDetail()">Đóng</button><button class="btn soft" id="expenseOpenTaskBtn" onclick="openExpenseLinkedTask()">Mở công việc liên quan</button><button class="btn primary" onclick="showToast('Demo: chuyển khoản chi sang bước đối chiếu')">Đối chiếu / cập nhật</button></div>
+<div class="modal-actions"><button class="btn soft" onclick="closeExpenseDetail()">Đóng</button><button class="btn soft" id="expenseOpenTaskBtn" onclick="openExpenseLinkedTask()">Mở công việc liên quan</button><button class="btn primary" id="expenseReconcileBtn" onclick="reconcileExpenseDemo(event)">Đối chiếu</button></div>
 </div></div>
-<div class="modal" id="decisionModal"><div class="modal-card finance"><h3>Yêu cầu quyết định</h3><p>Gắn yêu cầu với công việc/dự án để khi lãnh đạo quyết, trạng thái và lịch sử được cập nhật ngược về đúng nơi.</p>
+<div class="modal" id="projectModal"><div class="modal-card finance" style="max-width:640px">
+<h3 id="projectModalTitle">Assign Task</h3>
+<p class="adm-form-sub" id="projectModalSub">Giao việc cho Leader · chỉ ADMINISTRATION</p>
+<div class="adm-sec">1 · Thông tin Task</div>
+<div class="form-grid">
+<div class="field"><label>Tên Task *</label><input id="projectName" placeholder="Tên việc"/></div>
+<div class="field"><label>Phân khu *</label><select id="projectUnit"><option value="">—</option><option>Lòng Nướng</option><option>Spa</option><option>Hồ bơi</option><option>Gym</option><option>Pickleball</option><option>Bếp Trung Tâm</option><option>Mía Ơi</option><option>Dùng chung</option></select></div>
+<div class="field"><label>Category</label><input id="projectCategory" placeholder="Vận hành / Event / …"/></div>
+<div class="field"><label>Start date</label><input id="projectStartDate" type="date"/></div>
+</div>
+<div class="field"><label>Mục tiêu / Objective *</label><textarea id="projectObjective" rows="2" placeholder="Cần đạt được gì?"></textarea></div>
+<div class="field"><label>Mô tả chi tiết / Brief</label><textarea id="projectDescription" rows="2" placeholder="Chi tiết thêm (không bắt buộc)"></textarea></div>
+<div class="adm-sec">2 · Người chịu trách nhiệm</div>
+<div class="form-grid">
+<div class="field"><label>Owner *</label><select id="projectOwner"><option value="">—</option></select></div>
+<div class="field"><label>Reviewer *</label><select id="projectReviewer"><option value="">Default: người Assign</option></select></div>
+</div>
+<div class="field"><label>Collaborators</label><div id="projectCollaborators" class="collab-picker"></div></div>
+<div class="adm-sec">3 · Mức độ ưu tiên</div>
+<div class="form-grid">
+<div class="field"><label>Important? *</label>
+  <div style="display:flex;gap:8px">
+    <button type="button" class="btn soft matrix-btn" data-matrix="important" data-val="true" onclick="setProjectMatrix('important',true,this)">Yes</button>
+    <button type="button" class="btn soft matrix-btn" data-matrix="important" data-val="false" onclick="setProjectMatrix('important',false,this)">No</button>
+  </div>
+</div>
+<div class="field"><label>Urgent? *</label>
+  <div style="display:flex;gap:8px">
+    <button type="button" class="btn soft matrix-btn" data-matrix="urgent" data-val="true" onclick="setProjectMatrix('urgent',true,this)">Yes</button>
+    <button type="button" class="btn soft matrix-btn" data-matrix="urgent" data-val="false" onclick="setProjectMatrix('urgent',false,this)">No</button>
+  </div>
+</div>
+</div>
+<p id="projectQuadrantPreview" style="margin:8px 0;font-weight:800">Result: — (chọn Important + Urgent)</p>
+<input type="hidden" id="projectImportant" value=""/>
+<input type="hidden" id="projectUrgent" value=""/>
+<div class="adm-sec">4 · Thời gian</div>
+<div class="form-grid">
+<div class="field"><label>Deadline *</label><input id="projectDeadline" type="date"/></div>
+<div class="field"><label>Estimated Duration</label>
+  <select id="projectEstDuration">
+    <option value="">— Nên có —</option>
+    <option value="15">15 min</option>
+    <option value="30">30 min</option>
+    <option value="45">45 min</option>
+    <option value="60">1h</option>
+    <option value="120">2h</option>
+    <option value="240">4h</option>
+    <option value="480">1 day (8h)</option>
+  </select>
+</div>
+</div>
+<div class="adm-sec">5 · Kết quả cần bàn giao</div>
+<div class="field"><label>Expected Result *</label><textarea id="projectExpectedResult" rows="2" placeholder="Cuối cùng phải giao ra cái gì?"></textarea></div>
+<div class="field"><label>Acceptance Criteria</label><textarea id="projectAcceptance" rows="2" placeholder="Điều kiện đạt (nên có)"></textarea></div>
+<div class="adm-sec">6 · Bằng chứng</div>
+<div class="form-grid">
+<div class="field"><label>Proof Required?</label>
+  <select id="projectProofRequired"><option value="true">Yes</option><option value="false">No</option></select>
+</div>
+</div>
+<div class="field"><label>Proof Requirement Description</label><input id="projectProofDescription" placeholder="VD: Hình + chữ / Upload PDF Proposal"/></div>
+<div class="adm-sec">7 · Tài liệu hỗ trợ</div>
+<div class="field"><label>Document / Link</label><input id="projectDocLink" placeholder="Link Drive / tài liệu (optional)"/></div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeProjectModal()">Hủy</button><button class="btn primary" type="button" onclick="saveProjectDemo(event)">Giao task</button></div>
+</div></div>
+<div class="modal" id="taskEnergyModal"><div class="modal-card finance">
+<div class="detail-head" style="margin-bottom:8px"><div>
+<small style="color:var(--muted);font-size:10px" id="taskEnergyCode">TASK</small>
+<h3 id="taskEnergyTitle" style="margin:4px 0">—</h3>
+<p id="taskEnergyMeta" style="margin:0;font-size:11px;color:var(--muted)"></p>
+</div><div class="task-energy-head-actions">
+<button class="btn soft" type="button" onclick="openEditTaskModal()">Chỉnh sửa Task</button>
+<button class="task-add-step compact" type="button" id="taskAddToggle" onclick="showAddTaskStepForm()">
+  <span class="task-add-plus">+</span>
+  <span>Thêm công việc</span>
+</button>
+<button class="btn soft" type="button" onclick="closeTaskEnergyModal()">Đóng</button>
+</div></div>
+<div class="task-add-form" id="taskAddForm" hidden>
+  <input id="taskAddTitleInput" type="text" maxlength="120" placeholder="Tên công việc / hạng mục mới" />
+  <div class="form-grid" style="margin-top:8px">
+    <div class="field" style="margin:0"><label>Hạn hạng mục</label><input id="taskAddDeadlineInput" type="date"/></div>
+    <div class="field" style="margin:0"><label>Người phụ trách</label><select id="taskAddOwnerSelect"><option value="">— Chọn —</option></select></div>
+  </div>
+  <div class="task-add-form-actions">
+    <button class="btn soft" type="button" onclick="hideAddTaskStepForm()">Hủy</button>
+    <button class="btn primary" type="button" id="taskAddSubmitBtn">Thêm</button>
+  </div>
+</div>
+<div class="energy-label"><span>Thanh năng lượng</span><b id="taskEnergyPct">0%</b></div>
+<div class="energy-bar"><i id="taskEnergyBar" style="width:0%"></i></div>
+<div class="task-workflow-actions" id="taskWorkflowActions" style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0"></div>
+<div class="filters" id="taskDetailTabs" style="margin:8px 0 12px">
+  <button type="button" class="filter active" data-ttab="steps" onclick="setTaskDetailTab('steps',this)">Hạng mục</button>
+  <button type="button" class="filter" data-ttab="people" onclick="setTaskDetailTab('people',this)">Người</button>
+  <button type="button" class="filter" data-ttab="costs" onclick="setTaskDetailTab('costs',this)">Chi phí</button>
+  <button type="button" class="filter" data-ttab="docs" onclick="setTaskDetailTab('docs',this)">Tài liệu</button>
+  <button type="button" class="filter" data-ttab="history" onclick="setTaskDetailTab('history',this)">Lịch sử</button>
+</div>
+<p id="taskEnergyHint" style="display:none"></p>
+<div class="task-step-list" id="taskEnergySteps"></div>
+<div id="taskDetailPeople" class="task-detail-panel" hidden></div>
+<div id="taskDetailCosts" class="task-detail-panel" hidden></div>
+<div id="taskDetailDocs" class="task-detail-panel" hidden></div>
+<div id="taskDetailHistory" class="task-detail-panel" hidden></div>
+<input type="file" id="taskProofInput" accept="image/*" multiple style="display:none"/>
+<input type="file" id="taskDocInput" accept="image/*,.pdf" style="display:none"/>
+</div></div>
+<div class="modal" id="taskEditModal" style="z-index:30"><div class="modal-card finance" style="max-width:640px;max-height:min(92vh,860px);overflow-y:auto">
+<h3>Chỉnh sửa Task</h3>
+<div class="form-grid">
+<div class="field"><label>Tên Task</label><input id="editTaskName" placeholder="Tên Task"/></div>
+<div class="field"><label>Phân loại</label><input id="editTaskCategory" placeholder="Doanh thu / Cải tiến…"/></div>
+<div class="field"><label>Phụ trách</label><select id="editTaskOwner"><option value="">— Chọn —</option></select></div>
+<div class="field"><label>Phân khu</label><select id="editTaskUnit"><option value="">— Không gắn —</option><option>Lòng Nướng</option><option>Spa</option><option>Hồ bơi</option><option>Gym</option><option>Pickleball</option><option>Bếp Trung Tâm</option><option>Mía Ơi</option><option>Dùng chung</option></select></div>
+<div class="field"><label>Ngân sách (VND)</label><input id="editTaskBudget" type="number" placeholder="95000000"/></div>
+<div class="field"><label>Hạn Task (leader set)</label><input id="editTaskDeadline" type="date"/></div>
+<div class="field"><label>Ưu tiên</label><select id="editTaskPriority"><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option></select></div>
+<div class="field"><label>Trạng thái (chỉ xem)</label><select id="editTaskStatus" disabled><option value="TODO">Chưa làm</option><option value="DOING">Đang làm</option><option value="WAITING">Đang chờ</option><option value="BLOCKED">Bị chặn</option><option value="PAUSED">Tạm dừng</option><option value="IN_REVIEW">Chờ duyệt</option><option value="DONE">Hoàn tất</option></select><p style="font-size:11px;color:var(--muted);margin:4px 0 0">Đổi status bằng nút workflow trên Task Detail.</p></div>
+<div class="field" style="grid-column:1/-1"><label>Mô tả</label><textarea id="editTaskDescription" rows="2"></textarea></div>
+</div>
+<div class="field" style="margin-top:12px"><label>Hạng mục · tên + hạn từng việc</label>
+<div id="editTaskSteps" class="task-edit-steps"></div>
+</div>
+<div class="modal-actions">
+<button class="btn soft" type="button" onclick="closeEditTaskModal()">Hủy</button>
+<button class="btn primary" type="button" onclick="saveEditTask(event)">Lưu chỉnh sửa</button>
+</div>
+</div></div>
+<div class="modal" id="decisionModal"><div class="modal-card finance"><h3>Yêu cầu quyết định</h3><p>Gắn yêu cầu với công việc/task để khi duyệt, trạng thái cập nhật đúng nơi.</p>
 <div class="field"><label>Tiêu đề</label><input id="decisionTitle" placeholder="Ví dụ: Duyệt thiết bị Bếp trung tâm"/></div>
-<div class="form-grid"><div class="field"><label>Gắn với công việc</label><select id="decisionTask"><option value="">— Không gắn công việc —</option></select></div><div class="field"><label>Gắn với dự án</label><select id="decisionProject"><option value="">— Không gắn dự án —</option></select></div>
+<div class="form-grid"><div class="field"><label>Gắn Task (Project)</label><select id="decisionProject"><option value="">—</option></select></div><div class="field"><label>Gắn việc (Task cũ)</label><select id="decisionTask"><option value="">—</option></select></div>
 <div class="field"><label>Số tiền / nhãn</label><input id="decisionAmount" placeholder="Ví dụ: 68 triệu"/></div><div class="field"><label>Hạn quyết định</label><input id="decisionDeadline" type="date" value="2026-09-16"/></div>
-<div class="field"><label>Người đề xuất</label><input id="decisionRequester" value="Vận hành chung"/></div><div class="field"><label>Người duyệt</label><select id="decisionApprover"><option>Giám đốc vận hành</option><option>Lãnh đạo cấp cao</option><option>Lãnh đạo cấp cao / Giám đốc vận hành</option></select></div></div>
+<div class="field"><label>Người đề xuất</label><input id="decisionRequester" value="Vận hành chung"/></div><div class="field"><label>Người duyệt</label><select id="decisionApprover"><option>Cần duyệt</option><option>Quản trị</option></select></div></div>
 <div class="field"><label>Tác động nếu chưa quyết</label><textarea id="decisionImpact" rows="3" placeholder="Việc gì sẽ dừng/trễ/mất tiền nếu chưa quyết?"></textarea></div>
 <label class="checkbox-row"><input id="decisionBlocking" type="checkbox" checked/> Quyết định này đang chặn công việc liên quan</label>
-<div class="modal-actions"><button class="btn soft" onclick="closeDecisionModal()">Hủy</button><button class="btn primary" onclick="saveDecisionDemo()">Gửi yêu cầu</button></div></div></div>
+<div class="modal-actions"><button class="btn soft" onclick="closeDecisionModal()">Hủy</button><button class="btn primary" onclick="saveDecisionDemo(event)">Gửi yêu cầu</button></div></div></div>
 <div class="toast" id="toast">Đã lưu bản mẫu</div>
 <div class="modal" id="detailModal"><div class="modal-card detail">
 <div class="detail-head"><div><small style="color:var(--muted);font-size:10px" id="detailCode">CÔNG VIỆC</small><h3 id="detailTitle">Chi tiết công việc</h3><div class="detail-sub" id="detailTags"></div></div><button class="btn soft" onclick="closeTaskDetail()">Đóng</button></div>
 <div class="detail-progress"><div class="line"><span>Tiến độ xử lý</span><b id="detailProgressText">0%</b></div><div class="bar"><i id="detailProgressBar" style="width:0%"></i></div></div>
 <div class="detail-grid">
-<div class="detail-panel"><h4>Ảnh Trước / Sau</h4><div class="photo-grid">
+<div class="detail-panel health-mock mvp-deferred"><div class="health-head"><h4>Ảnh Trước / Sau</h4><span class="health-badge mock">DỮ LIỆU MẪU</span></div><div class="photo-grid">
 <div class="photo-card"><div class="scene before"><span class="demo-label">ẢNH DEMO · TRƯỚC</span><div class="lamp"></div></div><div class="photo-cap"><b id="beforeCaption">Ảnh trước khi xử lý</b><span id="beforeTime">Đã ghi nhận</span></div></div>
 <div class="photo-card"><div class="scene" id="afterScene"><span class="demo-label" id="afterLabel">ẢNH DEMO · SAU</span><div class="lamp" id="afterLamp"></div><strong id="pendingText" style="display:none;font-size:12px">Chưa có ảnh Sau</strong></div><div class="photo-cap"><b id="afterCaption">Ảnh sau khi xử lý</b><span id="afterTime">Chờ cập nhật</span></div></div>
-</div><div class="history-note">Trong bản chạy thật, ảnh được lưu theo từng lần cập nhật. Boss có thể mở ảnh gốc, xem thời gian, người chụp và toàn bộ lịch sử thay đổi.</div></div>
+</div><div class="history-note">CSS minh họa — chưa có media storage. Không phải ảnh thật từ DB.</div></div>
 <div><div class="detail-panel"><h4>Thông tin xử lý</h4><div class="detail-kv"><div class="kv"><span>Phân khu</span><b id="dUnit"></b></div><div class="kv"><span>Phụ trách</span><b id="dOwner"></b></div><div class="kv"><span>Hạn</span><b id="dDeadline"></b></div><div class="kv"><span>Chi phí</span><b id="dCost"></b></div><div class="kv"><span>Trạng thái</span><b id="dStatus"></b></div><div class="kv"><span>Vướng mắc</span><b id="dBlocker"></b></div></div></div>
 <div class="detail-panel" style="margin-top:10px"><h4>Lịch sử tiến độ</h4><div class="timeline" id="detailTimeline"></div></div><div id="linkedDecisionPanel" class="linked-decision-panel empty"><h4>Quyết định liên quan</h4><p>Không có yêu cầu duyệt đang mở.</p></div></div>
 </div><div class="detail-actions">
@@ -420,7 +989,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <div class="field"><label>Trạng thái</label><select id="progressStatus"><option value="TODO">Chưa bắt đầu</option><option value="DOING">Đang làm</option><option value="WAITING">Đang chờ</option><option value="BLOCKED">Bị chặn</option><option value="DONE">Hoàn tất</option></select></div>
 </div>
 <div class="field"><label>Ghi chú</label><textarea id="progressNote" rows="3"></textarea></div>
-<div class="modal-actions"><button class="btn soft" type="button" onclick="closeProgressModal()">Hủy</button><button class="btn primary" type="button" onclick="saveProgressDemo()">Lưu</button></div>
+<div class="modal-actions"><button class="btn soft" type="button" onclick="closeProgressModal()">Hủy</button><button class="btn primary" type="button" onclick="saveProgressDemo(event)">Lưu</button></div>
 </div></div>
 
 <div class="modal" id="docsModal"><div class="modal-card finance"><h3>Chứng từ / chi phí</h3><div id="docsModalBody"></div>
@@ -429,6 +998,8 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 <div class="modal" id="historyModal"><div class="modal-card"><h3>Lịch sử</h3><div class="timeline" id="historyModalBody"></div>
 <div class="modal-actions"><button class="btn soft" type="button" onclick="closeHistoryModal()">Đóng</button></div></div></div>
 
+<script src="/vendor/gsap.min.js"></script>
+<script src="/vendor/Flip.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

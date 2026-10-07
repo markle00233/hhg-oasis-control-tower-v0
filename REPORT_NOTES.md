@@ -28,3 +28,9 @@ Dùng khi cần giải thích kiến trúc: **Input → Control → Task Engine 
 3. Nối AppSheet cho 3 flow đầu: My Tasks, Report Issue, Daily Closing.
 4. Pilot bằng 10–20 task thật với 4 người.
 5. Sau 1–2 ngày pilot, sửa UX và permission trước khi mở rộng Finance/Decision Queue.
+
+## QA live (23/09/2026) — đưa vào báo cáo nếu cần
+
+Chi tiết: [`docs/QA_TASK_LIEN_KET_2026-09-23.md`](docs/QA_TASK_LIEN_KET_2026-09-23.md).
+
+**Một câu kết luận:** Prototype live đã có auth + Task/Chi phí/Quyết định, nhưng QA black-box ghi **3 P0 phân quyền** và **6 P1 luồng cốt lõi** (không hoàn tất Task 100%, ghi chi phí từ Task lỗi, upload tài liệu lỗi, Issue chưa triage…) — **chưa đủ điều kiện làm nguồn dữ liệu vận hành chính** cho đến khi hết P0+P1 và verify lại trên 4 nhóm quyền (admin / Finance / phụ trách–phối hợp / người ngoài).

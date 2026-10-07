@@ -9,16 +9,28 @@
     "start": "next start",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed-users": "tsx prisma/seed-users.ts",
+    "db:seed-trungthu": "tsx prisma/seed-trungthu.ts",
+    "db:seed-customer-app": "tsx prisma/seed-customer-app.ts",
     "db:setup": "prisma db push && tsx prisma/seed.ts",
-    "postinstall": "prisma generate"
+    "customer:dev": "npm --prefix customer-app run dev",
+    "customer:build": "npm --prefix customer-app run build",
+    "customer:start": "npm --prefix customer-app run start",
+    "postinstall": "prisma generate",
+    "db:crm-generate": "prisma generate --schema=prisma-crm/schema.prisma",
+    "db:migrate-crm": "tsx prisma/migrate-crm-into-tower.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.1",
+    "bcryptjs": "^3.0.3",
+    "gsap": "^3.15.0",
+    "jose": "^6.2.12",
     "next": "^15.5.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.18.1",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",

@@ -30,6 +30,14 @@ npm run dev
 
 Mở [http://localhost:3000](http://localhost:3000)
 
+## App Flutter (mobile)
+
+```bash
+cd mobile && flutter pub get && flutter run
+```
+
+Chi tiết: [`mobile/README.md`](mobile/README.md)
+
 ## Lưu được gì (baseline live)
 
 | Form trên UI | API | Bảng Prisma |
@@ -46,7 +54,17 @@ Mở [http://localhost:3000](http://localhost:3000)
 1. Push repo GitHub
 2. Redeploy trên Vercel (Framework: Next.js)
 3. Env `DATABASE_URL` = Prisma Postgres / Neon
-4. Build: `npm run vercel-build`
+4. Also set auth env (names only — see `.env.example`):
+   `HHG_SESSION_SECRET`, `HHG_PASSWORD_*` for initial users
+5. Build: `npm run vercel-build`
+
+## Auth (P1)
+
+- Session: httpOnly cookie `hhg_session` (signed JWT via `jose`)
+- Seed users: `npm run db:seed-users` (idempotent; passwords from env)
+- APIs: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `GET|POST /api/users`
+
+`GET /api/users` returns ACTIVE account names without login (for future Account Switcher on General Overview). It never returns `passwordHash`.
 
 ## Important
 

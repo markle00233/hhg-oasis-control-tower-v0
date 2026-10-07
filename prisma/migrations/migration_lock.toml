@@ -1,0 +1,3 @@
+# Prisma Migrate lock — provider for PostgreSQL additive migrations.
+# Actual P1 User apply used `prisma db push`; SQL kept under 20260920100000_add_user for history.
+provider = "postgresql"

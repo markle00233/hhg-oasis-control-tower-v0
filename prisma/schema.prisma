@@ -7,6 +7,65 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum SystemRole {
+  STANDARD_USER
+  SYSTEM_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ProjectMemberRole {
+  PRIMARY
+  COLLABORATOR
+  VIEWER
+}
+
+enum DocEntityType {
+  TASK
+  EXPENSE
+  PROJECT
+  ISSUE
+  DECISION
+}
+
+enum DocRelationType {
+  BEFORE
+  DURING
+  AFTER
+  RECEIPT
+  QUOTE
+  CONTRACT
+  GENERAL
+}
+
+/// Identity account. Leader ≠ User: leadership is UnitAssignment (P3+), not a field here.
+model User {
+  id           String     @id @default(cuid())
+  username     String     @unique
+  displayName  String
+  passwordHash String
+  systemRole   SystemRole @default(STANDARD_USER)
+  status       UserStatus @default(ACTIVE)
+  avatarUrl    String?
+  /// Desk zone lock (AppService.serviceCode). Null = not a zone-desk account.
+  /// SYSTEM_ADMIN ignores this and may open any zone.
+  deskZone     String?
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  projectMemberships ProjectMember[]
+  projectEvents      ProjectEvent[]
+  documents          Document[]
+  projectsAssigned   Project[] @relation("ProjectAssignedBy")
+  projectsReviewing  Project[] @relation("ProjectReviewer")
+
+  @@index([deskZone])
+}
+
 model Unit {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -19,24 +78,108 @@ model Unit {
   dailyCloses DailyClose[]
   expenses    Expense[]
   issues      Issue[]
+  documents   Document[]
 }
 
+/// UI "Task" = Project (execution center). Optional link to classic Task rows.
 model Project {
-  id        String   @id @default(cuid())
-  name      String
-  category  String?
-  owner     String?
-  budget    Float?
-  deadline  String?
-  readiness Int      @default(0)
-  status    String   @default("ON_TRACK")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String  @id @default(cuid())
+  name        String
+  category    String?
+  owner       String?
+  description String?
+  /// Legacy label P1|P2|P3 — kept for compatibility; ops use important×urgent
+  priority    String  @default("P2")
+  budget      Float?
+  deadline    String?
+  readiness   Int     @default(0)
+  /// Checklist / Work Plan flags "0"/"1"; energy = done/total*100
+  stepFlags   String  @default("0000")
+  stepLabels  Json?
+  stepProofs  Json?
+  stepDeadlines Json?
+  /// Song song stepLabels: userId hoặc tên phụ trách từng hạng mục
+  stepOwners Json?
+  /// TODO | DOING | WAITING | BLOCKED | PAUSED | IN_REVIEW | DONE
+  status      String  @default("TODO")
+  requireAfterProof Boolean @default(true)
+
+  /// Phase 1–4 workflow fields (additive; null = legacy row)
+  acknowledgedAt DateTime?
+  assignedByUserId String?
+  reviewerUserId   String?
+  important Boolean?
+  urgent    Boolean?
+  expectedResult String?
+  proofRequired  Boolean?
+  proofDescription String?
+  estimatedDurationMinutes Int?
+  waitingFor String?
+  waitingReason String?
+  waitingExpectedDate String?
+  blockerTitle String?
+  blockerDescription String?
+  pauseReason String?
+  pausedBecauseProjectId String?
+  revisionNote String?
+
+  /// Phase 5+: Work Plan focus + estimates + change requests + issues
+  currentStepIndex Int?
+  /// Parallel to stepLabels: estimated minutes per step (number|null)
+  stepEstimates Json?
+  /// Pending Owner requests: { type, ...fields, requestedBy, requestedAt }
+  pendingChangeRequest Json?
+  /// Collaborator step issues: [{ id, stepIndex, title, description, reportedBy, status, createdAt }]
+  collabIssues Json?
+  acknowledgedByUserId String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   unitId    String?
   unit      Unit?      @relation(fields: [unitId], references: [id])
+  assignedBy User? @relation("ProjectAssignedBy", fields: [assignedByUserId], references: [id])
+  reviewer   User? @relation("ProjectReviewer", fields: [reviewerUserId], references: [id])
   tasks     Task[]
   decisions Decision[]
+  members   ProjectMember[]
+  events    ProjectEvent[]
+  expenses  Expense[]
+  documentLinks DocumentLink[]
+
+  @@index([reviewerUserId])
+  @@index([assignedByUserId])
+  @@index([status])
+}
+
+model ProjectMember {
+  id        String            @id @default(cuid())
+  role      ProjectMemberRole @default(COLLABORATOR)
+  createdAt DateTime          @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model ProjectEvent {
+  id        String   @id @default(cuid())
+  action    String
+  detail    String?
+  oldValue  String?
+  newValue  String?
+  createdAt DateTime @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actorUserId String?
+  actor       User?  @relation(fields: [actorUserId], references: [id])
+
+  @@index([projectId, createdAt])
 }
 
 model Task {
@@ -120,9 +263,7 @@ model DailyClose {
 model Expense {
   id              String   @id @default(cuid())
   code            String?
-  /// Technical code: OPERATING | MAINTENANCE | IMPROVEMENT | ASSET_PURCHASE | SHARED | UNCLASSIFIED
   category        String
-  /// Vietnamese label shown in UI
   categoryLabel   String?
   amount          Float
   content         String?
@@ -135,10 +276,12 @@ model Expense {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  unitId       String?
-  unit         Unit?   @relation(fields: [unitId], references: [id])
-  linkedTaskId String?
-  linkedTask   Task?   @relation(fields: [linkedTaskId], references: [id])
+  unitId          String?
+  unit            Unit?    @relation(fields: [unitId], references: [id])
+  linkedTaskId    String?
+  linkedTask      Task?    @relation(fields: [linkedTaskId], references: [id])
+  linkedProjectId String?
+  linkedProject   Project? @relation(fields: [linkedProjectId], references: [id])
 }
 
 model Issue {
@@ -154,12 +297,49 @@ model Issue {
   unit   Unit?   @relation(fields: [unitId], references: [id])
 }
 
+model Document {
+  id           String   @id @default(cuid())
+  code         String?  @unique
+  fileName     String
+  fileType     String?
+  mimeType     String?
+  storageUrl   String
+  sizeBytes    Int?
+  note         String?
+  status       String   @default("ACTIVE") // ACTIVE | EXPIRED | ARCHIVED
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  uploadedByUserId String?
+  uploadedBy       User?   @relation(fields: [uploadedByUserId], references: [id])
+  unitId           String?
+  unit             Unit?   @relation(fields: [unitId], references: [id])
+  links            DocumentLink[]
+}
+
+model DocumentLink {
+  id           String          @id @default(cuid())
+  entityType   DocEntityType
+  entityId     String
+  relationType DocRelationType @default(GENERAL)
+  createdAt    DateTime        @default(now())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([entityType, entityId])
+  @@index([documentId])
+}
+
 model MessageInbox {
   id                 String   @id @default(cuid())
   sourceChannel      String   @default("manual")
   rawText            String
   senderDisplayName  String?
-  status             String   @default("NEW") // NEW | ANALYZED | REVIEWED | ARCHIVED
+  status             String   @default("NEW")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -179,11 +359,485 @@ model AiTaskDraft {
   duplicateHint      String?
   confidence         Int      @default(70)
   reason             String?
-  reviewStatus       String   @default("PENDING") // PENDING | CONFIRMED | EDITED | MERGED | SKIPPED
+  reviewStatus       String   @default("PENDING")
   createdTaskId      String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   messageId String
   message   MessageInbox @relation(fields: [messageId], references: [id], onDelete: Cascade)
+}
+
+
+// ─── HHGO CRM (migrated from hhgoasistonghop into Control Tower DB) ───
+// ─── Users (ADMIN | MANAGER | STAFF) ───────────────────────
+
+model CrmUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  role         String   // ADMIN, MANAGER, STAFF, VIEWER
+  department   String   @default("ADMIN") // ADMIN, OPS_A, OPS_B
+  isActive     Boolean  @default(true)
+  /// Quyền chức năng do Admin tick: { "customers": true, "checkin": false, ... }
+  featureFlags Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  visitsCreated          CrmVisit[]
+  membershipsCreated     CrmMembership[]
+  activityLogs           CrmActivityLog[]
+  promotionsCreated      CrmPromotion[]
+  customerPromotionsMade CrmCustomerPromotion[]
+  opsNotices             CrmOpsNotice[]
+  noticeReads            CrmOpsNoticeRead[]
+  serviceContractsCreated CrmServiceContract[]
+  @@map("crm_users")
+}
+
+// ─── Services ──────────────────────────────────────────────
+
+model CrmService {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  status    String   @default("ACTIVE") // ACTIVE, INACTIVE
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  planLinks  CrmMembershipPlanService[]
+  usages     CrmServiceUsage[]
+  activities CrmActivityLog[]
+  promotions CrmPromotion[]
+  @@map("crm_services")
+}
+
+// ─── CrmCustomer (central) ────────────────────────────────────
+
+model CrmCustomer {
+  id              String    @id @default(cuid())
+  customerCode    String    @unique // CUS-000001
+  fullName        String
+  phone           String
+  phoneNormalized String
+  email           String?
+  dateOfBirth     DateTime?
+  gender          String?   // MALE, FEMALE, OTHER
+  source          String    @default("WALK_IN")
+  note            String?
+  personality     String?   // tính cách / ghi chú nhân viên
+  salesPersonCode String?   // NV kinh doanh phụ trách (SALE_A, SALE_B, SALE_C)
+  status          String    @default("ACTIVE") // ACTIVE, INACTIVE
+  firstVisitAt    DateTime?
+  lastVisitAt     DateTime?
+  totalVisits     Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships        CrmMembership[]
+  visits             CrmVisit[]
+  usages             CrmServiceUsage[]
+  activities         CrmActivityLog[]
+  notes              CrmCustomerNote[]
+  familyGroupId      String?
+  familyGroup        CrmFamilyGroup?          @relation("FamilyMembers", fields: [familyGroupId], references: [id], onDelete: SetNull)
+  ownedFamily        CrmFamilyGroup?          @relation("FamilyOwner")
+  customerPromotions CrmCustomerPromotion[]
+  serviceContracts   CrmServiceContract[]
+
+  @@index([phoneNormalized])
+  @@index([customerCode])
+  @@index([fullName])
+  @@index([createdAt])
+  @@index([lastVisitAt])
+  @@index([familyGroupId])
+  @@index([salesPersonCode])
+  @@map("crm_customers")
+}
+
+model CrmCustomerNote {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   CrmCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  content    String
+  authorId   String?
+  createdAt  DateTime @default(now())
+
+  @@index([customerId])
+  @@map("crm_customer_notes")
+}
+
+// ─── CrmMembership Plan → Services ────────────────────────────
+
+model CrmMembershipPlan {
+  id           String   @id @default(cuid())
+  planCode     String   @unique
+  name         String
+  durationDays Int
+  status       String   @default("ACTIVE") // ACTIVE, INACTIVE
+  description  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  services     CrmMembershipPlanService[]
+  memberships  CrmMembership[]
+  @@map("crm_membership_plans")
+}
+
+model CrmMembershipPlanService {
+  planId    String
+  serviceId String
+  plan      CrmMembershipPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  service   CrmService        @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([planId, serviceId])
+  @@map("crm_membership_plan_services")
+}
+
+model CrmMembership {
+  id             String    @id @default(cuid())
+  membershipCode String    @unique // MEM-000001
+  contractCode   String    @unique // HD-000001 (hiển thị HĐ-000001)
+  customerId     String
+  customer       CrmCustomer  @relation(fields: [customerId], references: [id])
+  planId         String
+  plan           CrmMembershipPlan @relation(fields: [planId], references: [id])
+  startDate      DateTime
+  expiryDate     DateTime
+  status         String    @default("PENDING") // PENDING, ACTIVE, PAUSED, EXPIRED, CANCELLED
+  note             String?
+  salesPersonCode  String?   // NV kinh doanh bán gói này
+  renewedFromId    String?
+  renewedFrom    CrmMembership?  @relation("MembershipRenewal", fields: [renewedFromId], references: [id], onDelete: SetNull)
+  renewals       CrmMembership[] @relation("MembershipRenewal")
+  createdById    String?
+  createdBy      CrmUser?     @relation(fields: [createdById], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  visits         CrmVisit[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([expiryDate])
+  @@index([contractCode])
+  @@index([salesPersonCode])
+  @@map("crm_memberships")
+}
+
+// ─── Hợp đồng lưu form (Hội viên / Dịch vụ HLV) ─────────────
+
+model CrmServiceContract {
+  id          String   @id @default(cuid())
+  type        String   // MEMBER | SERVICE
+  formNo      String   @unique // HD-HV-000001 | HD-DV-000001
+  memberCode  String   // CUS-000001 | CUS-000001 - GĐ
+  status      String   @default("EMPTY") // EMPTY = chưa thông tin · EDITED = đã chỉnh sửa
+  customerId  String?
+  customer    CrmCustomer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  payload     Json
+  createdById String?
+  createdBy   CrmUser?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type])
+  @@index([memberCode])
+  @@index([customerId])
+  @@index([createdAt])
+  @@index([status])
+  @@map("crm_service_contracts")
+}
+
+// ─── Family group (1 SĐT · nhiều thành viên trong danh sách) ───
+
+model CrmFamilyGroup {
+  id              String     @id @default(cuid())
+  groupCode       String     @unique // FAM-000001
+  name            String?
+  phone           String
+  phoneNormalized String     @unique
+  ownerId         String     @unique
+  owner           CrmCustomer   @relation("FamilyOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  members         CrmCustomer[] @relation("FamilyMembers")
+
+  @@index([phoneNormalized])
+  @@map("crm_family_groups")
+}
+
+// ─── CrmPromotion / Voucher ─────────────────────────────────────
+
+model CrmPromotion {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  type        String   // VOUCHER, PROMOTION
+  description String?
+  serviceId   String?
+  service     CrmService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  validFrom   DateTime?
+  validTo     DateTime?
+  status      String   @default("ACTIVE") // ACTIVE, INACTIVE
+  createdById String?
+  createdBy   CrmUser?    @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments CrmCustomerPromotion[]
+  @@map("crm_promotions")
+}
+
+model CrmCustomerPromotion {
+  id           String     @id @default(cuid())
+  customerId   String
+  customer     CrmCustomer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  promotionId  String
+  promotion    CrmPromotion  @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  note         String?
+  assignedById String?
+  assignedBy   CrmUser?      @relation(fields: [assignedById], references: [id])
+  usedAt       DateTime?
+  status       String     @default("ACTIVE") // ACTIVE, USED, CANCELLED, EXPIRED
+  createdAt    DateTime   @default(now())
+
+  @@index([customerId])
+  @@index([promotionId])
+  @@map("crm_customer_promotions")
+}
+
+// ─── CrmVisit → CrmService Usage → CrmService ───────────────────────
+
+model CrmVisit {
+  id           String      @id @default(cuid())
+  visitCode    String      @unique // VIS-000001
+  customerId   String
+  customer     CrmCustomer    @relation(fields: [customerId], references: [id])
+  membershipId String?
+  membership   CrmMembership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
+  checkInAt    DateTime    @default(now())
+  checkOutAt   DateTime?
+  visitDate    DateTime // date portion for reporting
+  note         String?
+  staffId      String?
+  staff        CrmUser?       @relation(fields: [staffId], references: [id])
+  createdAt    DateTime    @default(now())
+
+  usages CrmServiceUsage[]
+
+  @@index([customerId, checkInAt])
+  @@index([visitDate])
+  @@index([membershipId])
+  @@map("crm_visits")
+}
+
+model CrmServiceUsage {
+  id         String   @id @default(cuid())
+  visitId    String
+  visit      CrmVisit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   CrmCustomer @relation(fields: [customerId], references: [id])
+  serviceId  String
+  service    CrmService  @relation(fields: [serviceId], references: [id])
+  startedAt  DateTime @default(now())
+  endedAt    DateTime?
+  status     String   @default("ACTIVE") // ACTIVE, COMPLETED, CANCELLED
+  createdAt  DateTime @default(now())
+
+  @@index([visitId])
+  @@index([customerId])
+  @@index([serviceId, startedAt])
+  @@map("crm_service_usages")
+}
+
+// ─── Activity / Journey ────────────────────────────────────
+
+model CrmActivityLog {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     CrmCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  activityType String   // CUSTOMER_CREATED, CHECK_IN, MEMBERSHIP_REGISTERED, NOTE, SERVICE_USAGE
+  serviceId    String?
+  service      CrmService? @relation(fields: [serviceId], references: [id])
+  title        String
+  note         String?
+  staffId      String?
+  staff        CrmUser?    @relation(fields: [staffId], references: [id])
+  occurredAt   DateTime @default(now())
+
+  @@index([customerId, occurredAt])
+  @@map("crm_activity_logs")
+}
+
+// ─── Thông báo giữa 2 acc vận hành ─────────────────────────
+
+model CrmOpsNotice {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      CrmUser?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorName  String
+  department String?
+  title      String
+  detail     String?
+  href       String?
+  createdAt  DateTime @default(now())
+  reads      CrmOpsNoticeRead[]
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@map("crm_ops_notices")
+}
+
+model CrmOpsNoticeRead {
+  noticeId String
+  userId   String
+  notice   CrmOpsNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  user     CrmUser      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt   DateTime  @default(now())
+
+  @@id([noticeId, userId])
+  @@index([userId])
+  @@map("crm_ops_notice_reads")
+}
+
+// ─── Customer App (guest digital access pass) ─────────────────
+// Separate from CRM membership customers (crm_customers).
+
+model AppCustomer {
+  id           String   @id @default(cuid())
+  customerCode String   @unique // CUS-A82K91 (internal)
+  username     String   @unique
+  passwordHash String
+  status       String   @default("ACTIVE") // ACTIVE, DISABLED
+  fullName        String?
+  phone           String?
+  phoneNormalized String?  @unique
+  /// 4 số cuối — recovery/lookup only (not primary ID)
+  phoneLast4      String?
+  shortId         String? // legacy, synced with phoneLast4
+  segment         String   @default("WALK_IN")
+  intendedServices String?
+  adminConfirmedAt DateTime?
+  adminNote        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions AppCustomerSession[]
+  devices  AppCustomerDevice[]
+  events   AppServiceEvent[]
+  orders   AppOrder[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([shortId])
+  @@index([phoneLast4])
+  @@index([segment])
+  @@index([phoneNormalized])
+  @@map("app_customers")
+}
+
+model AppCustomerSession {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sessionToken String   @unique
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+  lastUsedAt   DateTime @default(now())
+
+  @@index([customerId])
+  @@index([expiresAt])
+  @@map("app_customer_sessions")
+}
+
+/// Device remember cookie: raw token in cookie, hash in DB.
+model AppCustomerDevice {
+  id         String    @id @default(cuid())
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  events AppServiceEvent[]
+
+  @@index([customerId])
+  @@index([expiresAt])
+  @@map("app_customer_devices")
+}
+
+model AppService {
+  id          String   @id @default(cuid())
+  serviceCode String   @unique // OLYMPIC_POOL
+  serviceName String
+  slug        String?  @unique
+  qrToken     String?  @unique
+  status      String   @default("ACTIVE") // ACTIVE, INACTIVE
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events AppServiceEvent[]
+  orders AppOrder[]
+
+  @@index([status])
+  @@map("app_services")
+}
+
+model AppServiceEvent {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  serviceId  String
+  service    AppService  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  deviceId   String?
+  device     AppCustomerDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  eventType  String   @default("SERVICE_USE")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([serviceId, createdAt])
+  @@index([customerId, serviceId, createdAt])
+  @@index([deviceId])
+  @@map("app_service_events")
+}
+
+/// Đơn gọi món Mía Ơi (và F&B sau này)
+model AppOrder {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  serviceId  String?
+  service    AppService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  status     String   @default("PENDING") // PENDING | PREPARING | DONE | CANCELLED
+  totalVnd   Int      @default(0)
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  items AppOrderItem[]
+
+  @@index([status, createdAt])
+  @@index([customerId, createdAt])
+  @@map("app_orders")
+}
+
+model AppOrderItem {
+  id           String @id @default(cuid())
+  orderId      String
+  order        AppOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId       String
+  nameVi       String
+  nameEn       String?
+  unitPriceVnd Int
+  qty          Int    @default(1)
+
+  @@index([orderId])
+  @@map("app_order_items")
 }

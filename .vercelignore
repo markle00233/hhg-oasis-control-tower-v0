@@ -1,0 +1,14 @@
+mobile/
+customer-app/
+c.o-chatbot/
+docs/reference/
+*.jpg
+*.JPG
+*.png
+!public/**
+node_modules/
+.next/
+.git/
+*.db
+.env*
+HHG_OASIS_UPDATE_AFTER_LIVE_PACKAGE.zip

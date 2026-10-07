@@ -1,0 +1,154 @@
+// Slim schema for Customer App only (faster generate + smaller client).
+// Keep in sync with App* models in root prisma/schema.prisma.
+//
+// DANGER: NEVER run `prisma db push` with this schema against the shared DB.
+// It will drop Control Tower / CRM tables. Use ONLY:
+//   npx prisma generate --schema=prisma/schema.prisma
+// Schema changes: edit root prisma/schema.prisma, then
+//   npx prisma db push --schema=prisma/schema.prisma
+// and mirror App* models here for generate.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AppCustomer {
+  id           String   @id @default(cuid())
+  customerCode String   @unique
+  username     String   @unique
+  passwordHash String
+  status       String   @default("ACTIVE")
+  fullName        String?
+  phone           String?
+  phoneNormalized String?  @unique
+  /// 4 số cuối — chỉ dùng recovery/lookup, không phải ID chính
+  phoneLast4      String?
+  /// legacy alias kept in sync with phoneLast4
+  shortId         String?
+  segment         String   @default("WALK_IN") // MEMBER | WALK_IN
+  intendedServices String?
+  adminConfirmedAt DateTime?
+  adminNote        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions AppCustomerSession[]
+  devices  AppCustomerDevice[]
+  events   AppServiceEvent[]
+  orders   AppOrder[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([shortId])
+  @@index([phoneLast4])
+  @@index([segment])
+  @@index([phoneNormalized])
+  @@map("app_customers")
+}
+
+/// Remember-this-device: cookie holds raw token; DB stores hash only.
+model AppCustomerDevice {
+  id         String    @id @default(cuid())
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  events AppServiceEvent[]
+
+  @@index([customerId])
+  @@index([expiresAt])
+  @@map("app_customer_devices")
+}
+
+model AppCustomerSession {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sessionToken String   @unique
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+  lastUsedAt   DateTime @default(now())
+
+  @@index([customerId])
+  @@index([expiresAt])
+  @@map("app_customer_sessions")
+}
+
+model AppService {
+  id          String   @id @default(cuid())
+  serviceCode String   @unique
+  serviceName String
+  slug        String?  @unique
+  qrToken     String?  @unique
+  status      String   @default("ACTIVE")
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events AppServiceEvent[]
+  orders AppOrder[]
+
+  @@index([status])
+  @@map("app_services")
+}
+
+model AppServiceEvent {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  serviceId  String
+  service    AppService  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  deviceId   String?
+  device     AppCustomerDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  eventType  String   @default("SERVICE_USE")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([serviceId, createdAt])
+  @@index([customerId, serviceId, createdAt])
+  @@index([deviceId])
+  @@map("app_service_events")
+}
+
+model AppOrder {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  serviceId  String?
+  service    AppService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  status     String   @default("PENDING")
+  totalVnd   Int      @default(0)
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  items AppOrderItem[]
+
+  @@index([status, createdAt])
+  @@index([customerId, createdAt])
+  @@map("app_orders")
+}
+
+model AppOrderItem {
+  id           String @id @default(cuid())
+  orderId      String
+  order        AppOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId       String
+  nameVi       String
+  nameEn       String?
+  unitPriceVnd Int
+  qty          Int    @default(1)
+
+  @@index([orderId])
+  @@map("app_order_items")
+}
