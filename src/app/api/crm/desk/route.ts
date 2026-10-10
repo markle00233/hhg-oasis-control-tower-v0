@@ -80,6 +80,16 @@ export async function GET(req: NextRequest) {
                     },
                   ]
                 : []),
+              ...(zone === "SAUNA"
+                ? [
+                    {
+                      eventType: "SPA_ORDER" as const,
+                      service: { serviceCode: "SAUNA" },
+                    },
+                  ]
+                : []),
+              // OLYMPIC_POOL: chỉ hiện SERVICE_USE (lần quét).
+              // Vé gắn vào metadata scan — không liệt kê POOL_ORDER riêng (tránh +1 dòng).
             ],
           },
           orderBy: { createdAt: "desc" },
@@ -95,7 +105,10 @@ export async function GET(req: NextRequest) {
         orders: {
           where: { createdAt: { gte: dayStart } },
           orderBy: { createdAt: "desc" },
-          take: zone === "MIA_OI" ? 20 : 0,
+          take:
+            zone === "MIA_OI" || zone === "SAUNA" || zone === "OLYMPIC_POOL"
+              ? 20
+              : 0,
           select: {
             id: true,
             status: true,
@@ -157,18 +170,38 @@ export async function GET(req: NextRequest) {
           const orderItems = Array.isArray(meta.items)
             ? (meta.items as { name?: string; qty?: number }[])
             : [];
+          const ticketVerified =
+            e.eventType === "SERVICE_USE" &&
+            (meta.ticketVerified === true || !!meta.orderId);
+          const orderSummary =
+            e.eventType === "MIA_OI_ORDER" ||
+            e.eventType === "SPA_ORDER" ||
+            e.eventType === "POOL_ORDER" ||
+            ticketVerified
+              ? orderItems
+                  .map((i) => `${i.qty || 1}× ${i.name || "dịch vụ"}`)
+                  .join(", ") || null
+              : null;
           return {
             id: e.id,
             at: e.createdAt,
             eventType: e.eventType,
             serviceCode: e.service.serviceCode,
             serviceName: e.service.serviceName,
-            orderSummary:
-              e.eventType === "MIA_OI_ORDER"
-                ? orderItems
-                    .map((i) => `${i.qty || 1}× ${i.name || "món"}`)
-                    .join(", ")
-                : null,
+            orderSummary,
+            ticketVerified,
+            totalVnd:
+              typeof meta.totalVnd === "number" ? meta.totalVnd : null,
+            orderId: typeof meta.orderId === "string" ? meta.orderId : null,
+            ticketItems: orderItems.map((i) => ({
+              nameVi: String(i.name || ""),
+              qty: Number(i.qty) || 1,
+              unitPriceVnd:
+                typeof (i as { unitPriceVnd?: number }).unitPriceVnd ===
+                "number"
+                  ? (i as { unitPriceVnd: number }).unitPriceVnd
+                  : 0,
+            })),
           };
         });
 

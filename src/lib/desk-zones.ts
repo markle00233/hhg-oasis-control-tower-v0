@@ -13,8 +13,8 @@ export const DESK_ZONES: DeskZone[] = [
   { code: "MIA_OI", name: "Mía Ơi", username: "MIAOI" },
   { code: "VIP_RESORT", name: "VIP", username: "VIP" },
   { code: "PICKLEBALL", name: "Pickleball", username: "PICKLEBALL" },
-  { code: "SAUNA", name: "Spa", username: "SPA" },
-  { code: "OLYMPIC_POOL", name: "Gym", username: "GYM" },
+  { code: "SAUNA", name: "HHG Oasis Spa", username: "SPA" },
+  { code: "OLYMPIC_POOL", name: "Hồ Olympic", username: "GYM" },
   { code: "JACUZZI", name: "Jacuzzi", username: "JACUZZI" },
 ];
 

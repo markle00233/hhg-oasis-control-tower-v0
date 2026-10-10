@@ -215,14 +215,21 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
         : (objective.isNotEmpty ? objective : brief);
 
     String owner;
+    String? ownerUserId;
     if (state.user?.isAdmin == true) {
       owner = (_ownerLabel ?? "").trim();
       if (owner.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Chọn Owner")));
         return;
       }
+      final hit = state.leaders.where((u) {
+        final lab = u.displayName.isNotEmpty ? u.displayName : u.username;
+        return lab == owner || u.username == owner;
+      }).firstOrNull;
+      ownerUserId = hit?.id;
     } else {
       owner = state.user?.displayName ?? state.user?.username ?? "";
+      ownerUserId = state.user?.id;
     }
 
     final descParts = <String>[objective.isNotEmpty ? objective : brief];
@@ -253,6 +260,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
         "description": descParts.join("\n\n"),
         "category": _category.text.trim().isEmpty ? null : _category.text.trim(),
         "owner": owner,
+        if (ownerUserId != null) "ownerUserId": ownerUserId,
         "unitName": _unit,
         "important": _important,
         "urgent": _urgent,

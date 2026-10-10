@@ -9,11 +9,27 @@ import {
   type MiaOiMenuItem,
 } from "@/lib/miaoi-menu";
 import {
+  SPA_CATEGORIES,
+  SPA_MENU,
+  formatSpaPrice,
+  type SpaMenuItem,
+} from "@/lib/spa-menu";
+import { POOL_MENU, formatPoolPrice } from "@/lib/olympic-pool-menu";
+import { printPoolBill } from "@/lib/pool-bill-print";
+import {
   DESK_ZONES,
   dashboardTitle,
   getDeskZone,
   type DeskZone,
 } from "@/lib/desk-zones";
+
+type CatalogItem = MiaOiMenuItem | SpaMenuItem;
+
+type ScanTicketItem = {
+  nameVi: string;
+  qty: number;
+  unitPriceVnd: number;
+};
 
 type Scan = {
   id: string;
@@ -22,6 +38,10 @@ type Scan = {
   serviceCode: string;
   serviceName: string;
   orderSummary: string | null;
+  ticketVerified?: boolean;
+  totalVnd?: number | null;
+  orderId?: string | null;
+  ticketItems?: ScanTicketItem[];
 };
 
 type DayOrder = {
@@ -78,13 +98,24 @@ export default function DeskAdministrationPage() {
   const [saving, setSaving] = useState(false);
   const [category, setCategory] = useState(MIAOI_CATEGORIES[0]?.id || "mia");
   const [cart, setCart] = useState<Record<string, CartLine>>({});
+  /** Hồ Olympic: giỏ vé theo từng lần quét */
+  const [scanCarts, setScanCarts] = useState<
+    Record<string, Record<string, number>>
+  >({});
   const [orderMsg, setOrderMsg] = useState("");
   const [ordering, setOrdering] = useState(false);
+  const [verifyingScanId, setVerifyingScanId] = useState<string | null>(null);
 
   const zone = picked?.code || null;
   const zoneName = picked?.name || "";
   const isMiaOi = zone === "MIA_OI";
+  const isSpa = zone === "SAUNA";
+  const isPool = zone === "OLYMPIC_POOL";
+  /** Menu phía trên — pool bán vé dưới từng lần quét */
+  const hasCatalog = isMiaOi || isSpa;
   const title = dashboardTitle(zoneName || "…");
+  const catalogCategories = isSpa ? SPA_CATEGORIES : MIAOI_CATEGORIES;
+  const catalogMenu = isSpa ? SPA_MENU : MIAOI_MENU;
 
   const pendingCount = useMemo(
     () => arrivals.filter((a) => a.pendingAdmin).length,
@@ -92,8 +123,8 @@ export default function DeskAdministrationPage() {
   );
 
   const categoryItems = useMemo(
-    () => MIAOI_MENU.filter((i) => i.category === category),
-    [category]
+    () => catalogMenu.filter((i) => i.category === category),
+    [catalogMenu, category]
   );
 
   const cartLines = useMemo(
@@ -104,14 +135,14 @@ export default function DeskAdministrationPage() {
   const cartTotal = useMemo(() => {
     let sum = 0;
     for (const line of cartLines) {
-      const item = MIAOI_MENU.find((i) => i.id === line.itemId);
+      const item = catalogMenu.find((i) => i.id === line.itemId);
       if (!item) continue;
       const unit =
         line.useAltPrice && item.priceAltVnd ? item.priceAltVnd : item.priceVnd;
       sum += unit * line.qty;
     }
     return sum;
-  }, [cartLines]);
+  }, [cartLines, catalogMenu]);
 
   const load = useCallback(async () => {
     if (!zone) return;
@@ -182,6 +213,7 @@ export default function DeskAdministrationPage() {
     setArrivals([]);
     setSelected(null);
     setCart({});
+    setScanCarts({});
     setOrderMsg("");
     setStep("login");
   }
@@ -239,11 +271,198 @@ export default function DeskAdministrationPage() {
   function openCustomer(a: Arrival) {
     setSelected(a);
     setCart({});
+    setScanCarts({});
     setOrderMsg("");
-    setCategory(MIAOI_CATEGORIES[0]?.id || "mia");
+    setVerifyingScanId(null);
+    setCategory(
+      isSpa
+        ? SPA_CATEGORIES[0]?.id || "gio-vang"
+        : MIAOI_CATEGORIES[0]?.id || "mia"
+    );
   }
 
-  function setQty(item: MiaOiMenuItem, qty: number, useAlt = false) {
+  function scanQty(scanId: string, itemId: string) {
+    return scanCarts[scanId]?.[itemId] || 0;
+  }
+
+  function setScanQty(scanId: string, itemId: string, qty: number) {
+    setScanCarts((prev) => {
+      const row = { ...(prev[scanId] || {}) };
+      if (qty <= 0) delete row[itemId];
+      else row[itemId] = Math.min(qty, 99);
+      const next = { ...prev };
+      if (Object.keys(row).length === 0) delete next[scanId];
+      else next[scanId] = row;
+      return next;
+    });
+  }
+
+  function scanCartTotal(scanId: string) {
+    const row = scanCarts[scanId] || {};
+    let sum = 0;
+    let qty = 0;
+    for (const [itemId, q] of Object.entries(row)) {
+      const item = getPoolItemById(itemId);
+      if (!item || q < 1) continue;
+      sum += item.priceVnd * q;
+      qty += q;
+    }
+    return { sum, qty };
+  }
+
+  function getPoolItemById(id: string) {
+    return POOL_MENU.find((i) => i.id === id) || null;
+  }
+
+  function patchSelectedScan(scanId: string, patch: Partial<Scan>) {
+    setSelected((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        todayScans: prev.todayScans.map((s) =>
+          s.id === scanId ? { ...s, ...patch } : s
+        ),
+      };
+    });
+    setArrivals((prev) =>
+      prev.map((a) => {
+        if (!selected || a.id !== selected.id) return a;
+        return {
+          ...a,
+          todayScans: a.todayScans.map((s) =>
+            s.id === scanId ? { ...s, ...patch } : s
+          ),
+        };
+      })
+    );
+  }
+
+  async function verifyPoolScan(scan: Scan) {
+    if (!selected || !isPool) return;
+    const row = scanCarts[scan.id] || {};
+    const items = Object.entries(row)
+      .filter(([, q]) => q > 0)
+      .map(([itemId, qty]) => ({ itemId, qty }));
+    if (!items.length) {
+      setError("Chọn ít nhất 1 vé trước khi xác thực.");
+      return;
+    }
+    setVerifyingScanId(scan.id);
+    setError("");
+    setOrderMsg("");
+    try {
+      const res = await fetch("/api/crm/pool/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          customerId: selected.id,
+          scanEventId: scan.id,
+          items,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không xác thực được");
+      const ticketItems: ScanTicketItem[] = (data.order?.items || []).map(
+        (i: {
+          nameVi: string;
+          qty: number;
+          unitPriceVnd: number;
+        }) => ({
+          nameVi: i.nameVi,
+          qty: i.qty,
+          unitPriceVnd: i.unitPriceVnd,
+        })
+      );
+      // Optimistic — không chờ load() cả desk (chậm)
+      setScanCarts((prev) => {
+        const next = { ...prev };
+        delete next[scan.id];
+        return next;
+      });
+      patchSelectedScan(scan.id, {
+        ticketVerified: true,
+        orderSummary: data.orderSummary || null,
+        totalVnd: data.order?.totalVnd ?? null,
+        orderId: data.order?.id ?? null,
+        ticketItems,
+      });
+      setOrderMsg(
+        `Đã xác thực · vào lúc ${formatTime(scan.at)} · ${formatVnd(data.order?.totalVnd || 0)}`
+      );
+      void load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không xác thực được");
+    } finally {
+      setVerifyingScanId(null);
+    }
+  }
+
+  async function undoPoolScan(scan: Scan) {
+    if (!selected || !isPool) return;
+    if (!window.confirm("Undo xác thực lần quét này? Vé sẽ bị gỡ.")) return;
+    setVerifyingScanId(scan.id);
+    setError("");
+    try {
+      const res = await fetch("/api/crm/pool/orders", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          customerId: selected.id,
+          scanEventId: scan.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không undo được");
+      patchSelectedScan(scan.id, {
+        ticketVerified: false,
+        orderSummary: null,
+        totalVnd: null,
+        orderId: null,
+        ticketItems: [],
+      });
+      setOrderMsg(`Đã undo · ${formatTime(scan.at)}`);
+      void load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không undo được");
+    } finally {
+      setVerifyingScanId(null);
+    }
+  }
+
+  function sendPoolBill(scan: Scan) {
+    if (!selected) return;
+    let items: ScanTicketItem[] =
+      scan.ticketItems?.filter((i) => i.nameVi && i.qty > 0) || [];
+    if (!items.length && scan.orderSummary) {
+      items = [
+        {
+          nameVi: scan.orderSummary,
+          qty: 1,
+          unitPriceVnd: scan.totalVnd || 0,
+        },
+      ];
+    }
+    if (!items.length) {
+      setError("Chưa có vé để in bill.");
+      return;
+    }
+    try {
+      printPoolBill({
+        customerName: selected.fullName || "Khách",
+        phone: selected.phone,
+        shortId: selected.shortId,
+        entryAt: scan.at,
+        totalVnd: scan.totalVnd || 0,
+        items,
+        orderId: scan.orderId,
+      });
+      setOrderMsg(`Đã gửi in bill · ${formatTime(scan.at)}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không mở được máy in");
+    }
+  }
+
+  function setQty(item: CatalogItem, qty: number, useAlt = false) {
     const key = lineKey(item.id, useAlt);
     setCart((prev) => {
       const next = { ...prev };
@@ -258,8 +477,40 @@ export default function DeskAdministrationPage() {
     });
   }
 
-  function qtyOf(item: MiaOiMenuItem, useAlt = false) {
+  function qtyOf(item: CatalogItem, useAlt = false) {
     return cart[lineKey(item.id, useAlt)]?.qty || 0;
+  }
+
+  function priceLabel(item: CatalogItem, useAlt = false) {
+    if (isSpa) {
+      const spa = item as SpaMenuItem;
+      if (useAlt && spa.priceAltVnd) {
+        return `${Math.round(spa.priceAltVnd / 1000)}K`;
+      }
+      return formatSpaPrice(spa);
+    }
+    return `${formatMenuPrice(item as MiaOiMenuItem)}k`;
+  }
+
+  function catalogTitle() {
+    if (isSpa) return "Dịch vụ HHG Oasis Spa";
+    return "Gọi món Mía Ơi";
+  }
+
+  function catalogUnit() {
+    if (isSpa) return "dịch vụ";
+    return "món";
+  }
+
+  function orderEndpoint() {
+    if (isSpa) return "/api/crm/spa/orders";
+    return "/api/crm/miaoi/orders";
+  }
+
+  function accentColor() {
+    if (isSpa) return "#1b3022";
+    if (isPool) return "#0c4a6e";
+    return "#1e3a5f";
   }
 
   async function markSeen() {
@@ -287,12 +538,12 @@ export default function DeskAdministrationPage() {
   }
 
   async function saveOrder() {
-    if (!selected || !isMiaOi || cartLines.length === 0) return;
+    if (!selected || !hasCatalog || isPool || cartLines.length === 0) return;
     setOrdering(true);
     setOrderMsg("");
     setError("");
     try {
-      const res = await fetch("/api/crm/miaoi/orders", {
+      const res = await fetch(orderEndpoint(), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -303,7 +554,9 @@ export default function DeskAdministrationPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không lưu được đơn");
       setCart({});
-      setOrderMsg(`Đã lưu đơn · ${formatVnd(data.order?.totalVnd || cartTotal)}`);
+      setOrderMsg(
+        `Đã lưu · ${formatVnd(data.order?.totalVnd || cartTotal)}`
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được đơn");
@@ -337,8 +590,22 @@ export default function DeskAdministrationPage() {
                 onClick={() => chooseZone(z)}
                 style={{
                   ...styles.zoneBtn,
-                  borderColor: z.code === "MIA_OI" ? "#b45309" : "#e2e8f0",
-                  background: z.code === "MIA_OI" ? "#fff7ed" : "#f1f5f9",
+                  borderColor:
+                    z.code === "MIA_OI"
+                      ? "#b45309"
+                      : z.code === "SAUNA"
+                        ? "#1b3022"
+                        : z.code === "OLYMPIC_POOL"
+                          ? "#0c4a6e"
+                          : "#e2e8f0",
+                  background:
+                    z.code === "MIA_OI"
+                      ? "#fff7ed"
+                      : z.code === "SAUNA"
+                        ? "#eef5f0"
+                        : z.code === "OLYMPIC_POOL"
+                          ? "#e0f2fe"
+                          : "#f1f5f9",
                 }}
               >
                 <strong style={{ fontSize: 15, textTransform: "lowercase" }}>
@@ -417,6 +684,8 @@ export default function DeskAdministrationPage() {
           <p style={styles.mute}>
             {arrivals.length} khách · {pendingCount} chưa xem
             {isMiaOi ? " · bấm khách để gọi món" : ""}
+            {isSpa ? " · bấm khách để chọn dịch vụ spa" : ""}
+            {isPool ? " · bấm khách → chọn vé dưới lần quét → Xác thực" : ""}
             {isAdmin ? " · admin" : ""}
           </p>
         </div>
@@ -531,10 +800,10 @@ export default function DeskAdministrationPage() {
               </button>
             </div>
 
-            {isMiaOi ? (
+            {hasCatalog ? (
               <>
                 <p style={{ marginTop: 18, marginBottom: 8, fontWeight: 800 }}>
-                  Gọi món Mía Ơi
+                  {catalogTitle()}
                 </p>
                 <div
                   style={{
@@ -544,14 +813,15 @@ export default function DeskAdministrationPage() {
                     marginBottom: 10,
                   }}
                 >
-                  {MIAOI_CATEGORIES.map((c) => (
+                  {catalogCategories.map((c) => (
                     <button
                       key={c.id}
                       type="button"
                       onClick={() => setCategory(c.id)}
                       style={{
                         ...styles.chip,
-                        background: category === c.id ? "#1e3a5f" : "#f1f5f9",
+                        background:
+                          category === c.id ? accentColor() : "#f1f5f9",
                         color: category === c.id ? "#fff" : "#334155",
                       }}
                     >
@@ -568,49 +838,74 @@ export default function DeskAdministrationPage() {
                   }}
                 >
                   {categoryItems.map((item) => {
-                    const q = qtyOf(item, false);
-                    return (
-                      <div key={item.id} style={styles.menuRow}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700 }}>{item.nameVi}</div>
-                          <div style={{ fontSize: 12, color: "#64748b" }}>
-                            {formatMenuPrice(item)}k
-                          </div>
-                        </div>
+                    const variants: { useAlt: boolean; label: string }[] =
+                      item.priceAltVnd
+                        ? [
+                            {
+                              useAlt: false,
+                              label: `${Math.round(item.priceVnd / 1000)}K`,
+                            },
+                            {
+                              useAlt: true,
+                              label: `${Math.round(item.priceAltVnd / 1000)}K`,
+                            },
+                          ]
+                        : [{ useAlt: false, label: priceLabel(item, false) }];
+
+                    return variants.map(({ useAlt, label }) => {
+                      const q = qtyOf(item, useAlt);
+                      return (
                         <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
+                          key={lineKey(item.id, useAlt)}
+                          style={styles.menuRow}
                         >
-                          <button
-                            type="button"
-                            style={styles.qtyBtn}
-                            onClick={() => setQty(item, q - 1, false)}
-                            disabled={q <= 0}
-                          >
-                            −
-                          </button>
-                          <span
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700 }}>{item.nameVi}</div>
+                            <div style={{ fontSize: 12, color: "#64748b" }}>
+                              {label}
+                              {"durationMin" in item && item.durationMin
+                                ? ` · ${item.durationMin}'`
+                                : ""}
+                              {"note" in item && item.note
+                                ? ` · ${item.note}`
+                                : ""}
+                            </div>
+                          </div>
+                          <div
                             style={{
-                              width: 22,
-                              textAlign: "center",
-                              fontWeight: 800,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
                             }}
                           >
-                            {q}
-                          </span>
-                          <button
-                            type="button"
-                            style={styles.qtyBtn}
-                            onClick={() => setQty(item, q + 1, false)}
-                          >
-                            +
-                          </button>
+                            <button
+                              type="button"
+                              style={styles.qtyBtn}
+                              onClick={() => setQty(item, q - 1, useAlt)}
+                              disabled={q <= 0}
+                            >
+                              −
+                            </button>
+                            <span
+                              style={{
+                                width: 22,
+                                textAlign: "center",
+                                fontWeight: 800,
+                              }}
+                            >
+                              {q}
+                            </span>
+                            <button
+                              type="button"
+                              style={styles.qtyBtn}
+                              onClick={() => setQty(item, q + 1, useAlt)}
+                            >
+                              +
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
+                      );
+                    });
                   })}
                 </div>
                 <div
@@ -618,7 +913,11 @@ export default function DeskAdministrationPage() {
                     marginTop: 12,
                     padding: 12,
                     borderRadius: 14,
-                    background: cartLines.length ? "#ecfdf5" : "#f8fafc",
+                    background: cartLines.length
+                      ? isSpa
+                        ? "#eef5f0"
+                        : "#ecfdf5"
+                      : "#f8fafc",
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
@@ -628,8 +927,8 @@ export default function DeskAdministrationPage() {
                   <div>
                     <div style={{ fontWeight: 800 }}>
                       {cartLines.length
-                        ? `${cartLines.reduce((n, l) => n + l.qty, 0)} món · ${formatVnd(cartTotal)}`
-                        : "Chưa chọn món"}
+                        ? `${cartLines.reduce((n, l) => n + l.qty, 0)} ${catalogUnit()} · ${formatVnd(cartTotal)}`
+                        : `Chưa chọn ${catalogUnit()}`}
                     </div>
                     {orderMsg ? (
                       <div
@@ -648,6 +947,7 @@ export default function DeskAdministrationPage() {
                     style={{
                       ...styles.btn,
                       flex: "0 0 auto",
+                      background: accentColor(),
                       opacity: cartLines.length && !ordering ? 1 : 0.45,
                     }}
                     disabled={!cartLines.length || ordering}
@@ -662,43 +962,232 @@ export default function DeskAdministrationPage() {
             <p style={{ marginTop: 18, marginBottom: 8, fontWeight: 800 }}>
               Lịch sử khu này hôm nay
             </p>
+            {orderMsg && isPool ? (
+              <p
+                style={{
+                  margin: "0 0 10px",
+                  fontSize: 13,
+                  color: "#047857",
+                  fontWeight: 700,
+                }}
+              >
+                {orderMsg}
+              </p>
+            ) : null}
             {selected.todayScans?.length ? (
               <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-                {selected.todayScans.map((s) => (
-                  <li
-                    key={s.id}
-                    style={{
-                      padding: "10px 0",
-                      borderBottom: "1px solid #f1f5f9",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
-                    }}
-                  >
-                    <div>
-                      <strong>{s.serviceName}</strong>
-                      {s.orderSummary ? (
-                        <p
-                          style={{
-                            margin: "2px 0 0",
-                            fontSize: 13,
-                            color: "#64748b",
-                          }}
-                        >
-                          {s.orderSummary}
-                        </p>
-                      ) : null}
-                    </div>
-                    <span
+                {selected.todayScans.map((s) => {
+                  const verified = !!s.ticketVerified || !!s.orderSummary;
+                  const { sum, qty } = scanCartTotal(s.id);
+                  const busy = verifyingScanId === s.id;
+                  return (
+                    <li
+                      key={s.id}
                       style={{
-                        fontFamily: "ui-monospace, monospace",
-                        fontWeight: 700,
+                        padding: "12px 0",
+                        borderBottom: "1px solid #f1f5f9",
                       }}
                     >
-                      {formatTime(s.at)}
-                    </span>
-                  </li>
-                ))}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          alignItems: "flex-start",
+                        }}
+                      >
+                        <div>
+                          <strong>{s.serviceName}</strong>
+                          <span
+                            style={{
+                              marginLeft: 8,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: verified ? "#047857" : "#b45309",
+                            }}
+                          >
+                            {verified ? "Đã xác thực" : "Chưa xác thực"}
+                          </span>
+                          {s.orderSummary ? (
+                            <p
+                              style={{
+                                margin: "2px 0 0",
+                                fontSize: 13,
+                                color: "#64748b",
+                              }}
+                            >
+                              {s.orderSummary}
+                              {s.totalVnd
+                                ? ` · ${formatVnd(s.totalVnd)}`
+                                : ""}
+                            </p>
+                          ) : null}
+                          {isPool && verified ? (
+                            <div
+                              style={{
+                                marginTop: 8,
+                                display: "flex",
+                                gap: 8,
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                style={{
+                                  ...styles.ghost,
+                                  padding: "8px 12px",
+                                  fontSize: 13,
+                                  opacity: busy ? 0.5 : 1,
+                                }}
+                                disabled={busy}
+                                onClick={() => void undoPoolScan(s)}
+                              >
+                                {busy ? "…" : "Undo"}
+                              </button>
+                              <button
+                                type="button"
+                                style={{
+                                  ...styles.btn,
+                                  flex: "0 0 auto",
+                                  padding: "8px 12px",
+                                  fontSize: 13,
+                                  background: "#0c4a6e",
+                                }}
+                                disabled={busy}
+                                onClick={() => sendPoolBill(s)}
+                              >
+                                In bill
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                        <span
+                          style={{
+                            fontFamily: "ui-monospace, monospace",
+                            fontWeight: 700,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {formatTime(s.at)}
+                        </span>
+                      </div>
+
+                      {isPool && !verified ? (
+                        <div
+                          style={{
+                            marginTop: 10,
+                            padding: 12,
+                            borderRadius: 14,
+                            background: "#f0f9ff",
+                            border: "1px solid #bae6fd",
+                          }}
+                        >
+                          <p
+                            style={{
+                              margin: "0 0 8px",
+                              fontSize: 12,
+                              fontWeight: 800,
+                              color: "#0c4a6e",
+                            }}
+                          >
+                            Chọn vé → Xác thực (giữ giờ vào {formatTime(s.at)})
+                          </p>
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {POOL_MENU.map((item) => {
+                              const q = scanQty(s.id, item.id);
+                              return (
+                                <div key={item.id} style={styles.menuRow}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 700, fontSize: 14 }}>
+                                      {item.nameVi}
+                                    </div>
+                                    <div
+                                      style={{
+                                        fontSize: 12,
+                                        color: "#64748b",
+                                      }}
+                                    >
+                                      {formatPoolPrice(item)}
+                                      {item.durationMin
+                                        ? ` · ${item.durationMin}'`
+                                        : ""}
+                                      {item.note ? ` · ${item.note}` : ""}
+                                    </div>
+                                  </div>
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      style={styles.qtyBtn}
+                                      onClick={() =>
+                                        setScanQty(s.id, item.id, q - 1)
+                                      }
+                                      disabled={q <= 0 || busy}
+                                    >
+                                      −
+                                    </button>
+                                    <span
+                                      style={{
+                                        width: 22,
+                                        textAlign: "center",
+                                        fontWeight: 800,
+                                      }}
+                                    >
+                                      {q}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      style={styles.qtyBtn}
+                                      onClick={() =>
+                                        setScanQty(s.id, item.id, q + 1)
+                                      }
+                                      disabled={busy}
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div
+                            style={{
+                              marginTop: 10,
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 10,
+                            }}
+                          >
+                            <div style={{ fontWeight: 800, fontSize: 13 }}>
+                              {qty
+                                ? `${qty} vé · ${formatVnd(sum)}`
+                                : "Chưa chọn vé"}
+                            </div>
+                            <button
+                              type="button"
+                              style={{
+                                ...styles.btn,
+                                flex: "0 0 auto",
+                                background: "#0c4a6e",
+                                opacity: qty && !busy ? 1 : 0.45,
+                              }}
+                              disabled={!qty || busy}
+                              onClick={() => void verifyPoolScan(s)}
+                            >
+                              {busy ? "Đang lưu…" : "Xác thực"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p style={styles.mute}>Chưa có lần quét nào hôm nay.</p>

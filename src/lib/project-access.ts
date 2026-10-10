@@ -177,11 +177,38 @@ export async function ensurePrimaryMember(
 export async function findUserByOwnerLabel(label: string) {
   const raw = String(label || "").trim();
   if (!raw) return null;
-  const byUsername = await prisma.user.findUnique({ where: { username: raw } });
+
+  const byUsername = await prisma.user.findFirst({
+    where: { username: { equals: raw, mode: "insensitive" } },
+  });
   if (byUsername) return byUsername;
-  return prisma.user.findFirst({
+
+  const byDisplay = await prisma.user.findFirst({
     where: { displayName: { equals: raw, mode: "insensitive" } },
   });
+  if (byDisplay) return byDisplay;
+
+  // Soft match: "Vy" ↔ "VYNGUYEN", ignore spaces/case
+  const compact = raw.toLowerCase().replace(/\s+/g, "");
+  if (compact.length < 2) return null;
+  const candidates = await prisma.user.findMany({
+    where: { status: "ACTIVE" },
+    take: 200,
+  });
+  const hits = candidates.filter((u) => {
+    const un = u.username.toLowerCase().replace(/\s+/g, "");
+    const dn = u.displayName.toLowerCase().replace(/\s+/g, "");
+    return (
+      un === compact ||
+      dn === compact ||
+      un.includes(compact) ||
+      dn.includes(compact) ||
+      compact.includes(un) ||
+      (dn.length >= 2 && compact.includes(dn))
+    );
+  });
+  if (hits.length === 1) return hits[0];
+  return null;
 }
 
 export type JsonValue = Prisma.InputJsonValue;

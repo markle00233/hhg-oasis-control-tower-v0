@@ -57,7 +57,7 @@ class _AdminLeadersScreenState extends State<AdminLeadersScreen> {
     if (_ownerUserId != null) {
       final leader = state.leaders.where((u) => u.id == _ownerUserId).firstOrNull;
       if (leader != null) {
-        list = list.where((p) => state.ownerMatches(p.owner, leader)).toList();
+        list = state.projectsForLeader(leader);
       }
     }
     return list;

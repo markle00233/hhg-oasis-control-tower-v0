@@ -1,3 +1,5 @@
+import "dart:async";
+
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 
@@ -26,6 +28,10 @@ class _StaffScheduleScreenState extends State<StaffScheduleScreen> {
     final n = DateTime.now();
     _day = DateTime(n.year, n.month, n.day);
     _stripStart = _day;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(context.read<AppState>().refreshCore());
+    });
   }
 
   List<OasisProject> _mine(AppState state, {required bool done}) {
@@ -52,10 +58,18 @@ class _StaffScheduleScreenState extends State<StaffScheduleScreen> {
   List<OasisProject> _forDay(List<OasisProject> all) {
     final today = DateTime.now();
     final t0 = DateTime(today.year, today.month, today.day);
+    final viewingToday = offspotsSameDay(_day, t0);
     return all.where((p) {
       final dl = offspotsParseDay(p.deadline);
-      if (dl != null) return offspotsSameDay(dl, _day);
-      return offspotsSameDay(_day, t0);
+      if (dl == null) return viewingToday;
+      final d0 = DateTime(dl.year, dl.month, dl.day);
+      if (offspotsSameDay(d0, _day)) return true;
+      // Hôm nay: hiện cả quá hạn + sắp tới (14 ngày) — tránh tưởng "không nhận được task"
+      if (viewingToday) {
+        if (d0.isBefore(t0)) return true;
+        if (d0.difference(t0).inDays <= 14) return true;
+      }
+      return false;
     }).toList();
   }
 

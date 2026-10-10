@@ -1,0 +1,13 @@
+HHG Oasis — Zone QR (2026-10-08)
+App: https://hhg-oasis-customer-app.vercel.app
+Gallery: https://hhg-oasis-customer-app.vercel.app/dev/qr
+
+ENTRANCE	https://hhg-oasis-customer-app.vercel.app/s/ENTRANCE
+OLYMPIC_POOL	https://hhg-oasis-customer-app.vercel.app/s/OLYMPIC_POOL
+RESORT_POOL	https://hhg-oasis-customer-app.vercel.app/s/RESORT_POOL
+VIP_RESORT	https://hhg-oasis-customer-app.vercel.app/s/VIP_RESORT
+SAUNA	https://hhg-oasis-customer-app.vercel.app/s/SAUNA
+JACUZZI	https://hhg-oasis-customer-app.vercel.app/s/JACUZZI
+MIA_OI	https://hhg-oasis-customer-app.vercel.app/s/MIA_OI
+PICKLEBALL	https://hhg-oasis-customer-app.vercel.app/s/PICKLEBALL
+EXIT	https://hhg-oasis-customer-app.vercel.app/s/EXIT

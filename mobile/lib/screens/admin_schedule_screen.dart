@@ -57,11 +57,18 @@ class _AdminScheduleScreenState extends State<AdminScheduleScreen> {
   List<OasisProject> _dayProjects(List<OasisProject> all) {
     final today = DateTime.now();
     final t0 = DateTime(today.year, today.month, today.day);
+    final viewingToday = offspotsSameDay(_day, t0);
     return all.where((p) {
       final dl = offspotsParseDay(p.deadline);
-      if (dl != null) return offspotsSameDay(dl, _day);
-      // Chưa có deadline → chỉ hiện ở hôm nay.
-      return offspotsSameDay(_day, t0);
+      if (dl == null) return viewingToday;
+      final d0 = DateTime(dl.year, dl.month, dl.day);
+      if (offspotsSameDay(d0, _day)) return true;
+      // Hôm nay: hiện quá hạn + sắp tới 14 ngày (task AI hay để deadline ngày khác)
+      if (viewingToday) {
+        if (d0.isBefore(t0)) return true;
+        if (d0.difference(t0).inDays <= 14) return true;
+      }
+      return false;
     }).toList();
   }
 
@@ -142,6 +149,7 @@ class _AdminScheduleScreenState extends State<AdminScheduleScreen> {
   Future<void> _openAssign() async {
     final mode = await showNewTaskChooser(context);
     if (mode == null || !mounted) return;
+    final before = context.read<AppState>().projects.map((p) => p.id).toSet();
     if (mode == NewTaskMode.manual) {
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -152,16 +160,27 @@ class _AdminScheduleScreenState extends State<AdminScheduleScreen> {
           ),
         ),
       );
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => VoiceScriptCollectorScreen(
-          prefillOwner: _ownerName,
-          prefillDeadline: _day,
+    } else {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VoiceScriptCollectorScreen(
+            prefillOwner: _ownerName,
+            prefillDeadline: _day,
+          ),
         ),
-      ),
-    );
+      );
+    }
+    if (!mounted) return;
+    final state = context.read<AppState>();
+    await state.refreshCore();
+    final created = state
+        .projectsForLeader(widget.leader)
+        .where((p) => !before.contains(p.id))
+        .toList();
+    if (created.isNotEmpty) {
+      final dl = offspotsParseDay(created.first.deadline);
+      if (dl != null) _selectDay(dl);
+    }
   }
 
   @override

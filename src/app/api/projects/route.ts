@@ -77,10 +77,8 @@ export async function GET(req: NextRequest) {
           owner.includes(username) ||
           (display && owner.includes(display)));
       if (scope === "mine") {
-        return (
-          p.members.some((m) => m.userId === uid && m.role === "PRIMARY") ||
-          !!isOwner
-        );
+        // Inbox: PRIMARY + COLLABORATOR (không chỉ owner chính)
+        return isMember || !!isOwner;
       }
       if (scope === "collab") {
         return p.members.some(
@@ -128,6 +126,7 @@ export async function POST(req: NextRequest) {
     name,
     category,
     owner,
+    ownerUserId,
     description,
     priority = "P2",
     budget,
@@ -149,7 +148,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Non-admin: owner must be self
-  let ownerLabel = owner || gate.user.displayName || gate.user.username;
+  let ownerLabel = String(owner || "").trim();
   if (!isSystemAdmin(gate.user)) {
     ownerLabel = gate.user.displayName || gate.user.username;
   }
@@ -160,8 +159,39 @@ export async function POST(req: NextRequest) {
     unitId = unit?.id;
   }
 
-  const primaryUser =
-    (await findUserByOwnerLabel(ownerLabel)) || gate.user;
+  let primaryUser = gate.user;
+  if (isSystemAdmin(gate.user) && ownerUserId) {
+    const byId = await prisma.user.findUnique({
+      where: { id: String(ownerUserId) },
+    });
+    if (!byId || byId.status === "DISABLED") {
+      return NextResponse.json(
+        { error: "Owner không hợp lệ — chọn lại người phụ trách." },
+        { status: 400 }
+      );
+    }
+    primaryUser = byId;
+    ownerLabel = byId.displayName || byId.username;
+  } else if (ownerLabel) {
+    const resolved = await findUserByOwnerLabel(ownerLabel);
+    if (resolved) {
+      primaryUser = resolved;
+      ownerLabel = resolved.displayName || resolved.username;
+    } else if (isSystemAdmin(gate.user)) {
+      // Never silently assign to Admin — staff sẽ không thấy task
+      return NextResponse.json(
+        {
+          error: `Không tìm thấy user cho Owner "${ownerLabel}". Chọn đúng tên trong danh sách Leaders.`,
+        },
+        { status: 400 }
+      );
+    }
+  } else if (isSystemAdmin(gate.user)) {
+    return NextResponse.json(
+      { error: "Chọn Owner (người phụ trách) trước khi giao task." },
+      { status: 400 }
+    );
+  }
 
   let reviewerId: string | null = gate.user.id;
   if (reviewerUserId) {

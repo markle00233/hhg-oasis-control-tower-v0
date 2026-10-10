@@ -161,12 +161,14 @@ class _HomeShellState extends State<HomeShell> {
             _index = i;
             _visited.add(i);
           });
-          // Always re-pull from Prisma when opening Quyết định / Chi phí.
+          // Re-pull when opening tabs so newly assigned tasks show up.
           final state = context.read<AppState>();
           if (isAdmin) {
+            if (i == 0) unawaited(state.refreshCore());
             if (i == 1) unawaited(state.loadExpenses());
             if (i == 3) unawaited(state.loadDecisions());
           } else {
+            if (i == 0) unawaited(state.refreshCore());
             if (i == 1) unawaited(state.loadExpenses());
             if (i == 2) unawaited(state.loadDecisions());
           }

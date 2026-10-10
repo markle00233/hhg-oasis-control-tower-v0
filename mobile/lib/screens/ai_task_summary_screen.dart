@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 
 import "../app_state.dart";
+import "../models.dart";
 import "../theme.dart";
 
 /// Bảng tổng hợp AI — Admin xác nhận rồi mới gửi staff (ẩn form Create Task tạm thời).
@@ -41,6 +42,7 @@ class _AiTaskSummaryScreenState extends State<AiTaskSummaryScreen> {
   late TextEditingController _content;
   String? _unit;
   String? _owner;
+  String? _ownerUserId;
   bool? _important;
   bool? _urgent;
   DateTime? _deadline;
@@ -79,6 +81,7 @@ class _AiTaskSummaryScreenState extends State<AiTaskSummaryScreen> {
     if (_owner == null || _owner!.isEmpty) {
       _owner = widget.prefillOwner;
     }
+    // Resolve after first frame when directory is available — see didChangeDependencies
     _askAddOwner = _owner == null || _owner!.trim().isEmpty;
 
     if (t["important"] is bool) _important = t["important"] as bool;
@@ -104,7 +107,57 @@ class _AiTaskSummaryScreenState extends State<AiTaskSummaryScreen> {
   bool get _missingPriority => _important == null || _urgent == null;
   bool get _missingDeadline => _deadline == null;
   bool get _missingUnit => _unit == null || _unit!.isEmpty;
-  bool get _missingOwner => _askAddOwner && (_owner == null || _owner!.trim().isEmpty);
+  bool get _missingOwner =>
+      _ownerUserId == null || _owner == null || _owner!.trim().isEmpty;
+
+  bool _resolvedOwnerOnce = false;
+
+  UserAccount? _matchLeader(AppState state, String? label) {
+    final raw = (label ?? "").trim();
+    if (raw.isEmpty) return null;
+    final compact = raw.toLowerCase().replaceAll(RegExp(r"\s+"), "");
+    for (final u in state.leaders) {
+      final dn = u.displayName.toLowerCase().replaceAll(RegExp(r"\s+"), "");
+      final un = u.username.toLowerCase().replaceAll(RegExp(r"\s+"), "");
+      if (dn == compact || un == compact) return u;
+      if (dn.contains(compact) || un.contains(compact) || compact.contains(un)) {
+        return u;
+      }
+    }
+    return null;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_resolvedOwnerOnce) return;
+    _resolvedOwnerOnce = true;
+    final state = context.read<AppState>();
+    // Prefer prefill (Leader đang mở lịch) over AI nickname that may not match.
+    final candidate = widget.prefillOwner?.trim().isNotEmpty == true
+        ? widget.prefillOwner
+        : _owner;
+    final hit = _matchLeader(state, candidate) ?? _matchLeader(state, _owner);
+    if (hit != null) {
+      _owner = hit.displayName.isNotEmpty ? hit.displayName : hit.username;
+      _ownerUserId = hit.id;
+      _askAddOwner = false;
+    } else {
+      // Drop unresolved AI owner so we don't silently assign to Admin.
+      if (_owner != null && _matchLeader(state, _owner) == null) {
+        _owner = widget.prefillOwner;
+      }
+      final pre = _matchLeader(state, widget.prefillOwner);
+      if (pre != null) {
+        _owner = pre.displayName.isNotEmpty ? pre.displayName : pre.username;
+        _ownerUserId = pre.id;
+        _askAddOwner = false;
+      } else {
+        _ownerUserId = null;
+        _askAddOwner = true;
+      }
+    }
+  }
 
   String get _quadrant {
     if (_important == null || _urgent == null) return "—";
@@ -162,15 +215,13 @@ class _AiTaskSummaryScreenState extends State<AiTaskSummaryScreen> {
     }
     if (_missingOwner) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Chọn Owner hoặc tắt hỏi thêm người phụ trách")),
+        const SnackBar(content: Text("Chọn Owner (người phụ trách) trong danh sách")),
       );
       return;
     }
 
     final state = context.read<AppState>();
-    final owner = (_owner ?? "").trim().isNotEmpty
-        ? _owner!.trim()
-        : (widget.prefillOwner ?? state.user?.displayName ?? "");
+    final owner = _owner!.trim();
 
     setState(() => _submitting = true);
     try {
@@ -188,6 +239,7 @@ class _AiTaskSummaryScreenState extends State<AiTaskSummaryScreen> {
         "description": desc,
         "category": widget.task["category"],
         "owner": owner,
+        "ownerUserId": _ownerUserId,
         "unitName": _unit,
         "important": _important,
         "urgent": _urgent,
@@ -339,14 +391,9 @@ class _AiTaskSummaryScreenState extends State<AiTaskSummaryScreen> {
                   ),
                 Builder(
                   builder: (context) {
-                    final labels = leaders
-                        .map((u) =>
-                            u.displayName.isNotEmpty ? u.displayName : u.username)
-                        .toList();
-                    final ownerValue =
-                        (_owner != null && labels.contains(_owner)) ? _owner! : "";
+                    final ownerValue = _ownerUserId ?? "";
                     return DropdownButtonFormField<String>(
-                      value: ownerValue,
+                      value: ownerValue.isEmpty ? "" : ownerValue,
                       decoration: const InputDecoration(
                         isDense: true,
                         border: OutlineInputBorder(),
@@ -356,15 +403,29 @@ class _AiTaskSummaryScreenState extends State<AiTaskSummaryScreen> {
                           value: "",
                           child: Text("— Chưa chọn —"),
                         ),
-                        ...labels.map(
-                          (label) => DropdownMenuItem(
-                            value: label,
+                        ...leaders.map((u) {
+                          final label = u.displayName.isNotEmpty
+                              ? u.displayName
+                              : u.username;
+                          return DropdownMenuItem(
+                            value: u.id,
                             child: Text(label),
-                          ),
-                        ),
+                          );
+                        }),
                       ],
                       onChanged: (v) => setState(() {
-                        _owner = (v == null || v.isEmpty) ? null : v;
+                        if (v == null || v.isEmpty) {
+                          _owner = null;
+                          _ownerUserId = null;
+                          return;
+                        }
+                        final u = leaders.where((e) => e.id == v).firstOrNull;
+                        _ownerUserId = v;
+                        _owner = u == null
+                            ? null
+                            : (u.displayName.isNotEmpty
+                                ? u.displayName
+                                : u.username);
                       }),
                     );
                   },

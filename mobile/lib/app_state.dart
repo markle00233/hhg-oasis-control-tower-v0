@@ -164,8 +164,12 @@ class AppState extends ChangeNotifier {
         (display.isNotEmpty && o.contains(display));
   }
 
-  List<OasisProject> projectsForLeader(UserAccount u) =>
-      projects.where((p) => ownerMatches(p.owner, u)).toList();
+  List<OasisProject> projectsForLeader(UserAccount u) => projects.where((p) {
+        if (ownerMatches(p.owner, u)) return true;
+        return p.members.any(
+          (m) => m.userId == u.id && m.role.toUpperCase() == "PRIMARY",
+        );
+      }).toList();
 
   /// Equal weight: n tasks → each 100/n; DONE full, else energy% of weight.
   int leaderOverallPct(UserAccount u) {
