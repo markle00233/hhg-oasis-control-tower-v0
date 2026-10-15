@@ -8,7 +8,7 @@ export function Shell({
   showNav?: boolean;
 }) {
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg px-4 pb-28 pt-6">
+    <div className="mx-auto min-h-dvh w-full max-w-lg px-4 pb-32 pt-6">
       {children}
       {showNav ? <BottomNav /> : null}
     </div>

@@ -15,3 +15,28 @@ export function namesMatch(a: string, b: string): boolean {
   if (!na || !nb) return false;
   return na === nb || na.includes(nb) || nb.includes(na);
 }
+
+/** Che tên: Nguyễn Quang Khiêm → N**** Q**** K**** */
+export function maskFullName(raw: string | null | undefined): string {
+  const parts = String(raw || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "K****";
+  return parts
+    .map((p) => {
+      const ch = p[0] || "?";
+      return `${ch.toLocaleUpperCase("vi-VN")}****`;
+    })
+    .join(" ");
+}
+
+/** Gợi ý xác nhận: 098182338. N**** Q**** K**** */
+export function maskedIdentityLabel(
+  phone: string | null | undefined,
+  fullName: string | null | undefined
+) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  const phonePart = digits || "—";
+  return `${phonePart}. ${maskFullName(fullName)}`;
+}

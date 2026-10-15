@@ -48,6 +48,9 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
   const [fullName, setFullName] = useState("");
   const [last4, setLast4] = useState("");
   const [recoveryMode, setRecoveryMode] = useState<"phone" | "last4">("phone");
+  /** phone → lookup → name (mới) | confirm (đã có) */
+  const [idPhase, setIdPhase] = useState<"phone" | "name" | "confirm">("phone");
+  const [maskedLabel, setMaskedLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [eventAt, setEventAt] = useState<string | null>(null);
@@ -112,49 +115,98 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
     if (ok) setStep("success");
   }
 
-  async function identify(mode: "phone" | "last4") {
+  async function finishIdentify(body: Record<string, unknown>) {
+    const res = await fetch("/api/checkin/identify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (data.needFullPhone) {
+        setRecoveryMode("phone");
+        setStep("recovery");
+        setIdPhase("phone");
+      }
+      throw new Error(data.error || "Không xác định được khách");
+    }
+    setCustomer(data.customer);
+    setFromIdentify(true);
+
+    const conf = await fetch("/api/checkin/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ token }),
+    });
+    const confData = await conf.json();
+    if (!conf.ok) throw new Error(confData.error || "Xác nhận thất bại");
+    if (confData.customer) setCustomer(confData.customer);
+    setEventAt(confData.event?.createdAt || new Date().toISOString());
+    setDuplicate(!!confData.duplicate);
+    setStep("remember");
+  }
+
+  async function lookupPhoneThenContinue() {
     setBusy(true);
     setError("");
     try {
+      const res = await fetch("/api/checkin/lookup-phone", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone: phone.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không tra được SĐT");
+      if (data.exists) {
+        setMaskedLabel(data.maskedLabel || "");
+        setIdPhase("confirm");
+      } else {
+        setMaskedLabel("");
+        setIdPhase("name");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lỗi tra SĐT");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function identify(mode: "phone" | "last4" | "confirm") {
+    setBusy(true);
+    setError("");
+    try {
+      if (mode === "confirm") {
+        await finishIdentify({
+          mode: "phone",
+          phone: phone.trim(),
+          confirmExisting: true,
+        });
+        return;
+      }
       const body =
         mode === "last4"
           ? { mode: "last4", last4, fullName: fullName.trim() }
-          : { mode: "phone", phone: phone.trim(), fullName: fullName.trim() };
-      const res = await fetch("/api/checkin/identify", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.needFullPhone) {
-          setRecoveryMode("phone");
-          setStep("recovery");
-        }
-        throw new Error(data.error || "Không xác định được khách");
-      }
-      setCustomer(data.customer);
-      setFromIdentify(true);
-
-      // Record presence (including Mía Ơi) — drinks are ordered by staff on /desk
-      const conf = await fetch("/api/checkin/confirm", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ token }),
-      });
-      const confData = await conf.json();
-      if (!conf.ok) throw new Error(confData.error || "Xác nhận thất bại");
-      if (confData.customer) setCustomer(confData.customer);
-      setEventAt(confData.event?.createdAt || new Date().toISOString());
-      setDuplicate(!!confData.duplicate);
-      setStep("remember");
+          : {
+              mode: "phone",
+              phone: phone.trim(),
+              fullName: fullName.trim(),
+            };
+      await finishIdentify(body);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi xác định");
     } finally {
       setBusy(false);
     }
+  }
+
+  function resetPhoneEntry() {
+    setPhone("");
+    setFullName("");
+    setMaskedLabel("");
+    setIdPhase("phone");
+    setError("");
   }
 
   async function onRemember(agree: boolean) {
@@ -257,11 +309,23 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
               Bạn vừa ghi nhận dịch vụ này gần đây.
             </p>
           ) : null}
+          {service?.code === "MIA_OI" ? (
+            <Link
+              href="/order/miaoi"
+              className="mt-10 flex h-14 w-full max-w-sm items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand"
+            >
+              Gọi món Mía Ơi
+            </Link>
+          ) : null}
           <Link
-            href="/home"
-            className="mt-10 flex h-14 w-full max-w-sm items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand"
+            href="/account"
+            className={`flex h-14 w-full max-w-sm items-center justify-center rounded-2xl text-base font-bold ${
+              service?.code === "MIA_OI"
+                ? "mt-3 border border-oasis-line bg-white/80 text-oasis-mute"
+                : "mt-10 bg-oasis-deep text-oasis-sand"
+            }`}
           >
-            Xong
+            {service?.code === "MIA_OI" ? "Vào tài khoản" : "Xong · Tài khoản"}
           </Link>
         </div>
       </Shell>
@@ -395,33 +459,55 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
 
           {recoveryMode === "phone" ? (
             <div className="space-y-4 rounded-[28px] bg-white/90 px-5 py-5 shadow-soft">
-              <label className="block">
-                <span className="text-sm font-semibold text-oasis-ink">
-                  Số điện thoại
-                </span>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  placeholder="09xxxxxxxx"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-mono text-xl font-semibold outline-none focus:border-oasis-moss"
-                />
-              </label>
-              <label className="block">
-                <span className="text-sm font-semibold text-oasis-ink">
-                  Họ và tên
-                </span>
-                <input
-                  type="text"
-                  autoComplete="name"
-                  placeholder="VD: Nguyễn Văn A"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-display text-xl font-semibold outline-none focus:border-oasis-moss"
-                />
-              </label>
+              {idPhase !== "confirm" ? (
+                <label className="block">
+                  <span className="text-sm font-semibold text-oasis-ink">
+                    Số điện thoại
+                  </span>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="09xxxxxxxx"
+                    value={phone}
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      if (idPhase !== "phone") setIdPhase("phone");
+                    }}
+                    className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-mono text-xl font-semibold outline-none focus:border-oasis-moss"
+                  />
+                </label>
+              ) : null}
+              {idPhase === "confirm" ? (
+                <div className="space-y-3">
+                  <p className="text-center text-sm text-oasis-mute">
+                    Đây có phải bạn?
+                  </p>
+                  <div className="flex items-center gap-3 rounded-2xl border border-oasis-line bg-white px-4 py-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-oasis-sand text-sm font-black text-oasis-moss">
+                      G
+                    </span>
+                    <p className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-oasis-ink">
+                      {maskedLabel}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              {idPhase === "name" ? (
+                <label className="block">
+                  <span className="text-sm font-semibold text-oasis-ink">
+                    Họ và tên
+                  </span>
+                  <input
+                    type="text"
+                    autoComplete="name"
+                    placeholder="VD: Nguyễn Văn A"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-display text-xl font-semibold outline-none focus:border-oasis-moss"
+                  />
+                </label>
+              ) : null}
             </div>
           ) : (
             <div className="space-y-4 rounded-[28px] bg-white/90 px-5 py-5 shadow-soft">
@@ -463,22 +549,61 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             </p>
           ) : null}
 
-          <button
-            type="button"
-            disabled={
-              busy ||
-              !nameOk ||
-              (recoveryMode === "phone" ? !phoneOk : !last4Ok)
-            }
-            onClick={() => void identify(recoveryMode)}
-            className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold text-oasis-sand disabled:opacity-40"
-          >
-            {busy ? "Đang xử lý…" : "Tiếp tục"}
-          </button>
+          {recoveryMode === "phone" && idPhase === "phone" ? (
+            <button
+              type="button"
+              disabled={busy || !phoneOk}
+              onClick={() => void lookupPhoneThenContinue()}
+              className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold text-oasis-sand disabled:opacity-40"
+            >
+              {busy ? "Đang tra…" : "Tiếp tục"}
+            </button>
+          ) : null}
+          {recoveryMode === "phone" && idPhase === "name" ? (
+            <button
+              type="button"
+              disabled={busy || !nameOk}
+              onClick={() => void identify("phone")}
+              className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold text-oasis-sand disabled:opacity-40"
+            >
+              {busy ? "Đang xử lý…" : "Lưu & vào"}
+            </button>
+          ) : null}
+          {recoveryMode === "phone" && idPhase === "confirm" ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void identify("confirm")}
+                className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold text-oasis-sand disabled:opacity-40"
+              >
+                {busy ? "Đang vào…" : "Đúng, tiếp tục"}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={resetPhoneEntry}
+                className="flex h-12 w-full items-center justify-center text-sm font-semibold text-oasis-mute"
+              >
+                Không phải — đăng nhập lại
+              </button>
+            </div>
+          ) : null}
+          {recoveryMode === "last4" ? (
+            <button
+              type="button"
+              disabled={busy || !nameOk || !last4Ok}
+              onClick={() => void identify("last4")}
+              className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold text-oasis-sand disabled:opacity-40"
+            >
+              {busy ? "Đang xử lý…" : "Tiếp tục"}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => {
               setError("");
+              resetPhoneEntry();
               setStep("identify");
             }}
             className="flex h-12 items-center justify-center text-sm font-semibold text-oasis-mute"
@@ -490,7 +615,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
     );
   }
 
-  // identify: first-time Name + Phone only
+  // identify: SĐT trước → mới lưu tên / cũ xác nhận tên che
   return (
     <Shell showNav={false}>
       <div className="animate-rise flex min-h-[70dvh] flex-col justify-center space-y-5 py-4">
@@ -502,36 +627,67 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             {serviceName}
           </h1>
           <p className="mt-2 text-sm text-oasis-mute">
-            Nhập thông tin để ghi nhận lần đầu
+            {idPhase === "confirm"
+              ? "Xác nhận đúng tài khoản của bạn"
+              : idPhase === "name"
+                ? "Tài khoản mới — nhập họ tên để lưu"
+                : "Nhập số điện thoại để ghi nhận"}
           </p>
         </div>
 
         <div className="space-y-4 rounded-[28px] bg-white/90 px-5 py-5 shadow-soft">
-          <label className="block">
-            <span className="text-sm font-semibold text-oasis-ink">
-              Số điện thoại
-            </span>
-            <input
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              placeholder="09xxxxxxxx"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-mono text-xl font-semibold outline-none focus:border-oasis-moss"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-semibold text-oasis-ink">Họ và tên</span>
-            <input
-              type="text"
-              autoComplete="name"
-              placeholder="VD: Nguyễn Văn A"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-display text-xl font-semibold outline-none focus:border-oasis-moss"
-            />
-          </label>
+          {idPhase === "phone" || idPhase === "name" ? (
+            <label className="block">
+              <span className="text-sm font-semibold text-oasis-ink">
+                Số điện thoại
+              </span>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="09xxxxxxxx"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  if (idPhase === "name") setIdPhase("phone");
+                }}
+                disabled={idPhase === "name"}
+                className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-mono text-xl font-semibold outline-none focus:border-oasis-moss disabled:opacity-70"
+              />
+            </label>
+          ) : null}
+
+          {idPhase === "confirm" ? (
+            <div className="space-y-3">
+              <p className="text-center text-sm font-semibold text-oasis-ink">
+                Đây có phải bạn?
+              </p>
+              <div className="flex items-center gap-3 rounded-2xl border border-oasis-line bg-white px-4 py-3 shadow-sm">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#4285F4]/10 text-sm font-black text-[#4285F4]">
+                  G
+                </span>
+                <p className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-oasis-ink">
+                  {maskedLabel}
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {idPhase === "name" ? (
+            <label className="block">
+              <span className="text-sm font-semibold text-oasis-ink">
+                Họ và tên
+              </span>
+              <input
+                type="text"
+                autoComplete="name"
+                placeholder="VD: Nguyễn Văn A"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="mt-2 block h-14 w-full rounded-2xl border border-oasis-line bg-oasis-sand px-4 text-center font-display text-xl font-semibold outline-none focus:border-oasis-moss"
+              />
+            </label>
+          ) : null}
         </div>
 
         {error ? (
@@ -540,18 +696,52 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
           </p>
         ) : null}
 
-        <button
-          type="button"
-          disabled={busy || !phoneOk || !nameOk}
-          onClick={() => void identify("phone")}
-          className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold tracking-wide text-oasis-sand disabled:opacity-40"
-        >
-          {busy ? "Đang xử lý…" : "Tiếp tục"}
-        </button>
+        {idPhase === "phone" ? (
+          <button
+            type="button"
+            disabled={busy || !phoneOk}
+            onClick={() => void lookupPhoneThenContinue()}
+            className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold tracking-wide text-oasis-sand disabled:opacity-40"
+          >
+            {busy ? "Đang tra…" : "Tiếp tục"}
+          </button>
+        ) : null}
+        {idPhase === "name" ? (
+          <button
+            type="button"
+            disabled={busy || !nameOk}
+            onClick={() => void identify("phone")}
+            className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold tracking-wide text-oasis-sand disabled:opacity-40"
+          >
+            {busy ? "Đang lưu…" : "Lưu tên & vào"}
+          </button>
+        ) : null}
+        {idPhase === "confirm" ? (
+          <div className="space-y-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void identify("confirm")}
+              className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold tracking-wide text-oasis-sand disabled:opacity-40"
+            >
+              {busy ? "Đang vào…" : "Đúng, tiếp tục"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={resetPhoneEntry}
+              className="flex h-12 w-full items-center justify-center text-sm font-semibold text-oasis-mute"
+            >
+              Không phải — đăng nhập lại
+            </button>
+          </div>
+        ) : null}
+
         <button
           type="button"
           onClick={() => {
             setError("");
+            resetPhoneEntry();
             setStep("recovery");
           }}
           className="flex h-12 items-center justify-center text-sm font-semibold text-oasis-mute"

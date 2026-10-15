@@ -79,10 +79,11 @@ export async function findOrCreateByPhone(opts: {
     where: { phoneNormalized },
   });
   if (existing) {
+    // Không ghi đè tên khi đăng nhập lại — chỉ bổ sung nếu chưa có tên.
     const updated = await prisma.appCustomer.update({
       where: { id: existing.id },
       data: {
-        fullName: name,
+        ...(!existing.fullName ? { fullName: name } : {}),
         phone: opts.phoneRaw.trim(),
         phoneLast4,
         shortId: phoneLast4,
@@ -155,6 +156,7 @@ export async function recordServiceUsage(opts: {
       serviceId: opts.serviceId,
       deviceId: opts.deviceId || null,
       eventType: "SERVICE_USE",
+      operationalStatus: "NEW",
       metadata: {
         source: "qr_checkin",
         ...(opts.metadata || {}),

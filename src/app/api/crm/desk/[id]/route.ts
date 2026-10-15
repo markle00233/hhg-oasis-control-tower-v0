@@ -47,8 +47,26 @@ export async function PATCH(
       },
     });
 
+    let acknowledged = 0;
+    if (confirm && zone) {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const result = await prisma.appServiceEvent.updateMany({
+        where: {
+          customerId: id,
+          eventType: "SERVICE_USE",
+          operationalStatus: "NEW",
+          createdAt: { gte: dayStart },
+          service: { serviceCode: zone },
+        },
+        data: { operationalStatus: "ACKNOWLEDGED" },
+      });
+      acknowledged = result.count;
+    }
+
     return NextResponse.json({
       ok: true,
+      acknowledged,
       customer: {
         id: updated.id,
         phone: updated.phone,

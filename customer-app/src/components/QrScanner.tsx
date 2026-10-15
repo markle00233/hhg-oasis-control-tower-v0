@@ -14,6 +14,30 @@ type ScannerHandle = {
   getRunningTrackSettings?: () => MediaTrackSettings;
 };
 
+function friendlyCameraError(e: unknown): string {
+  const name =
+    e && typeof e === "object" && "name" in e
+      ? String((e as { name?: string }).name)
+      : "";
+  const msg = e instanceof Error ? e.message : String(e || "");
+  const lower = `${name} ${msg}`.toLowerCase();
+  if (
+    lower.includes("notallowed") ||
+    lower.includes("permission") ||
+    lower.includes("dismissed") ||
+    lower.includes("denied")
+  ) {
+    return "Camera bị chặn. Vào Cài đặt trình duyệt → Quyền trang này → bật Camera, rồi bấm Thử lại.";
+  }
+  if (lower.includes("notfound") || lower.includes("devices not found")) {
+    return "Không tìm thấy camera trên thiết bị.";
+  }
+  if (lower.includes("notreadable") || lower.includes("trackstart")) {
+    return "Camera đang bị app khác dùng. Đóng Camera/Zoom rồi thử lại.";
+  }
+  return msg || "Không mở được camera.";
+}
+
 /** Prefer native BarcodeDetector when available (much snappier on Android Chrome). */
 async function tryNativeBarcodeLoop(
   video: HTMLVideoElement,
@@ -49,7 +73,6 @@ async function tryNativeBarcodeLoop(
       /* frame miss */
     }
     if (!signal.aborted) {
-      // ~30fps native loop
       window.setTimeout(() => void tick(), 33);
     }
   };
@@ -61,6 +84,7 @@ export function QrScanner({ onCode }: Props) {
   const regionId = useId().replace(/:/g, "");
   const [status, setStatus] = useState("Đang mở camera…");
   const [error, setError] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
   const onCodeRef = useRef(onCode);
   const lastCodeRef = useRef("");
   const lastAtRef = useRef(0);
@@ -79,7 +103,6 @@ export function QrScanner({ onCode }: Props) {
     function emit(decoded: string) {
       if (cancelled) return;
       const now = Date.now();
-      // Short debounce only — long gaps made rescan feel “dead”
       if (decoded === lastCodeRef.current && now - lastAtRef.current < 900) {
         return;
       }
@@ -123,7 +146,6 @@ export function QrScanner({ onCode }: Props) {
         if (caps?.focusMode?.includes("continuous")) {
           advanced.push({ focusMode: "continuous" });
         }
-        // Mild zoom-in helps small printed QRs when supported
         if (caps?.zoom && typeof caps.zoom.max === "number" && caps.zoom.max > 1) {
           const z = Math.min(caps.zoom.max, Math.max(caps.zoom.min || 1, 1.4));
           advanced.push({ zoom: z });
@@ -132,7 +154,7 @@ export function QrScanner({ onCode }: Props) {
           await track.applyConstraints({ advanced: advanced as object[] });
         }
       } catch {
-        /* device may reject advanced constraints */
+        /* ignore */
       }
     }
 
@@ -142,9 +164,19 @@ export function QrScanner({ onCode }: Props) {
           throw new Error("Trình duyệt không hỗ trợ camera.");
         }
 
+        // Secure context required (HTTPS / localhost)
+        if (
+          typeof window !== "undefined" &&
+          !window.isSecureContext &&
+          location.hostname !== "localhost"
+        ) {
+          throw new Error("Cần mở bằng HTTPS để bật camera.");
+        }
+
+        setError("");
         setStatus("Đang mở camera…");
 
-        // High-res rear camera — closer to native Camera app sensitivity
+        // Auto-start rear camera — browser may ask once; after Allow it stays on
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -166,13 +198,12 @@ export function QrScanner({ onCode }: Props) {
         const host = document.getElementById(regionId);
         if (!host) throw new Error("Không tìm thấy khung camera.");
 
-        // Prefer native BarcodeDetector (Android Chrome) — much more sensitive
         const video = document.createElement("video");
         video.setAttribute("playsinline", "true");
         video.muted = true;
         video.autoplay = true;
         video.srcObject = stream;
-        video.className = "min-h-[360px] w-full object-cover";
+        video.className = "min-h-[70dvh] w-full object-cover";
         host.innerHTML = "";
         host.appendChild(video);
         await video.play().catch(() => undefined);
@@ -184,11 +215,10 @@ export function QrScanner({ onCode }: Props) {
           nativeAbort.signal
         );
         if (usedNative) {
-          setStatus("Hướng camera vào mã QR — giữ ổn định");
+          setStatus("Đưa mã QR vào khung — camera đang quét");
           return;
         }
 
-        // Fallback: html5-qrcode with aggressive settings
         host.innerHTML = "";
         stream.getTracks().forEach((t) => t.stop());
         stream = null;
@@ -218,12 +248,11 @@ export function QrScanner({ onCode }: Props) {
           cameras[cameras.length - 1]?.id ||
           { facingMode: "environment" };
 
-        setStatus("Hướng camera vào mã QR — giữ ổn định");
+        setStatus("Đưa mã QR vào khung — camera đang quét");
         startPromise = inst.start(
           back,
           {
             fps: 30,
-            // Large scan window — small qrbox was the main “not sensitive” cause
             qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
               const edge = Math.floor(
                 Math.min(viewfinderWidth, viewfinderHeight) * 0.82
@@ -243,15 +272,12 @@ export function QrScanner({ onCode }: Props) {
         );
         await startPromise;
 
-        // Try continuous focus after html5-qrcode owns the track
         try {
-          const settings = inst.getRunningTrackSettings?.();
           const vid = host.querySelector("video") as HTMLVideoElement | null;
           const t = vid?.srcObject
             ? (vid.srcObject as MediaStream).getVideoTracks()[0]
             : null;
           if (t) await boostTrack(t);
-          void settings;
         } catch {
           /* ignore */
         }
@@ -259,11 +285,7 @@ export function QrScanner({ onCode }: Props) {
         if (cancelled) await safeStop();
       } catch (e) {
         if (!cancelled) {
-          setError(
-            e instanceof Error
-              ? e.message
-              : "Không mở được camera. Dùng camera điện thoại mở link QR, hoặc dán URL bên dưới."
-          );
+          setError(friendlyCameraError(e));
           setStatus("");
         }
       }
@@ -280,7 +302,7 @@ export function QrScanner({ onCode }: Props) {
         await safeStop();
       })();
     };
-  }, [regionId]);
+  }, [regionId, retryKey]);
 
   return (
     <div className="space-y-3">
@@ -291,16 +313,24 @@ export function QrScanner({ onCode }: Props) {
       ) : null}
       <div
         id={regionId}
-        className="overflow-hidden rounded-[28px] bg-oasis-ink/90 [&_video]:min-h-[360px] [&_video]:w-full [&_video]:object-cover"
+        className="overflow-hidden rounded-[28px] bg-oasis-ink/90 [&_video]:min-h-[70dvh] [&_video]:w-full [&_video]:object-cover"
       />
       {error ? (
-        <p className="text-sm text-oasis-coral">{error}</p>
-      ) : (
-        <p className="text-center text-xs text-oasis-mute">
-          Tip: camera thường của máy nhạy hơn — có thể mở QR bằng Camera rồi vào
-          link. Trong app đã tăng độ phân giải + vùng quét.
-        </p>
-      )}
+        <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-soft">
+          <p className="text-sm text-oasis-coral">{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setStatus("Đang mở camera…");
+              setRetryKey((k) => k + 1);
+            }}
+            className="flex h-12 w-full items-center justify-center rounded-2xl bg-oasis-deep text-sm font-bold text-oasis-sand"
+          >
+            Thử lại camera
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

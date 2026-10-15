@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
 import { getMiaOiItem } from "@/lib/miaoi-menu";
 import { prisma } from "@/lib/prisma";
+import { writeAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -133,9 +134,12 @@ export async function POST(req: NextRequest) {
       data: {
         customerId: customer.id,
         serviceId: service?.id || null,
-        status: "PENDING",
+        status: "ACCEPTED",
         totalVnd,
         note: note || null,
+        createdByType: "STAFF",
+        createdById: gate.user.id,
+        source: "ZONE_DESK",
         items: { create: orderItems },
       },
       include: { items: true },
@@ -147,6 +151,7 @@ export async function POST(req: NextRequest) {
           customerId: customer.id,
           serviceId: service.id,
           eventType: "MIA_OI_ORDER",
+          operationalStatus: "ACKNOWLEDGED",
           metadata: {
             orderId: order.id,
             totalVnd,
@@ -161,8 +166,32 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    await writeAudit({
+      actorType: "STAFF",
+      actorId: gate.user.id,
+      action: "ORDER_CREATE",
+      entityType: "AppOrder",
+      entityId: order.id,
+      zoneCode: "MIA_OI",
+      payload: { totalVnd, source: "ZONE_DESK" },
+    });
+
+    const { awardPurchasePoints } = await import("@/lib/points");
+    const pts = await awardPurchasePoints({
+      customerId: customer.id,
+      refType: "APP_ORDER",
+      refId: order.id,
+      subtotalVnd: totalVnd,
+      note: `Mía Ơi desk · ${totalVnd}đ trước giảm`,
+    }).catch((err) => {
+      console.error("[miaoi/orders points]", err);
+      return null;
+    });
+
     return NextResponse.json({
       ok: true,
+      pointsAwarded: pts?.delta ?? 0,
+      pointsBalance: pts?.balance ?? null,
       order: {
         id: order.id,
         status: order.status,

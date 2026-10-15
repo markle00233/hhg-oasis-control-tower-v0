@@ -143,6 +143,7 @@ export async function POST(req: NextRequest) {
       await tx.appServiceEvent.update({
         where: { id: scan.id },
         data: {
+          operationalStatus: "ACKNOWLEDGED",
           metadata: {
             ...prevMeta,
             ticketVerified: true,
@@ -157,11 +158,48 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // Mark guest cart QR as used (chống trôi — đã check-in)
+      const cartToken =
+        typeof prevMeta.cartToken === "string" ? prevMeta.cartToken : null;
+      if (cartToken) {
+        await tx.appServiceCart.updateMany({
+          where: {
+            token: cartToken,
+            customerId: customer.id,
+            status: "OPEN",
+          },
+          data: { status: "USED" },
+        });
+      } else {
+        await tx.appServiceCart.updateMany({
+          where: {
+            customerId: customer.id,
+            status: "OPEN",
+            zoneCode: { in: ["OLYMPIC_POOL", "OLYMPIC"] },
+          },
+          data: { status: "USED" },
+        });
+      }
+
       return { customer, scan, order, metaItems, totalVnd };
+    });
+
+    const { awardPurchasePoints } = await import("@/lib/points");
+    const pts = await awardPurchasePoints({
+      customerId: result.customer.id,
+      refType: "APP_ORDER",
+      refId: result.order.id,
+      subtotalVnd: result.totalVnd,
+      note: `Hồ Olympic · ${result.totalVnd}đ trước giảm`,
+    }).catch((err) => {
+      console.error("[pool/orders points]", err);
+      return null;
     });
 
     return NextResponse.json({
       ok: true,
+      pointsAwarded: pts?.delta ?? 0,
+      pointsBalance: pts?.balance ?? null,
       scanEventId: result.scan.id,
       entryAt: result.scan.createdAt,
       customer: {

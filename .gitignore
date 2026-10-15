@@ -27,6 +27,8 @@ public/uploads/
 .turbo/
 coverage/
 
+# Nested apps / vendor (not part of Control Tower Next build)
+Oasis-Sport-main/
 # Vendor / reference AI chatbot (nested repo; has own .env)
 c.o-chatbot/
 c.o-chatbot/APP1/.venv/

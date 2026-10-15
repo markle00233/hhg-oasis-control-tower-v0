@@ -1,109 +1,107 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
-
-type EventRow = {
-  id: string;
-  createdAt: string;
-  serviceName: string;
-  serviceCode: string;
-};
-
-function dayKey(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-
-function dayLabel(d: Date) {
-  const today = new Date();
-  if (dayKey(d) === dayKey(today)) return "Hôm nay";
-  return d.toLocaleDateString("vi-VN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+import { ServiceCard } from "@/components/ServiceCard";
+import type { ServiceCardViewModel } from "@/lib/service-cards";
 
 export default function ActivityPage() {
   const router = useRouter();
-  const [events, setEvents] = useState<EventRow[]>([]);
+  const [active, setActive] = useState<ServiceCardViewModel[]>([]);
+  const [upcoming, setUpcoming] = useState<ServiceCardViewModel[]>([]);
+  const [history, setHistory] = useState<ServiceCardViewModel[]>([]);
+  const [tab, setTab] = useState<"active" | "upcoming" | "history">("active");
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const res = await fetch("/api/events", { cache: "no-store" });
+    async function load(isFirst = false) {
+      const res = await fetch("/api/cards/activity", { cache: "no-store" });
       if (res.status === 401) {
-        router.replace("/");
+        router.replace("/login");
         return;
       }
       const data = await res.json();
       if (!res.ok) {
-        if (!cancelled) setError(data.error || "Failed to load");
+        if (!cancelled) setError(data.error || "Không tải được Activity");
         return;
       }
-      if (!cancelled) setEvents(data.events || []);
-    })();
+      if (cancelled) return;
+      setError("");
+      setActive(data.active || []);
+      setUpcoming(data.upcoming || []);
+      setHistory(data.history || []);
+      if (
+        isFirst &&
+        (data.active || []).length === 0 &&
+        (data.upcoming || []).length > 0
+      ) {
+        setTab("upcoming");
+      }
+    }
+    void load(true);
+    const t = setInterval(() => void load(false), 4000);
     return () => {
       cancelled = true;
+      clearInterval(t);
     };
   }, [router]);
 
-  const groups = useMemo(() => {
-    const map = new Map<string, EventRow[]>();
-    for (const e of events) {
-      const d = new Date(e.createdAt);
-      const key = dayKey(d);
-      const list = map.get(key) || [];
-      list.push(e);
-      map.set(key, list);
-    }
-    return [...map.entries()].map(([key, rows]) => ({
-      key,
-      label: dayLabel(new Date(key)),
-      rows,
-    }));
-  }, [events]);
+  const list =
+    tab === "active" ? active : tab === "upcoming" ? upcoming : history;
 
   return (
     <Shell>
-      <div className="animate-rise space-y-6">
-        <h1 className="font-display text-3xl font-semibold text-oasis-ink">Hoạt động</h1>
+      <div className="animate-rise space-y-5">
+        <header>
+          <h1 className="font-display text-3xl font-semibold text-oasis-ink">
+            Activity
+          </h1>
+          <p className="mt-1 text-sm text-oasis-mute">
+            Hành trình · booking · order · session
+          </p>
+        </header>
+
+        <div className="flex gap-2">
+          {(
+            [
+              ["active", "Đang diễn ra"],
+              ["upcoming", "Sắp tới"],
+              ["history", "Lịch sử"],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setTab(k)}
+              className={`h-11 flex-1 rounded-2xl text-sm font-bold ${
+                tab === k
+                  ? "bg-oasis-deep text-oasis-sand"
+                  : "bg-white/80 text-oasis-mute"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         {error ? <p className="text-sm text-oasis-coral">{error}</p> : null}
-        {groups.length === 0 ? (
-          <div className="rounded-3xl bg-white/70 p-6 text-sm text-oasis-mute shadow-soft">
-            Chưa có lần quét nào.
-          </div>
+
+        {list.length === 0 ? (
+          <p className="rounded-[22px] bg-white/70 p-4 text-sm text-oasis-mute shadow-soft">
+            {tab === "active"
+              ? "Không có dịch vụ đang diễn ra."
+              : tab === "upcoming"
+                ? "Chưa có booking sắp tới."
+                : "Chưa có lịch sử gần đây."}
+          </p>
         ) : (
-          groups.map((g) => (
-            <section key={g.key} className="space-y-3">
-              <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-oasis-mute">
-                {g.label}
-              </h2>
-              <div className="space-y-2">
-                {g.rows.map((e) => {
-                  const t = new Date(e.createdAt).toLocaleTimeString("vi-VN", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hour12: false,
-                  });
-                  return (
-                    <div
-                      key={e.id}
-                      className="flex items-center justify-between rounded-2xl bg-white/85 px-4 py-4 shadow-soft"
-                    >
-                      <div>
-                        <p className="font-semibold text-oasis-ink">{e.serviceName}</p>
-                        <p className="text-xs text-oasis-mute">{e.serviceCode}</p>
-                      </div>
-                      <p className="font-mono text-sm font-semibold text-oasis-moss">{t}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))
+          <div className="space-y-3">
+            {list.map((c) => (
+              <ServiceCard key={c.id} card={c} />
+            ))}
+          </div>
         )}
       </div>
     </Shell>

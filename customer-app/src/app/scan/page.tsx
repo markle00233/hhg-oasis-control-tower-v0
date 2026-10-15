@@ -7,7 +7,6 @@ import { QrScanner, extractServiceCode } from "@/components/QrScanner";
 
 export default function ScanPage() {
   const router = useRouter();
-  const [manual, setManual] = useState("");
   const [error, setError] = useState("");
   const [locked, setLocked] = useState(false);
 
@@ -20,7 +19,6 @@ export default function ScanPage() {
         return;
       }
       setLocked(true);
-      // Prefer /s/[token] (works for SAUNA and slug tokens)
       router.push(`/s/${encodeURIComponent(code)}`);
     },
     [locked, router]
@@ -28,11 +26,15 @@ export default function ScanPage() {
 
   return (
     <Shell>
-      <div className="animate-rise space-y-5">
+      <div className="animate-rise space-y-4">
         <div>
-          <h1 className="font-display text-3xl font-semibold text-oasis-ink">Quét QR</h1>
+          <h1 className="font-display text-3xl font-semibold text-oasis-ink">
+            Quét QR khu vực
+          </h1>
           <p className="mt-1 text-sm text-oasis-mute">
-            Camera mở tự động — căn mã QR khu vực vào khung hình.
+            Camera tự bật (không hỏi lại nếu đã Allow). Đưa mã QR tại quầy /
+            cổng khu vào khung — check-in như quy trình cũ, nhân viên sẽ thấy
+            bạn trên máy khu vực.
           </p>
         </div>
 
@@ -40,26 +42,11 @@ export default function ScanPage() {
 
         {error ? <p className="text-sm text-oasis-coral">{error}</p> : null}
 
-        <div className="rounded-3xl bg-white/80 p-4 shadow-soft">
-          <p className="text-xs font-semibold uppercase tracking-wide text-oasis-mute">
-            Hoặc dán nội dung QR
-          </p>
-          <div className="mt-2 flex gap-2">
-            <input
-              value={manual}
-              onChange={(e) => setManual(e.target.value)}
-              placeholder="/s/SAUNA hoặc /scan/SAUNA"
-              className="h-12 flex-1 rounded-2xl border border-oasis-line bg-oasis-sand px-3 text-sm outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => handleRaw(manual)}
-              className="h-12 rounded-2xl bg-oasis-deep px-4 text-sm font-bold text-oasis-sand"
-            >
-              Vào
-            </button>
-          </div>
-        </div>
+        <p className="rounded-[20px] bg-white/80 p-4 text-xs leading-relaxed text-oasis-mute shadow-soft">
+          <strong className="text-oasis-ink">Lưu ý:</strong> Nút QR trên Home /
+          Account là <em>My Oasis QR</em> (đưa nhân viên quét). Nút giữa thanh
+          dưới là <em>bạn quét QR khu</em> khi tới chỗ nhân viên.
+        </p>
       </div>
     </Shell>
   );

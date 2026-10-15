@@ -16,7 +16,19 @@ export const DESK_ZONES: DeskZone[] = [
   { code: "SAUNA", name: "HHG Oasis Spa", username: "SPA" },
   { code: "OLYMPIC_POOL", name: "Hồ Olympic", username: "GYM" },
   { code: "JACUZZI", name: "Jacuzzi", username: "JACUZZI" },
+  { code: "LONG_NUONG", name: "Lòng Nướng Chí Phèo", username: "LONGNUONG" },
 ];
+
+/** Zone uses resource grid (courts / beds / tables / VIP capacity). */
+export function zoneHasResources(code: string) {
+  const c = code.toUpperCase();
+  return (
+    c === "PICKLEBALL" ||
+    c === "SAUNA" ||
+    c === "LONG_NUONG" ||
+    c === "VIP_RESORT"
+  );
+}
 
 export function getDeskZone(code: string): DeskZone | null {
   const c = code.trim().toUpperCase();
@@ -30,4 +42,20 @@ export function deskZoneByUsername(username: string): DeskZone | null {
 
 export function dashboardTitle(zoneName: string) {
   return `Dashboard ${zoneName}`;
+}
+
+/** Zone codes that map to the same desk counter (customer QR may use SPA vs SAUNA). */
+export function deskZoneAliases(zone: string): string[] {
+  const z = zone.trim().toUpperCase();
+  const map: Record<string, string[]> = {
+    SAUNA: ["SAUNA", "SPA"],
+    SPA: ["SPA", "SAUNA"],
+    OLYMPIC_POOL: ["OLYMPIC_POOL", "OLYMPIC"],
+    OLYMPIC: ["OLYMPIC", "OLYMPIC_POOL"],
+    VIP_RESORT: ["VIP_RESORT", "VIP"],
+    VIP: ["VIP", "VIP_RESORT"],
+    RESORT_POOL: ["RESORT_POOL", "RESORT"],
+    RESORT: ["RESORT", "RESORT_POOL"],
+  };
+  return Array.from(new Set(map[z] || [z]));
 }

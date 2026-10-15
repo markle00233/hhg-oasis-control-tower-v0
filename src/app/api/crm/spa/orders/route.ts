@@ -76,9 +76,12 @@ export async function POST(req: NextRequest) {
       data: {
         customerId: customer.id,
         serviceId: service?.id || null,
-        status: "PENDING",
+        status: "ACCEPTED",
         totalVnd,
         note: note || null,
+        createdByType: "STAFF",
+        createdById: gate.user.id,
+        source: "ZONE_DESK",
         items: { create: orderItems },
       },
       include: { items: true },
@@ -104,8 +107,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const { awardPurchasePoints } = await import("@/lib/points");
+    const pts = await awardPurchasePoints({
+      customerId: customer.id,
+      refType: "APP_ORDER",
+      refId: order.id,
+      subtotalVnd: totalVnd,
+      note: `Spa · ${totalVnd}đ trước giảm`,
+    }).catch((err) => {
+      console.error("[spa/orders points]", err);
+      return null;
+    });
+
     return NextResponse.json({
       ok: true,
+      pointsAwarded: pts?.delta ?? 0,
+      pointsBalance: pts?.balance ?? null,
       order: {
         id: order.id,
         status: order.status,

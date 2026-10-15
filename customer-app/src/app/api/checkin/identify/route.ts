@@ -106,8 +106,43 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Default: full phone + name
+    // Default: full phone (+ name for new / confirmExisting for returning)
     const phone = String(body.phone || "").trim();
+    const confirmExisting = body.confirmExisting === true;
+
+    if (confirmExisting) {
+      const { normalizePhone, isValidPhone } = await import("@/lib/phone");
+      if (!isValidPhone(phone)) {
+        return NextResponse.json(
+          { error: "Số điện thoại không hợp lệ." },
+          { status: 400 }
+        );
+      }
+      const phoneNormalized = normalizePhone(phone);
+      const existing = await prisma.appCustomer.findFirst({
+        where: { status: "ACTIVE", phoneNormalized },
+      });
+      if (!existing) {
+        return NextResponse.json(
+          { error: "Không tìm thấy tài khoản. Nhập tên để tạo mới." },
+          { status: 404 }
+        );
+      }
+      await setPendingCustomer(existing.id);
+      await createCustomerSession(existing.id);
+      return NextResponse.json({
+        ok: true,
+        created: false,
+        confirmed: true,
+        askRemember: true,
+        customer: publicCustomer(existing),
+        phoneLast4:
+          existing.phoneLast4 ||
+          phoneShortId(existing.phoneNormalized || ""),
+        mode: "phone_confirm",
+      });
+    }
+
     const { customer, created } = await findOrCreateByPhone({
       phoneRaw: phone,
       fullName,

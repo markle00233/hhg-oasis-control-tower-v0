@@ -1,6 +1,11 @@
+const isAdminAllplace =
+  process.env.NEXT_PUBLIC_APP_SURFACE === "adminAllplace";
+
 export const metadata = {
-  title: "HHG Oasis — Control Tower",
-  description: "Control Tower Lite V0 + Prisma API",
+  title: isAdminAllplace ? "adminAllplace" : "HHG Oasis — Control Tower",
+  description: isAdminAllplace
+    ? "Zone desk administration"
+    : "Control Tower Lite V0 + Prisma API",
 };
 
 export default function RootLayout({

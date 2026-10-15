@@ -10,6 +10,8 @@ import {
   readPendingCustomerId,
   resolveDeviceCustomer,
 } from "@/lib/device";
+import { matchBookingToArrival } from "@/lib/booking-match";
+import { awardCheckInPoints } from "@/lib/points";
 
 export const preferredRegion = "sin1";
 export const dynamic = "force-dynamic";
@@ -63,6 +65,49 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    let bookingMatch: {
+      matched: { id: string; bookingCode: string; status: string } | null;
+      walkIn: boolean;
+      candidateCount: number;
+    } = { matched: null, walkIn: true, candidateCount: 0 };
+
+    let pointsAwarded = 0;
+    let pointsBalance: number | null = null;
+
+    if (!duplicate) {
+      const result = await matchBookingToArrival({
+        customerId: customer.id,
+        phoneNormalized: customer.phoneNormalized,
+        serviceId: service.id,
+        serviceUseId: event.id,
+      });
+      bookingMatch = {
+        matched: result.matched
+          ? {
+              id: result.matched.id,
+              bookingCode: result.matched.bookingCode,
+              status: result.matched.status,
+            }
+          : null,
+        walkIn: result.walkIn,
+        candidateCount: result.candidates.length,
+      };
+
+      const pts = await awardCheckInPoints({
+        customerId: customer.id,
+        refType: "SERVICE_EVENT",
+        refId: event.id,
+        note: `Check-in ${service.serviceCode}`,
+      }).catch((err) => {
+        console.error("[checkin/confirm points]", err);
+        return null;
+      });
+      if (pts) {
+        pointsAwarded = pts.delta;
+        pointsBalance = pts.balance;
+      }
+    }
+
     // Keep pending until remember decision; clear after successful usage if device exists
     if (deviceId) {
       await clearPendingCookie();
@@ -72,6 +117,9 @@ export async function POST(req: NextRequest) {
       ok: true,
       duplicate,
       customer: publicCustomer(customer),
+      bookingMatch,
+      pointsAwarded,
+      pointsBalance,
       event: {
         id: event.id,
         serviceCode: event.service.serviceCode,

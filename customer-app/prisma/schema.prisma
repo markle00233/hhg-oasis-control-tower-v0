@@ -30,10 +30,18 @@ model AppCustomer {
   phoneLast4      String?
   /// legacy alias kept in sync with phoneLast4
   shortId         String?
-  segment         String   @default("WALK_IN") // MEMBER | WALK_IN
+  /// WALK_IN | MEMBER | VIP
+  segment         String   @default("WALK_IN")
   intendedServices String?
   adminConfirmedAt DateTime?
   adminNote        String?
+  /// Opaque public token for My Oasis QR (never phone / raw DB id)
+  identityToken    String?  @unique
+  /// Loyalty tick points (check-in +5, redeem later)
+  pointsBalance    Int      @default(0)
+  /// Active VIP / membership package end (null = not VIP)
+  vipExpiresAt     DateTime?
+  vipPlanLabel     String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -41,6 +49,10 @@ model AppCustomer {
   devices  AppCustomerDevice[]
   events   AppServiceEvent[]
   orders   AppOrder[]
+  bookings AppBooking[]
+  serviceCarts AppServiceCart[]
+  collectedOffers AppCollectedOffer[]
+  pointLedger AppPointLedger[]
 
   @@index([status])
   @@index([createdAt])
@@ -49,6 +61,66 @@ model AppCustomer {
   @@index([segment])
   @@index([phoneNormalized])
   @@map("app_customers")
+}
+
+/// Point earn / redeem ledger (idempotent per ref).
+model AppPointLedger {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  delta        Int
+  balanceAfter Int
+  /// CHECKIN | REDEEM | ADJUST
+  reason       String
+  /// SERVICE_EVENT | SERVICE_CART | …
+  refType      String?
+  refId        String?
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@unique([reason, refType, refId])
+  @@index([customerId, createdAt])
+  @@map("app_point_ledger")
+}
+
+/// Collected promo / voucher (Ưu đãi → Collect).
+model AppCollectedOffer {
+  id          String    @id @default(cuid())
+  customerId  String
+  customer    AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  offerId     String
+  status      String    @default("COLLECTED") // COLLECTED | USED | CANCELLED
+  collectedAt DateTime  @default(now())
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([customerId, offerId])
+  @@index([customerId, status])
+  @@map("app_collected_offers")
+}
+
+/// Multi-select basket → one QR carrying all chosen services.
+model AppServiceCart {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  zoneCode   String
+  zoneName   String?
+  items      Json
+  totalVnd   Int      @default(0)
+  /// PENDING_APPROVAL | OPEN | USED | REJECTED | NO_SHOW | EXPIRED | CANCELLED
+  status     String   @default("PENDING_APPROVAL")
+  /// Staff reject reason (when REJECTED)
+  adminNote  String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([customerId, status, createdAt])
+  @@index([expiresAt])
+  @@map("app_service_carts")
 }
 
 /// Remember-this-device: cookie holds raw token; DB stores hash only.
@@ -94,8 +166,10 @@ model AppService {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  events AppServiceEvent[]
-  orders AppOrder[]
+  events    AppServiceEvent[]
+  orders    AppOrder[]
+  bookings  AppBooking[]
+  resources AppResource[]
 
   @@index([status])
   @@map("app_services")
@@ -110,13 +184,19 @@ model AppServiceEvent {
   deviceId   String?
   device     AppCustomerDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   eventType  String   @default("SERVICE_USE")
+  /// SERVICE_USE ops: NEW | ACKNOWLEDGED | IN_SERVICE | COMPLETED | CANCELLED | WRONG_SCAN
+  operationalStatus String @default("NEW")
   metadata   Json?
   createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  orders AppOrder[]
 
   @@index([customerId, createdAt])
   @@index([serviceId, createdAt])
   @@index([customerId, serviceId, createdAt])
   @@index([deviceId])
+  @@index([operationalStatus, createdAt])
   @@map("app_service_events")
 }
 
@@ -126,9 +206,15 @@ model AppOrder {
   customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   serviceId  String?
   service    AppService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  serviceUseId String?
+  serviceUse   AppServiceEvent? @relation(fields: [serviceUseId], references: [id], onDelete: SetNull)
   status     String   @default("PENDING")
   totalVnd   Int      @default(0)
   note       String?
+  createdByType String @default("STAFF")
+  createdById   String?
+  source     String   @default("ZONE_DESK")
+  idempotencyKey String? @unique
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -136,6 +222,7 @@ model AppOrder {
 
   @@index([status, createdAt])
   @@index([customerId, createdAt])
+  @@index([serviceUseId])
   @@map("app_orders")
 }
 
@@ -151,4 +238,79 @@ model AppOrderItem {
 
   @@index([orderId])
   @@map("app_order_items")
+}
+
+model AppResource {
+  id        String   @id @default(cuid())
+  serviceId String
+  service   AppService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  type      String
+  code      String
+  name      String
+  capacity  Int      @default(1)
+  status    String   @default("AVAILABLE")
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings AppBooking[]
+  sessions AppResourceSession[]
+
+  @@unique([serviceId, code])
+  @@index([serviceId, type, sortOrder])
+  @@map("app_resources")
+}
+
+model AppBooking {
+  id                   String    @id @default(cuid())
+  bookingCode          String    @unique
+  customerId           String?
+  customer             AppCustomer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerNameSnapshot String?
+  phone                String?
+  phoneNormalized      String?
+  serviceId            String
+  service              AppService @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  resourceId           String?
+  resource             AppResource? @relation(fields: [resourceId], references: [id], onDelete: SetNull)
+  startAt              DateTime
+  endAt                DateTime
+  partySize            Int       @default(1)
+  status               String    @default("CONFIRMED")
+  notes                String?
+  source               String    @default("STAFF")
+  createdByType        String?
+  createdById          String?
+  serviceUseId         String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  sessions AppResourceSession[]
+
+  @@index([serviceId, startAt])
+  @@index([customerId, startAt])
+  @@index([phoneNormalized, startAt])
+  @@index([resourceId, startAt])
+  @@index([status, startAt])
+  @@map("app_bookings")
+}
+
+model AppResourceSession {
+  id         String    @id @default(cuid())
+  resourceId String
+  resource   AppResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  customerId String?
+  bookingId  String?
+  booking    AppBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  startAt    DateTime  @default(now())
+  endAt      DateTime?
+  status     String    @default("OCCUPIED")
+  note       String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([resourceId, status])
+  @@index([bookingId])
+  @@map("app_resource_sessions")
 }
