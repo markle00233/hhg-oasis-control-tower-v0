@@ -14,7 +14,7 @@ function customerAppUrl() {
   return (
     process.env.NEXT_PUBLIC_CUSTOMER_APP_URL ||
     process.env.CUSTOMER_APP_URL ||
-    "https://hhg-oasis-customer-app.vercel.app"
+    "https://huyhoanggiaoasis.vercel.app"
   ).replace(/\/$/, "");
 }
 

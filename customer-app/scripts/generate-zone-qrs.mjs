@@ -9,7 +9,7 @@ const outDir = path.join(root, "public", "qr");
 
 const base =
   process.env.NEXT_PUBLIC_CUSTOMER_APP_URL?.replace(/\/$/, "") ||
-  "https://hhg-oasis-customer-app.vercel.app";
+  "https://huyhoanggiaoasis.vercel.app";
 
 const zones = [
   ["ENTRANCE", "Entrance"],
