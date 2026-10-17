@@ -133,16 +133,19 @@ export function DeskResourceGrid({
     }
   }
 
+  const z = zone.toUpperCase();
+  if (z === "SAUNA" || z === "SPA") {
+    return null;
+  }
+
   const title =
-    zone === "PICKLEBALL"
+    z === "PICKLEBALL"
       ? "Sơ đồ sân"
-      : zone === "SAUNA"
-        ? "Sơ đồ giường Spa"
-        : zone === "LONG_NUONG"
-          ? "Sơ đồ bàn"
-          : zone === "VIP_RESORT"
-            ? "VIP capacity"
-            : `Tài nguyên ${zoneName}`;
+      : z === "LONG_NUONG"
+        ? "Sơ đồ bàn"
+        : z === "VIP_RESORT"
+          ? "VIP capacity"
+          : `Tài nguyên ${zoneName}`;
 
   return (
     <section style={{ maxWidth: 1180, margin: "18px auto 0" }}>

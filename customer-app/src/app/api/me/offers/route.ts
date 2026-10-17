@@ -2,14 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionCustomer } from "@/lib/session";
 import { getOfferById, HOME_OFFERS } from "@/lib/home-services";
 import { prisma } from "@/lib/prisma";
-import { isVipActive } from "@/lib/vip";
+import { isVipActive, vipExpiryLabel } from "@/lib/vip";
+import {
+  isDurationMembershipVoucher,
+  isLimitedMembershipVoucher,
+} from "@/lib/hhg-vouchers";
+import {
+  consumeMembershipVoucherUse,
+  ensureMembershipVoucherQty,
+} from "@/lib/membership-voucher-qty";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "sin1";
-
-function isHhgVipOffer(offerId: string) {
-  return offerId.startsWith("hhg-");
-}
 
 /** List catalog + collected status for this customer. */
 export async function GET() {
@@ -30,7 +34,34 @@ export async function GET() {
       },
       orderBy: { collectedAt: "desc" },
     });
-    const byId = new Map(rows.map((r) => [r.offerId, r]));
+
+    // Backfill số lần cho voucher hội viên cũ (chưa có qty*)
+    if (vip) {
+      for (const r of rows) {
+        if (
+          isDurationMembershipVoucher(r.offerId) &&
+          isLimitedMembershipVoucher(r.offerId) &&
+          (r.qtyTotal == null || r.qtyRemaining == null)
+        ) {
+          await ensureMembershipVoucherQty(prisma, {
+            customerId: customer.id,
+            offerId: r.offerId,
+          }).catch(() => undefined);
+        }
+      }
+    }
+
+    const fresh = vip
+      ? await prisma.appCollectedOffer.findMany({
+          where: {
+            customerId: customer.id,
+            status: { in: ["COLLECTED", "USED"] },
+          },
+          orderBy: { collectedAt: "desc" },
+        })
+      : rows;
+
+    const byId = new Map(fresh.map((r) => [r.offerId, r]));
     const offers = HOME_OFFERS.map((o) => {
       const row = byId.get(o.id);
       return {
@@ -38,25 +69,54 @@ export async function GET() {
         collected: !!row,
         status: row?.status || null,
         collectedAt: row?.collectedAt || null,
+        qtyTotal: row?.qtyTotal ?? null,
+        qtyRemaining: row?.qtyRemaining ?? null,
       };
     });
-    // Đặc quyền VIP chỉ còn khi gói còn hạn; hết hạn → không trả wallet VIP
-    const wallet = rows
+
+    const vipExpiresLabel = vip
+      ? vipExpiryLabel(customer.vipExpiresAt)
+      : null;
+
+    // Ví = COLLECTED (kể cả hết lượt 0/N — thẻ vẫn hiện)
+    // Voucher hội viên: hiệu lực từ ngày nâng cấp → hết hạn gói
+    const wallet = fresh
       .filter((r) => r.status === "COLLECTED")
       .map((r) => {
         const o = getOfferById(r.offerId);
         if (!o) return null;
-        if (isHhgVipOffer(r.offerId) && !vip) return null;
+        const qtyTotal = r.qtyTotal ?? null;
+        const qtyRemaining = r.qtyRemaining ?? null;
+        const exhausted =
+          qtyTotal != null && (qtyRemaining == null || qtyRemaining <= 0);
+        const membership = isDurationMembershipVoucher(r.offerId);
+        const membershipExpired = membership && !vip;
+        const unlimitedInTerm =
+          membership && !isLimitedMembershipVoucher(r.offerId);
         return {
           ...o,
           status: r.status,
           collectedAt: r.collectedAt,
           claimId: r.id,
+          qtyTotal,
+          qtyRemaining,
+          exhausted,
+          membership,
+          membershipExpired,
+          unlimitedInTerm,
+          validUntilLabel: membership ? vipExpiresLabel : null,
+          canUse: !exhausted && !membershipExpired,
         };
       })
       .filter(Boolean);
 
-    return NextResponse.json({ ok: true, vip, offers, wallet });
+    return NextResponse.json({
+      ok: true,
+      vip,
+      vipExpiresLabel,
+      offers,
+      wallet,
+    });
   } catch (e) {
     console.error("[me/offers GET]", e);
     return NextResponse.json(
@@ -91,6 +151,8 @@ export async function POST(req: NextRequest) {
         already: true,
         status: "COLLECTED",
         offer,
+        qtyTotal: existing.qtyTotal,
+        qtyRemaining: existing.qtyRemaining,
       });
     }
     if (existing?.status === "USED") {
@@ -117,6 +179,8 @@ export async function POST(req: NextRequest) {
       ok: true,
       status: row.status,
       offer,
+      qtyTotal: row.qtyTotal,
+      qtyRemaining: row.qtyRemaining,
     });
   } catch (e) {
     console.error("[me/offers POST]", e);
@@ -127,7 +191,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Mark voucher used. Body: { offerId } */
+/** Mark voucher used / trừ 1 lần hội viên. Body: { offerId } */
 export async function PATCH(req: NextRequest) {
   try {
     const customer = await getSessionCustomer();
@@ -139,6 +203,31 @@ export async function PATCH(req: NextRequest) {
     if (!offerId) {
       return NextResponse.json({ error: "Thiếu offerId" }, { status: 400 });
     }
+
+    if (isDurationMembershipVoucher(offerId)) {
+      try {
+        const used = await consumeMembershipVoucherUse(prisma, {
+          customerId: customer.id,
+          offerId,
+        });
+        return NextResponse.json({
+          ok: true,
+          status: "COLLECTED",
+          duration: true,
+          ...used,
+        });
+      } catch (err) {
+        const status =
+          err && typeof err === "object" && "status" in err
+            ? Number((err as { status: number }).status) || 500
+            : 500;
+        return NextResponse.json(
+          { error: err instanceof Error ? err.message : "Failed" },
+          { status }
+        );
+      }
+    }
+
     const row = await prisma.appCollectedOffer.findUnique({
       where: {
         customerId_offerId: { customerId: customer.id, offerId },

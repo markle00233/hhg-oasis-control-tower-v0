@@ -17,17 +17,18 @@ export const DESK_ZONES: DeskZone[] = [
   { code: "OLYMPIC_POOL", name: "Hồ Olympic", username: "GYM" },
   { code: "JACUZZI", name: "Jacuzzi", username: "JACUZZI" },
   { code: "LONG_NUONG", name: "Lòng Nướng Chí Phèo", username: "LONGNUONG" },
+  { code: "SWIM_LESSON", name: "Khách học bơi", username: "HOCBOI" },
 ];
 
-/** Zone uses resource grid (courts / beds / tables / VIP capacity). */
+/** Quầy danh sách học viên — không dùng bảng duyệt QR thông thường. */
+export function isSwimLessonDesk(code: string) {
+  return code.trim().toUpperCase() === "SWIM_LESSON";
+}
+
+/** Zone uses resource grid (courts / tables / VIP). Spa = chỉ bán dịch vụ, không sơ đồ giường. */
 export function zoneHasResources(code: string) {
   const c = code.toUpperCase();
-  return (
-    c === "PICKLEBALL" ||
-    c === "SAUNA" ||
-    c === "LONG_NUONG" ||
-    c === "VIP_RESORT"
-  );
+  return c === "PICKLEBALL" || c === "LONG_NUONG" || c === "VIP_RESORT";
 }
 
 export function getDeskZone(code: string): DeskZone | null {
@@ -35,9 +36,36 @@ export function getDeskZone(code: string): DeskZone | null {
   return DESK_ZONES.find((z) => z.code === c) || null;
 }
 
+/** Acc admin theo khu: ADMINISTRATION + username khu (vd. ADMINISTRATIONMIAOI). */
+export function zoneAdminUsername(zoneUsername: string) {
+  return `ADMINISTRATION${String(zoneUsername || "").trim().toUpperCase()}`;
+}
+
+export function parseZoneAdminUsername(username: string): DeskZone | null {
+  const u = username.trim().toUpperCase();
+  if (!u.startsWith("ADMINISTRATION")) return null;
+  const rest = u.slice("ADMINISTRATION".length);
+  if (!rest) return null;
+  return DESK_ZONES.find((z) => z.username === rest) || null;
+}
+
+/** Acc admin khu (không phải ADMINISTRATION global). */
+export function isZoneDeskAdmin(
+  user: { username?: string | null; deskZone?: string | null },
+  zoneCode?: string
+) {
+  const z = parseZoneAdminUsername(String(user.username || ""));
+  if (!z) return false;
+  if (zoneCode && z.code !== zoneCode.trim().toUpperCase()) return false;
+  if (user.deskZone && user.deskZone.toUpperCase() !== z.code) return false;
+  return true;
+}
+
 export function deskZoneByUsername(username: string): DeskZone | null {
   const u = username.trim().toUpperCase();
-  return DESK_ZONES.find((z) => z.username === u) || null;
+  const direct = DESK_ZONES.find((z) => z.username === u);
+  if (direct) return direct;
+  return parseZoneAdminUsername(u);
 }
 
 export function dashboardTitle(zoneName: string) {

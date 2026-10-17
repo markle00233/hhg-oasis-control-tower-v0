@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSessionCustomer } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import {
+  packageIdFromTier,
+  tierFromPlanLabel,
+} from "@/lib/membership-theme";
 import { isVipActive, vipExpiryLabel } from "@/lib/vip";
 
 export const preferredRegion = "sin1";
@@ -41,6 +45,23 @@ export async function GET() {
     vipPlanLabel = null;
   }
 
+  const seg = String(segment || "").toUpperCase();
+  /** Gói Olympic (VIP) hoặc hội viên — hiện trên trang Account */
+  const packageLabel = vip
+    ? vipPlanLabel || "Gói VIP HHG Oasis"
+    : seg === "MEMBER"
+      ? vipPlanLabel || "Hội viên"
+      : vipPlanLabel || null;
+  const packageExpiresLabel = vip
+    ? vipExpiryLabel(vipExpiresAt)
+    : vipPlanLabel && vipExpiresAt
+      ? vipExpiryLabel(vipExpiresAt)
+      : null;
+  const membershipTier = vip ? tierFromPlanLabel(vipPlanLabel) : null;
+  const membershipPackageId = membershipTier
+    ? packageIdFromTier(membershipTier)
+    : null;
+
   return NextResponse.json({
     authenticated: true,
     customer: {
@@ -59,6 +80,12 @@ export async function GET() {
       vipPlanLabel: vip ? vipPlanLabel || null : null,
       vipExpiresAt: vip ? vipExpiresAt || null : null,
       vipExpiresLabel: vip ? vipExpiryLabel(vipExpiresAt) : null,
+      packageLabel,
+      packageExpiresLabel,
+      membershipTier,
+      membershipPackageId,
+      /** Còn hạn gói → khoá upgrade / downgrade */
+      membershipLocked: vip,
     },
   });
 }

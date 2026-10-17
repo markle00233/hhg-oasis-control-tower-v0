@@ -17,7 +17,7 @@ export async function GET() {
       ok: true,
       customer: {
         fullName: customer.fullName,
-        shortId: customer.shortId,
+        shortId: customer.phoneLast4 || customer.shortId,
         customerCode: customer.customerCode,
       },
       ...summary,

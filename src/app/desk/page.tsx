@@ -15,23 +15,29 @@ import {
   type SpaMenuItem,
 } from "@/lib/spa-menu";
 import { POOL_MENU, formatPoolPrice } from "@/lib/olympic-pool-menu";
+import { computePoolPricing } from "@/lib/pool-pricing";
 import { printPoolBill } from "@/lib/pool-bill-print";
 import { printDayBillsPdf, type DayBill } from "@/lib/day-bills-print";
 import {
   DESK_ZONES,
   dashboardTitle,
   getDeskZone,
+  isSwimLessonDesk,
+  isZoneDeskAdmin,
+  zoneAdminUsername,
   zoneHasResources,
   type DeskZone,
 } from "@/lib/desk-zones";
 import { DeskCourtSchedule } from "@/components/desk-court-schedule";
 import { DeskResourceGrid } from "@/components/desk-resource-grid";
 import { DeskQrScanner } from "@/components/DeskQrScanner";
+import { DeskSwimStudents } from "@/components/desk-swim-students";
 import {
   checkInLabel,
   checkInUiFromCart,
   type CheckInUi,
 } from "@/lib/cart-status";
+import { parseCartPromo } from "@/lib/cart-promo";
 
 type CatalogItem = MiaOiMenuItem | SpaMenuItem;
 
@@ -74,6 +80,9 @@ type GuestCartPreview = {
   createdAt?: string;
   expiresAt?: string;
   billText?: string;
+  promoLabel?: string | null;
+  hasVoucher?: boolean;
+  hasPointsRedeem?: boolean;
 };
 
 type Arrival = {
@@ -84,6 +93,9 @@ type Arrival = {
   shortId: string | null;
   segment: string;
   segmentLabel: string;
+  pointsBalance?: number;
+  packageLabel?: string | null;
+  packageExpiresAt?: string | null;
   updatedAt: string;
   lastVisitAt: string | null;
   pendingAdmin: boolean;
@@ -117,6 +129,10 @@ type DeskTicket = {
   pendingAdmin: boolean;
   needsApproval: boolean;
   checkInUi: CheckInUi;
+  /** Voucher / đổi điểm trên QR */
+  promoLabel: string;
+  hasVoucher: boolean;
+  hasPointsRedeem: boolean;
 };
 
 function formatTime(iso: string) {
@@ -181,11 +197,22 @@ function buildDeskTickets(
           zoneCode: cart.zoneCode || zoneCode || undefined,
         });
         const need = cart.status === "PENDING_APPROVAL";
-        const billItems = (cart.items || []).map((i) => ({
-          nameVi: i.nameVi,
-          qty: i.qty,
-          priceVnd: i.priceVnd,
-        }));
+        const billItems = (cart.items || [])
+          .filter(
+            (i) =>
+              !String(i.id || "").startsWith("voucher-") &&
+              !String(i.id || "").startsWith("points-redeem-")
+          )
+          .map((i) => ({
+            nameVi: i.nameVi,
+            qty: i.qty,
+            priceVnd: i.priceVnd,
+          }));
+        const promo = parseCartPromo(cart.items);
+        const promoLabel =
+          cart.promoLabel && cart.promoLabel !== "—"
+            ? cart.promoLabel
+            : promo.label;
         tickets.push({
           key: `cart-${cart.token}`,
           arrival: a,
@@ -203,6 +230,10 @@ function buildDeskTickets(
           pendingAdmin: need,
           needsApproval: need,
           checkInUi: ui,
+          promoLabel,
+          hasVoucher: promo.hasVoucher || !!cart.hasVoucher,
+          hasPointsRedeem:
+            promo.hasPointsRedeem || !!cart.hasPointsRedeem,
         });
       }
       continue;
@@ -224,6 +255,9 @@ function buildDeskTickets(
         pendingAdmin: a.pendingAdmin,
         needsApproval: false,
         checkInUi: verified ? "yes" : "pending",
+        promoLabel: "—",
+        hasVoucher: false,
+        hasPointsRedeem: false,
       });
       continue;
     }
@@ -259,6 +293,9 @@ function buildDeskTickets(
           pendingAdmin: false,
           needsApproval: false,
           checkInUi: "yes",
+          promoLabel: "—",
+          hasVoucher: false,
+          hasPointsRedeem: false,
         });
       } else if (scan) {
         tickets.push({
@@ -274,6 +311,9 @@ function buildDeskTickets(
           pendingAdmin: a.pendingAdmin,
           needsApproval: false,
           checkInUi: scan.ticketVerified ? "yes" : "pending",
+          promoLabel: "—",
+          hasVoucher: false,
+          hasPointsRedeem: false,
         });
       }
     }
@@ -297,6 +337,8 @@ export default function DeskAdministrationPage() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  /** ADMINISTRATION global — được Đổi khu */
+  const [isSystemAdminUser, setIsSystemAdminUser] = useState(false);
   const [arrivals, setArrivals] = useState<Arrival[]>([]);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Arrival | null>(null);
@@ -323,6 +365,14 @@ export default function DeskAdministrationPage() {
   );
   const [createGuestBusy, setCreateGuestBusy] = useState(false);
   const [createGuestError, setCreateGuestError] = useState("");
+  const [guestReissuePassword, setGuestReissuePassword] = useState(false);
+  const [guestAccountInfo, setGuestAccountInfo] = useState<{
+    loginHint: string;
+    temporaryPassword: string | null;
+    customerCode: string;
+    phone: string;
+    created: boolean;
+  } | null>(null);
   const [guestCart, setGuestCart] = useState<GuestCartPreview | null>(null);
   const [approvingToken, setApprovingToken] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<{
@@ -331,12 +381,60 @@ export default function DeskAdministrationPage() {
   } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectBusy, setRejectBusy] = useState(false);
+  /** Sơ đồ bàn/giường — mở bằng nút, không chiếm UI chính */
+  const [resourceMapOpen, setResourceMapOpen] = useState(false);
+  /** Đổi điểm quầy */
+  const [redeemOpen, setRedeemOpen] = useState(false);
+  const [redeemTier, setRedeemTier] = useState<50 | 100>(50);
+  const [redeemItems, setRedeemItems] = useState<
+    { id: string; nameVi: string; priceVnd: number }[]
+  >([]);
+  const [redeemItemId, setRedeemItemId] = useState("");
+  const [redeemBusy, setRedeemBusy] = useState(false);
+  const [redeemMsg, setRedeemMsg] = useState("");
+  /** Giảm tay theo lần quét hồ */
+  const [scanManualDiscount, setScanManualDiscount] = useState<
+    Record<string, number>
+  >({});
+  /** Claim voucher Spa / LN theo SĐT */
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [claimPhone, setClaimPhone] = useState("");
+  const [claimBusy, setClaimBusy] = useState(false);
+  const [claimError, setClaimError] = useState("");
+  const [claimCustomer, setClaimCustomer] = useState<{
+    id: string;
+    fullName: string | null;
+    phone: string | null;
+    pointsBalance?: number;
+  } | null>(null);
+  const [claimWallet, setClaimWallet] = useState<
+    {
+      offerId: string;
+      title: string;
+      subtitle: string;
+      claimId: string;
+    }[]
+  >([]);
+  const [claimLogs, setClaimLogs] = useState<
+    {
+      id: string;
+      at: string;
+      offerTitle: string | null;
+      phone: string | null;
+      customerName: string | null;
+      claimedByName: string | null;
+      zoneCode: string;
+    }[]
+  >([]);
 
   const zone = picked?.code || null;
   const zoneName = picked?.name || "";
   const isMiaOi = zone === "MIA_OI";
   const isSpa = zone === "SAUNA";
   const isPool = zone === "OLYMPIC_POOL";
+  const isLongNuong = zone === "LONG_NUONG";
+  /** Claim quầy đã tắt — khách Collect trên Home */
+  const canClaimOffers = false;
   /** Menu phía trên — pool bán vé dưới từng lần quét */
   const hasCatalog = isMiaOi || isSpa;
   const title = dashboardTitle(zoneName || "…");
@@ -395,6 +493,7 @@ export default function DeskAdministrationPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Load failed");
       setIsAdmin(!!data.isAdmin);
+      setIsSystemAdminUser(!!data.isSystemAdmin);
       setArrivals(data.arrivals || []);
       setError("");
       setStep("dashboard");
@@ -543,14 +642,16 @@ export default function DeskAdministrationPage() {
 
       const user = data.user;
       const admin = user?.systemRole === "SYSTEM_ADMIN";
+      const zoneAdmin = isZoneDeskAdmin(user, picked.code);
       const deskZone = String(user?.deskZone || "").toUpperCase();
       if (!admin && deskZone !== picked.code) {
         await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
         throw new Error(
-          `Tài khoản này không phải khu ${picked.name}. Dùng ${picked.username} hoặc ADMINISTRATION.`
+          `Tài khoản này không phải khu ${picked.name}. Dùng ${picked.username}, ${zoneAdminUsername(picked.username)} hoặc ADMINISTRATION.`
         );
       }
-      setIsAdmin(!!admin);
+      setIsAdmin(!!admin || zoneAdmin);
+      setIsSystemAdminUser(!!admin);
       setPassword("");
       setStep("dashboard");
       await load();
@@ -566,6 +667,7 @@ export default function DeskAdministrationPage() {
       /* ignore */
     }
     setIsAdmin(false);
+    setIsSystemAdminUser(false);
     backToPick();
   }
 
@@ -578,7 +680,9 @@ export default function DeskAdministrationPage() {
     setVerifyingScanId(null);
     setCategory(
       isSpa
-        ? SPA_CATEGORIES[0]?.id || "gio-vang"
+        ? SPA_CATEGORIES.find((c) => c.id === "gio-vang")?.id ||
+          SPA_CATEGORIES[0]?.id ||
+          "goi-duong"
         : MIAOI_CATEGORIES[0]?.id || "mia"
     );
     const pick =
@@ -609,6 +713,7 @@ export default function DeskAdministrationPage() {
           fullName,
           phone,
           segment: guestSegment,
+          reissuePassword: guestReissuePassword,
         }),
       });
       const data = await res.json();
@@ -631,9 +736,11 @@ export default function DeskAdministrationPage() {
       };
       const fromList = list.find((a) => a.id === cust.id);
       const segment =
-        cust.segment === "MEMBER" || fromList?.segment === "MEMBER"
-          ? "MEMBER"
-          : "WALK_IN";
+        cust.segment === "VIP" || fromList?.segment === "VIP"
+          ? "VIP"
+          : cust.segment === "MEMBER" || fromList?.segment === "MEMBER"
+            ? "MEMBER"
+            : "WALK_IN";
       const arrival: Arrival =
         fromList || {
           id: cust.id,
@@ -655,11 +762,20 @@ export default function DeskAdministrationPage() {
           todayScanCount: 0,
           todayOrderCount: 0,
         };
-      setCreateGuestOpen(false);
+      setGuestAccountInfo({
+        loginHint: String(data.loginHint || ""),
+        temporaryPassword: data.temporaryPassword
+          ? String(data.temporaryPassword)
+          : null,
+        customerCode: cust.customerCode,
+        phone: cust.phone || phone,
+        created: !!data.created,
+      });
       setGuestName("");
       setGuestPhone("");
+      setGuestReissuePassword(false);
       openCustomer(arrival);
-      setOrderMsg(data.message || "Đã lưu khách.");
+      setOrderMsg(data.message || "Đã lưu khách + tài khoản app.");
     } catch (e) {
       setCreateGuestError(
         e instanceof Error ? e.message : "Không tạo được khách"
@@ -890,15 +1006,20 @@ export default function DeskAdministrationPage() {
 
   function scanCartTotal(scanId: string) {
     const row = scanCarts[scanId] || {};
-    let sum = 0;
-    let qty = 0;
-    for (const [itemId, q] of Object.entries(row)) {
-      const item = getPoolItemById(itemId);
-      if (!item || q < 1) continue;
-      sum += item.priceVnd * q;
-      qty += q;
-    }
-    return { sum, qty };
+    const lines = Object.entries(row)
+      .filter(([, q]) => q > 0)
+      .map(([itemId, qty]) => ({ itemId, qty }));
+    const priced = computePoolPricing(lines, {
+      manualDiscountVnd: scanManualDiscount[scanId] || 0,
+    });
+    const qty = priced.lines.reduce((s, l) => s + l.qty, 0);
+    return {
+      sum: priced.totalVnd,
+      qty,
+      subtotal: priced.subtotalVnd,
+      accessoryDiscount: priced.accessoryDiscountVnd,
+      manualDiscount: priced.manualDiscountVnd,
+    };
   }
 
   function getPoolItemById(id: string) {
@@ -949,6 +1070,7 @@ export default function DeskAdministrationPage() {
           customerId: selected.id,
           scanEventId: scan.id,
           items,
+          manualDiscountVnd: scanManualDiscount[scan.id] || 0,
         }),
       });
       const data = await res.json();
@@ -964,8 +1086,12 @@ export default function DeskAdministrationPage() {
           unitPriceVnd: i.unitPriceVnd,
         })
       );
-      // Optimistic — không chờ load() cả desk (chậm)
       setScanCarts((prev) => {
+        const next = { ...prev };
+        delete next[scan.id];
+        return next;
+      });
+      setScanManualDiscount((prev) => {
         const next = { ...prev };
         delete next[scan.id];
         return next;
@@ -977,14 +1103,156 @@ export default function DeskAdministrationPage() {
         orderId: data.order?.id ?? null,
         ticketItems,
       });
+      if (typeof data.pointsBalance === "number" && selected) {
+        setSelected({ ...selected, pointsBalance: data.pointsBalance });
+      }
+      const memNote = data.membership?.planLabel
+        ? ` · gói ${data.membership.planLabel}`
+        : "";
       setOrderMsg(
-        `Đã xác thực · vào lúc ${formatTime(scan.at)} · ${formatVnd(data.order?.totalVnd || 0)}`
+        `Đã xác thực · vào lúc ${formatTime(scan.at)} · ${formatVnd(data.order?.totalVnd || 0)}${memNote}`
       );
       void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không xác thực được");
     } finally {
       setVerifyingScanId(null);
+    }
+  }
+
+  async function openRedeem(preferredTier?: 50 | 100) {
+    const tier =
+      preferredTier ||
+      (isPool ? 100 : isMiaOi ? 50 : 50);
+    setRedeemTier(tier);
+    setRedeemItemId("");
+    setRedeemMsg("");
+    setRedeemOpen(true);
+    try {
+      const res = await fetch(`/api/crm/desk/redeem-points?tier=${tier}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không tải được món đổi");
+      setRedeemItems(Array.isArray(data.items) ? data.items : []);
+    } catch (e) {
+      setRedeemMsg(e instanceof Error ? e.message : "Lỗi tải món");
+      setRedeemItems([]);
+    }
+  }
+
+  async function switchRedeemTier(tier: 50 | 100) {
+    setRedeemTier(tier);
+    setRedeemItemId("");
+    setRedeemMsg("");
+    try {
+      const res = await fetch(`/api/crm/desk/redeem-points?tier=${tier}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không tải được món đổi");
+      setRedeemItems(Array.isArray(data.items) ? data.items : []);
+    } catch (e) {
+      setRedeemMsg(e instanceof Error ? e.message : "Lỗi tải món");
+      setRedeemItems([]);
+    }
+  }
+
+  async function submitRedeem() {
+    if (!selected || !redeemItemId) {
+      setRedeemMsg("Chọn món để đổi.");
+      return;
+    }
+    setRedeemBusy(true);
+    setRedeemMsg("");
+    try {
+      const res = await fetch("/api/crm/desk/redeem-points", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          customerId: selected.id,
+          tier: redeemTier,
+          itemId: redeemItemId,
+          zone: zone || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Đổi điểm thất bại");
+      setRedeemMsg(
+        `Đã đổi ${data.pointsBurned} điểm → ${data.itemName} (bill 0đ). Còn ${data.pointsBalance} điểm.`
+      );
+      setSelected({
+        ...selected,
+        pointsBalance: data.pointsBalance,
+      });
+      void load();
+    } catch (e) {
+      setRedeemMsg(e instanceof Error ? e.message : "Đổi điểm thất bại");
+    } finally {
+      setRedeemBusy(false);
+    }
+  }
+
+  async function lookupClaimPhone() {
+    if (!zone || !claimPhone.trim()) {
+      setClaimError("Nhập SĐT khách.");
+      return;
+    }
+    setClaimBusy(true);
+    setClaimError("");
+    setClaimCustomer(null);
+    setClaimWallet([]);
+    try {
+      const q = new URLSearchParams({
+        phone: claimPhone.trim(),
+        zone,
+      });
+      const res = await fetch(`/api/crm/desk/offers?${q}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không tìm thấy");
+      setClaimCustomer(data.customer);
+      setClaimWallet(Array.isArray(data.wallet) ? data.wallet : []);
+    } catch (e) {
+      setClaimError(e instanceof Error ? e.message : "Tra cứu thất bại");
+    } finally {
+      setClaimBusy(false);
+    }
+  }
+
+  async function loadClaimHistory() {
+    if (!zone) return;
+    try {
+      const res = await fetch(
+        `/api/crm/desk/offers?history=1&zone=${encodeURIComponent(zone)}`
+      );
+      const data = await res.json();
+      if (!res.ok) return;
+      setClaimLogs(Array.isArray(data.logs) ? data.logs : []);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function claimOffer(offerId: string) {
+    if (!zone || !claimCustomer) return;
+    if (!window.confirm("Claim voucher này tại quầy? Không hoàn lại.")) return;
+    setClaimBusy(true);
+    setClaimError("");
+    try {
+      const res = await fetch("/api/crm/desk/offers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          zone,
+          customerId: claimCustomer.id,
+          offerId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Claim thất bại");
+      setClaimWallet((prev) => prev.filter((v) => v.offerId !== offerId));
+      void loadClaimHistory();
+      setOrderMsg(`Đã claim · ${data.offerTitle || offerId}`);
+    } catch (e) {
+      setClaimError(e instanceof Error ? e.message : "Claim thất bại");
+    } finally {
+      setClaimBusy(false);
     }
   }
 
@@ -1224,7 +1492,9 @@ export default function DeskAdministrationPage() {
                         ? "#1b3022"
                         : z.code === "OLYMPIC_POOL"
                           ? "#0c4a6e"
-                          : "#e2e8f0",
+                          : z.code === "SWIM_LESSON"
+                            ? "#0369a1"
+                            : "#e2e8f0",
                   background:
                     z.code === "MIA_OI"
                       ? "#fff7ed"
@@ -1232,7 +1502,9 @@ export default function DeskAdministrationPage() {
                         ? "#eef5f0"
                         : z.code === "OLYMPIC_POOL"
                           ? "#e0f2fe"
-                          : "#f1f5f9",
+                          : z.code === "SWIM_LESSON"
+                            ? "#e0f2fe"
+                            : "#f1f5f9",
                 }}
               >
                 <strong style={{ fontSize: 15, textTransform: "lowercase" }}>
@@ -1242,7 +1514,11 @@ export default function DeskAdministrationPage() {
             ))}
           </div>
           <p style={{ ...styles.mute, marginTop: 16, fontSize: 12 }}>
-            Acc admin lớn: <strong>ADMINISTRATION</strong> — xem được mọi khu.
+            Acc admin lớn: <strong>ADMINISTRATION</strong> — mọi khu.
+            <br />
+            Acc admin từng khu: <strong>ADMINISTRATION</strong>
+            {" + "}
+            tên khu (vd. ADMINISTRATIONMIAOI) · mk <strong>12345678</strong>.
           </p>
         </div>
       </main>
@@ -1259,7 +1535,11 @@ export default function DeskAdministrationPage() {
           <p style={styles.mute}>
             Acc khu: <strong>{picked.username}</strong>
             <br />
-            Hoặc <strong>ADMINISTRATION</strong> (xem mọi khu).
+            Acc admin khu:{" "}
+            <strong>{zoneAdminUsername(picked.username)}</strong> · mk{" "}
+            <strong>12345678</strong>
+            <br />
+            Hoặc <strong>ADMINISTRATION</strong> (mọi khu).
           </p>
           <form onSubmit={login} style={{ marginTop: 20, display: "grid", gap: 12 }}>
             <input
@@ -1301,6 +1581,16 @@ export default function DeskAdministrationPage() {
     );
   }
 
+  // ── 3a) Quầy học bơi — danh sách học viên ─────────────────
+  if (zone && isSwimLessonDesk(zone)) {
+    return (
+      <DeskSwimStudents
+        onBack={backToPick}
+        onLogout={() => void logout()}
+      />
+    );
+  }
+
   // ── 3) Dashboard khu ─────────────────────────────────────
   return (
     <main style={styles.page}>
@@ -1323,10 +1613,32 @@ export default function DeskAdministrationPage() {
             {zone === "PICKLEBALL"
               ? " · duyệt đặt sân online · ghi khách tại quầy trên lịch · Kết thúc = reset sân"
               : ""}
+            {zone === "LONG_NUONG"
+              ? " · bảng dưới = duyệt mã · sơ đồ bàn mở bằng nút riêng"
+              : ""}
             {isAdmin ? " · admin" : ""}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {zone &&
+          zone !== "SAUNA" &&
+          zone !== "SPA" &&
+          zoneHasResources(zone) &&
+          zone !== "PICKLEBALL" ? (
+            <button
+              type="button"
+              style={{
+                ...styles.btn,
+                background: "#7c2d12",
+                height: 42,
+                padding: "0 16px",
+                fontSize: 14,
+              }}
+              onClick={() => setResourceMapOpen(true)}
+            >
+              {zone === "VIP_RESORT" ? "Sơ đồ VIP" : "Sơ đồ bàn"}
+            </button>
+          ) : null}
           <button
             type="button"
             style={{
@@ -1359,6 +1671,8 @@ export default function DeskAdministrationPage() {
               setGuestName("");
               setGuestPhone("");
               setGuestSegment("MEMBER");
+              setGuestReissuePassword(false);
+              setGuestAccountInfo(null);
               setCreateGuestOpen(true);
             }}
           >
@@ -1379,7 +1693,7 @@ export default function DeskAdministrationPage() {
           >
             Xuất all PDF hôm nay
           </button>
-          {isAdmin ? (
+          {isSystemAdminUser ? (
             <button type="button" style={styles.ghost} onClick={backToPick}>
               Đổi khu
             </button>
@@ -1464,6 +1778,133 @@ export default function DeskAdministrationPage() {
         </div>
       ) : null}
 
+      {redeemOpen && selected ? (
+        <div
+          style={styles.modalBackdrop}
+          onClick={() => !redeemBusy && setRedeemOpen(false)}
+        >
+          <div
+            style={{ ...styles.modal, maxWidth: 440 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: 0, fontSize: 18 }}>Đổi điểm</h2>
+            <p style={styles.mute}>
+              {selected.fullName || "Khách"} ·{" "}
+              <strong>{selected.pointsBalance ?? 0} điểm</strong>
+              <br />
+              50đ → đồ uống ≤50k · 100đ → vé bơi · trừ đủ điểm dù món rẻ hơn.
+            </p>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                style={{
+                  ...styles.btn,
+                  flex: 1,
+                  background: redeemTier === 50 ? "#b45309" : "#94a3b8",
+                }}
+                disabled={redeemBusy}
+                onClick={() => void switchRedeemTier(50)}
+              >
+                50 điểm
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.btn,
+                  flex: 1,
+                  background: redeemTier === 100 ? "#0c4a6e" : "#94a3b8",
+                }}
+                disabled={redeemBusy}
+                onClick={() => void switchRedeemTier(100)}
+              >
+                100 điểm
+              </button>
+            </div>
+            <div
+              style={{
+                marginTop: 12,
+                maxHeight: 280,
+                overflow: "auto",
+                display: "grid",
+                gap: 6,
+              }}
+            >
+              {redeemItems.length === 0 ? (
+                <p style={styles.mute}>Không có món phù hợp.</p>
+              ) : (
+                redeemItems.map((it) => (
+                  <label
+                    key={it.id}
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "center",
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border:
+                        redeemItemId === it.id
+                          ? "2px solid #b45309"
+                          : "1px solid #e2e8f0",
+                      background: redeemItemId === it.id ? "#fffbeb" : "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="redeemItem"
+                      checked={redeemItemId === it.id}
+                      onChange={() => setRedeemItemId(it.id)}
+                    />
+                    <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>
+                      {it.nameVi}
+                    </span>
+                    <span style={{ fontSize: 13, color: "#64748b" }}>
+                      {formatVnd(it.priceVnd)}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            {redeemMsg ? (
+              <p
+                style={{
+                  marginTop: 10,
+                  fontSize: 13,
+                  color: redeemMsg.startsWith("Đã") ? "#047857" : "#b91c1c",
+                }}
+              >
+                {redeemMsg}
+              </p>
+            ) : null}
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginTop: 14,
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                type="button"
+                style={styles.ghost}
+                disabled={redeemBusy}
+                onClick={() => setRedeemOpen(false)}
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.btn, background: "#b45309" }}
+                disabled={redeemBusy || !redeemItemId}
+                onClick={() => void submitRedeem()}
+              >
+                {redeemBusy ? "…" : `Đổi ${redeemTier} điểm`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {createGuestOpen ? (
         <div
           style={styles.modalBackdrop}
@@ -1484,96 +1925,182 @@ export default function DeskAdministrationPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: 20 }}>+ Member</h2>
                 <p style={{ ...styles.mute, marginTop: 4 }}>
-                  Lưu tên + SĐT cho khách chưa có QR / app.
+                  Tạo tài khoản app (đăng nhập bằng SĐT) + hiện trên dashboard
+                  khu.
                 </p>
               </div>
               <button
                 type="button"
                 style={styles.ghost}
                 disabled={createGuestBusy}
-                onClick={() => setCreateGuestOpen(false)}
+                onClick={() => {
+                  setCreateGuestOpen(false);
+                  setGuestAccountInfo(null);
+                }}
               >
                 Đóng
               </button>
             </div>
-            <div style={{ display: "grid", gap: 10 }}>
-              <label style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}>
-                Họ tên
-                <input
-                  style={{ ...styles.input, marginTop: 6 }}
-                  value={guestName}
-                  onChange={(e) => setGuestName(e.target.value)}
-                  placeholder="Nguyễn Văn A"
-                  disabled={createGuestBusy}
-                  autoFocus
-                />
-              </label>
-              <label style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}>
-                Số điện thoại
-                <input
-                  style={{ ...styles.input, marginTop: 6 }}
-                  value={guestPhone}
-                  onChange={(e) => setGuestPhone(e.target.value)}
-                  placeholder="09xxxxxxxx"
-                  inputMode="tel"
-                  disabled={createGuestBusy}
-                />
-              </label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  type="button"
-                  disabled={createGuestBusy}
-                  onClick={() => setGuestSegment("MEMBER")}
+            {guestAccountInfo ? (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div
                   style={{
-                    ...styles.ghost,
-                    flex: 1,
-                    background:
-                      guestSegment === "MEMBER" ? "#dbeafe" : "#fff",
-                    borderColor:
-                      guestSegment === "MEMBER" ? "#2563eb" : "#cbd5e1",
-                    fontWeight: 800,
+                    padding: 14,
+                    borderRadius: 14,
+                    background: "#ecfdf5",
+                    border: "1px solid #a7f3d0",
                   }}
                 >
-                  Member
-                </button>
+                  <p style={{ margin: 0, fontWeight: 800, color: "#047857" }}>
+                    {guestAccountInfo.created
+                      ? "Đã tạo tài khoản My Oasis"
+                      : "Đã mở khách trên dashboard"}
+                  </p>
+                  <p style={{ ...styles.mute, marginTop: 8 }}>
+                    Mã khách: <strong>{guestAccountInfo.customerCode}</strong>
+                    <br />
+                    Đăng nhập app: <strong>{guestAccountInfo.phone}</strong>
+                  </p>
+                  {guestAccountInfo.temporaryPassword ? (
+                    <p
+                      style={{
+                        margin: "10px 0 0",
+                        padding: 10,
+                        borderRadius: 10,
+                        background: "#fff",
+                        fontFamily: "ui-monospace, monospace",
+                        fontWeight: 800,
+                        fontSize: 15,
+                      }}
+                    >
+                      Mật khẩu tạm: {guestAccountInfo.temporaryPassword}
+                    </p>
+                  ) : null}
+                  <p style={{ ...styles.mute, marginTop: 8, fontSize: 12 }}>
+                    {guestAccountInfo.loginHint}
+                  </p>
+                </div>
                 <button
                   type="button"
-                  disabled={createGuestBusy}
-                  onClick={() => setGuestSegment("WALK_IN")}
-                  style={{
-                    ...styles.ghost,
-                    flex: 1,
-                    background:
-                      guestSegment === "WALK_IN" ? "#ffedd5" : "#fff",
-                    borderColor:
-                      guestSegment === "WALK_IN" ? "#ea580c" : "#cbd5e1",
-                    fontWeight: 800,
+                  style={{ ...styles.btn, background: "#1d4ed8" }}
+                  onClick={() => {
+                    setGuestAccountInfo(null);
+                    setCreateGuestOpen(false);
                   }}
                 >
-                  Khách lẻ
+                  Đã ghi — đóng
                 </button>
               </div>
-              {createGuestError ? (
-                <p style={styles.err}>{createGuestError}</p>
-              ) : null}
-              <button
-                type="button"
-                style={{
-                  ...styles.btn,
-                  background: "#1d4ed8",
-                  opacity:
-                    guestName.trim() && guestPhone.trim() && !createGuestBusy
-                      ? 1
-                      : 0.45,
-                }}
-                disabled={
-                  !guestName.trim() || !guestPhone.trim() || createGuestBusy
-                }
-                onClick={() => void submitCreateGuest()}
-              >
-                {createGuestBusy ? "Đang lưu…" : "Lưu + hiện dashboard"}
-              </button>
-            </div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                <label
+                  style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}
+                >
+                  Họ tên
+                  <input
+                    style={{ ...styles.input, marginTop: 6 }}
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    placeholder="Nguyễn Văn A"
+                    disabled={createGuestBusy}
+                    autoFocus
+                  />
+                </label>
+                <label
+                  style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}
+                >
+                  Số điện thoại
+                  <input
+                    style={{ ...styles.input, marginTop: 6 }}
+                    value={guestPhone}
+                    onChange={(e) => setGuestPhone(e.target.value)}
+                    placeholder="09xxxxxxxx"
+                    inputMode="tel"
+                    disabled={createGuestBusy}
+                  />
+                </label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    disabled={createGuestBusy}
+                    onClick={() => setGuestSegment("MEMBER")}
+                    style={{
+                      ...styles.ghost,
+                      flex: 1,
+                      background:
+                        guestSegment === "MEMBER" ? "#dbeafe" : "#fff",
+                      borderColor:
+                        guestSegment === "MEMBER" ? "#2563eb" : "#cbd5e1",
+                      fontWeight: 800,
+                    }}
+                  >
+                    Member
+                  </button>
+                  <button
+                    type="button"
+                    disabled={createGuestBusy}
+                    onClick={() => setGuestSegment("WALK_IN")}
+                    style={{
+                      ...styles.ghost,
+                      flex: 1,
+                      background:
+                        guestSegment === "WALK_IN" ? "#ffedd5" : "#fff",
+                      borderColor:
+                        guestSegment === "WALK_IN" ? "#ea580c" : "#cbd5e1",
+                      fontWeight: 800,
+                    }}
+                  >
+                    Khách lẻ
+                  </button>
+                </div>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    fontSize: 12,
+                    color: "#475569",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={guestReissuePassword}
+                    onChange={(e) =>
+                      setGuestReissuePassword(e.target.checked)
+                    }
+                    disabled={createGuestBusy}
+                    style={{ marginTop: 2 }}
+                  />
+                  <span>
+                    Nếu SĐT đã có tài khoản: cấp lại mật khẩu tạm = số điện
+                    thoại
+                  </span>
+                </label>
+                {createGuestError ? (
+                  <p style={styles.err}>{createGuestError}</p>
+                ) : null}
+                <button
+                  type="button"
+                  style={{
+                    ...styles.btn,
+                    background: "#1d4ed8",
+                    opacity:
+                      guestName.trim() && guestPhone.trim() && !createGuestBusy
+                        ? 1
+                        : 0.45,
+                  }}
+                  disabled={
+                    !guestName.trim() || !guestPhone.trim() || createGuestBusy
+                  }
+                  onClick={() => void submitCreateGuest()}
+                >
+                  {createGuestBusy
+                    ? "Đang tạo…"
+                    : "Tạo tài khoản + hiện dashboard"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
@@ -1653,15 +2180,93 @@ export default function DeskAdministrationPage() {
 
       {zone === "PICKLEBALL" ? (
         <DeskCourtSchedule zone={zone} onChanged={() => void load()} />
-      ) : zone && zoneHasResources(zone) ? (
-        <DeskResourceGrid
-          zone={zone}
-          zoneName={zoneName}
-          onChanged={() => void load()}
-        />
+      ) : null}
+
+      {/* Modal sơ đồ bàn / VIP — Spa không dùng giường */}
+      {resourceMapOpen &&
+      zone &&
+      zone !== "SAUNA" &&
+      zone !== "SPA" &&
+      zoneHasResources(zone) &&
+      zone !== "PICKLEBALL" ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 90,
+            background: "rgba(15,23,42,.5)",
+            display: "flex",
+            flexDirection: "column",
+            padding: "16px 12px",
+            boxSizing: "border-box",
+          }}
+          onClick={() => setResourceMapOpen(false)}
+        >
+          <div
+            style={{
+              flex: 1,
+              background: "#f1f5f9",
+              borderRadius: 16,
+              overflow: "auto",
+              maxWidth: 1200,
+              width: "100%",
+              margin: "0 auto",
+              boxShadow: "0 24px 60px rgba(15,23,42,.35)",
+              padding: "12px 12px 24px",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 8,
+                padding: "4px 4px 8px",
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>
+                {zone === "VIP_RESORT" ? "Sơ đồ VIP" : "Sơ đồ bàn"}
+              </h2>
+              <button
+                type="button"
+                style={{ ...styles.ghost, fontWeight: 800 }}
+                onClick={() => setResourceMapOpen(false)}
+              >
+                Đóng
+              </button>
+            </div>
+            <DeskResourceGrid
+              zone={zone}
+              zoneName={zoneName}
+              onChanged={() => void load()}
+            />
+          </div>
+        </div>
       ) : null}
 
       <div style={styles.tableWrap}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginBottom: 8,
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>
+            Yêu cầu / duyệt mã
+          </h2>
+          <span style={{ fontSize: 13, color: "#64748b" }}>
+            {pendingApprovalCount} chờ duyệt · {deskTickets.length} dòng
+            {zone === "LONG_NUONG"
+              ? " · mở «Sơ đồ bàn» trên header khi cần"
+              : ""}
+          </span>
+        </div>
         <table style={styles.table}>
           <thead>
             <tr>
@@ -1671,6 +2276,7 @@ export default function DeskAdministrationPage() {
               <th style={styles.th}>Tạo / Quét</th>
               <th style={styles.th}>Loại</th>
               <th style={styles.th}>Hoá đơn</th>
+              <th style={styles.th}>Voucher / Điểm</th>
               {hasCatalog ? <th style={styles.th}>Order</th> : null}
               <th style={styles.th}>Duyệt</th>
               <th style={styles.th}>Đã check in</th>
@@ -1680,7 +2286,7 @@ export default function DeskAdministrationPage() {
             {deskTickets.length === 0 ? (
               <tr>
                 <td
-                  colSpan={hasCatalog ? 9 : 8}
+                  colSpan={hasCatalog ? 10 : 9}
                   style={{ ...styles.td, color: "#64748b", padding: 28 }}
                 >
                   Chưa có khách gửi yêu cầu / quét QR{" "}
@@ -1790,6 +2396,41 @@ export default function DeskAdministrationPage() {
                             : ""}
                         </div>
                       ) : null}
+                    </td>
+                    <td style={styles.td}>
+                      {t.hasVoucher || t.hasPointsRedeem ? (
+                        <span
+                          style={{
+                            ...styles.badge,
+                            background: t.hasPointsRedeem
+                              ? "#fef3c7"
+                              : "#ecfdf5",
+                            color: t.hasPointsRedeem ? "#b45309" : "#047857",
+                            whiteSpace: "normal",
+                            maxWidth: 140,
+                          }}
+                        >
+                          {t.promoLabel && t.promoLabel !== "—"
+                            ? t.promoLabel
+                            : t.hasPointsRedeem
+                              ? "Đổi điểm"
+                              : "Voucher"}
+                        </span>
+                      ) : typeof a.pointsBalance === "number" &&
+                        a.pointsBalance > 0 ? (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: "#64748b",
+                          }}
+                          title="Số điểm trong ví (chưa áp trên QR này)"
+                        >
+                          {a.pointsBalance} điểm
+                        </span>
+                      ) : (
+                        <span style={{ color: "#94a3b8", fontSize: 12 }}>—</span>
+                      )}
                     </td>
                     {hasCatalog ? (
                       <td style={styles.td}>
@@ -1937,15 +2578,45 @@ export default function DeskAdministrationPage() {
                   SĐT <strong>{selected.phone || "—"}</strong> · ID{" "}
                   <strong>{selected.shortId || "—"}</strong> ·{" "}
                   {selected.segmentLabel}
+                  {typeof selected.pointsBalance === "number"
+                    ? ` · ${selected.pointsBalance} điểm`
+                    : ""}
                 </p>
+                {selected.packageLabel ? (
+                  <p style={{ ...styles.mute, marginTop: 4 }}>
+                    Gói <strong>{selected.packageLabel}</strong>
+                    {selected.packageExpiresAt
+                      ? ` · đến ${new Date(
+                          selected.packageExpiresAt
+                        ).toLocaleDateString("vi-VN")}`
+                      : ""}
+                  </p>
+                ) : null}
               </div>
-              <button
-                type="button"
-                style={styles.ghost}
-                onClick={() => setSelected(null)}
-              >
-                Đóng
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(isMiaOi || isPool || isAdmin) && selected ? (
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.btn,
+                      background: "#b45309",
+                      height: 36,
+                      padding: "0 12px",
+                      fontSize: 13,
+                    }}
+                    onClick={() => void openRedeem(isPool ? 100 : 50)}
+                  >
+                    Đổi điểm
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  style={styles.ghost}
+                  onClick={() => setSelected(null)}
+                >
+                  Đóng
+                </button>
+              </div>
             </div>
 
             {guestCart ? (
@@ -2228,11 +2899,190 @@ export default function DeskAdministrationPage() {
                 {orderMsg}
               </p>
             ) : null}
-            {selected.todayScans?.length ? (
+
+            {hasCatalog ? (
+              (() => {
+                type HistRow = {
+                  key: string;
+                  at: string;
+                  title: string;
+                  status: string;
+                  statusColor: string;
+                  detail: string | null;
+                  promo: string | null;
+                  total: number | null;
+                  note: string | null;
+                };
+                const rows: HistRow[] = [];
+                for (const cart of selected.carts || []) {
+                  const promo =
+                    cart.promoLabel ||
+                    parseCartPromo(cart.items).label;
+                  const promoClean =
+                    promo && promo !== "—" ? promo : null;
+                  const menu = (cart.items || []).filter(
+                    (i) =>
+                      !String(i.id || "").startsWith("voucher-") &&
+                      !String(i.id || "").startsWith("points-redeem-")
+                  );
+                  const detail =
+                    cart.billText && cart.billText !== "—"
+                      ? cart.billText
+                      : menu.length
+                        ? menu
+                            .map((i) => `${i.qty}× ${i.nameVi}`)
+                            .join(", ")
+                        : null;
+                  const st = cart.status || "—";
+                  const statusColor =
+                    st === "USED"
+                      ? "#047857"
+                      : st === "REJECTED" ||
+                          st === "CANCELLED" ||
+                          st === "NO_SHOW"
+                        ? "#b91c1c"
+                        : st === "PENDING_APPROVAL" || st === "OPEN"
+                          ? "#b45309"
+                          : "#64748b";
+                  rows.push({
+                    key: `cart-${cart.token}`,
+                    at: cart.createdAt || selected.updatedAt,
+                    title: "Yêu cầu QR",
+                    status: cartOrderLabel(st, zone, true),
+                    statusColor,
+                    detail,
+                    promo: promoClean,
+                    total: cart.totalVnd ?? null,
+                    note:
+                      st === "REJECTED" && cart.adminNote
+                        ? cart.adminNote
+                        : null,
+                  });
+                }
+                for (const o of selected.todayOrders || []) {
+                  rows.push({
+                    key: `ord-${o.id}`,
+                    at: o.at,
+                    title: "Đơn order",
+                    status: o.status,
+                    statusColor: "#047857",
+                    detail: billFromItems(o.items, o.totalVnd),
+                    promo: null,
+                    total: o.totalVnd,
+                    note: null,
+                  });
+                }
+                rows.sort(
+                  (a, b) =>
+                    new Date(b.at).getTime() - new Date(a.at).getTime()
+                );
+                if (!rows.length) {
+                  return (
+                    <p style={styles.mute}>
+                      Chưa có yêu cầu / đơn nào hôm nay.
+                    </p>
+                  );
+                }
+                return (
+                  <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                    {rows.map((r) => (
+                      <li
+                        key={r.key}
+                        style={{
+                          padding: "12px 0",
+                          borderBottom: "1px solid #f1f5f9",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            alignItems: "flex-start",
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <strong>{r.title}</strong>
+                            <span
+                              style={{
+                                marginLeft: 8,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: r.statusColor,
+                              }}
+                            >
+                              {r.status}
+                            </span>
+                            {r.detail ? (
+                              <p
+                                style={{
+                                  margin: "4px 0 0",
+                                  fontSize: 13,
+                                  color: "#334155",
+                                  lineHeight: 1.4,
+                                }}
+                              >
+                                {r.detail}
+                                {r.total != null && !r.detail.includes("đ")
+                                  ? ` · ${formatVnd(r.total)}`
+                                  : ""}
+                              </p>
+                            ) : r.total != null ? (
+                              <p
+                                style={{
+                                  margin: "4px 0 0",
+                                  fontSize: 13,
+                                  color: "#64748b",
+                                }}
+                              >
+                                {formatVnd(r.total)}
+                              </p>
+                            ) : null}
+                            {r.promo ? (
+                              <p
+                                style={{
+                                  margin: "4px 0 0",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: "#b45309",
+                                }}
+                              >
+                                {r.promo}
+                              </p>
+                            ) : null}
+                            {r.note ? (
+                              <p
+                                style={{
+                                  margin: "4px 0 0",
+                                  fontSize: 12,
+                                  color: "#b91c1c",
+                                }}
+                              >
+                                Lý do: {r.note}
+                              </p>
+                            ) : null}
+                          </div>
+                          <span
+                            style={{
+                              fontFamily: "ui-monospace, monospace",
+                              fontWeight: 700,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {formatTime(r.at)}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()
+            ) : selected.todayScans?.length ? (
               <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
                 {selected.todayScans.map((s) => {
                   const verified = !!s.ticketVerified || !!s.orderSummary;
-                  const { sum, qty } = scanCartTotal(s.id);
+                  const totals = scanCartTotal(s.id);
+                  const { sum, qty } = totals;
                   const busy = verifyingScanId === s.id;
                   return (
                     <li
@@ -2413,29 +3263,104 @@ export default function DeskAdministrationPage() {
                             style={{
                               marginTop: 10,
                               display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              gap: 10,
+                              flexDirection: "column",
+                              gap: 8,
                             }}
                           >
-                            <div style={{ fontWeight: 800, fontSize: 13 }}>
-                              {qty
-                                ? `${qty} vé · ${formatVnd(sum)}`
-                                : "Chưa chọn vé"}
-                            </div>
-                            <button
-                              type="button"
+                            <label
                               style={{
-                                ...styles.btn,
-                                flex: "0 0 auto",
-                                background: "#0c4a6e",
-                                opacity: qty && !busy ? 1 : 0.45,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                fontSize: 13,
                               }}
-                              disabled={!qty || busy}
-                              onClick={() => void verifyPoolScan(s)}
                             >
-                              {busy ? "Đang lưu…" : "Xác thực"}
-                            </button>
+                              <span style={{ color: "#64748b", minWidth: 90 }}>
+                                Giảm tay (đ)
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={1000}
+                                value={scanManualDiscount[s.id] || ""}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const n = Math.max(
+                                    0,
+                                    Math.round(Number(e.target.value) || 0)
+                                  );
+                                  setScanManualDiscount((prev) => ({
+                                    ...prev,
+                                    [s.id]: n,
+                                  }));
+                                }}
+                                style={{
+                                  flex: 1,
+                                  height: 36,
+                                  borderRadius: 10,
+                                  border: "1px solid #cbd5e1",
+                                  padding: "0 10px",
+                                  fontSize: 14,
+                                }}
+                              />
+                            </label>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 10,
+                              }}
+                            >
+                              <div style={{ fontWeight: 800, fontSize: 13 }}>
+                                {qty ? (
+                                  <>
+                                    {qty} món · {formatVnd(sum)}
+                                    {totals.accessoryDiscount > 0 ? (
+                                      <span
+                                        style={{
+                                          display: "block",
+                                          fontWeight: 600,
+                                          fontSize: 12,
+                                          color: "#047857",
+                                        }}
+                                      >
+                                        Phụ kiện −10% (−
+                                        {formatVnd(totals.accessoryDiscount)})
+                                      </span>
+                                    ) : null}
+                                    {totals.manualDiscount > 0 ? (
+                                      <span
+                                        style={{
+                                          display: "block",
+                                          fontWeight: 600,
+                                          fontSize: 12,
+                                          color: "#b45309",
+                                        }}
+                                      >
+                                        Giảm tay (−
+                                        {formatVnd(totals.manualDiscount)})
+                                      </span>
+                                    ) : null}
+                                  </>
+                                ) : (
+                                  "Chưa chọn vé"
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                style={{
+                                  ...styles.btn,
+                                  flex: "0 0 auto",
+                                  background: "#0c4a6e",
+                                  opacity: qty && !busy ? 1 : 0.45,
+                                }}
+                                disabled={!qty || busy}
+                                onClick={() => void verifyPoolScan(s)}
+                              >
+                                {busy ? "Đang lưu…" : "Xác thực"}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ) : null}

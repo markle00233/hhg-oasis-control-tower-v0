@@ -9,6 +9,8 @@ import {
   VoucherApplyButton,
   VoucherPickerModal,
 } from "@/components/VoucherPicker";
+import { PointsBalanceBar } from "@/components/PointsBalanceBar";
+import { PointsRedeemControl } from "@/components/PointsRedeemControl";
 import {
   applyOffersDiscount,
   type HomeOffer,
@@ -20,6 +22,10 @@ import {
   formatVnd,
   type MiaOiMenuItem,
 } from "@/lib/miaoi-menu";
+import {
+  computeGuestPointsRedeem,
+  REDEEM_DRINK_MAX_VND,
+} from "@/lib/points-redeem";
 
 type CartLine = { itemId: string; qty: number; useAltPrice?: boolean };
 
@@ -37,6 +43,8 @@ export default function MiaOiOrderPage() {
   const [wallet, setWallet] = useState<HomeOffer[]>([]);
   const [appliedOffers, setAppliedOffers] = useState<HomeOffer[]>([]);
   const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
+  const [pointsBalance, setPointsBalance] = useState(0);
+  const [redeemTier, setRedeemTier] = useState<50 | 100 | null>(null);
   const [success, setSuccess] = useState<{
     totalVnd: number;
     lines: string[];
@@ -54,6 +62,9 @@ export default function MiaOiOrderPage() {
       if (!data.authenticated) {
         router.replace("/login");
         return;
+      }
+      if (!cancelled) {
+        setPointsBalance(Number(data.customer?.pointsBalance) || 0);
       }
       const offerRes = await fetch("/api/me/offers", { cache: "no-store" });
       if (offerRes.ok) {
@@ -95,7 +106,32 @@ export default function MiaOiOrderPage() {
     return s;
   }, [lines]);
   const priced = applyOffersDiscount(subtotal, appliedOffers);
-  const total = priced.totalVnd;
+  const cartItemsForRedeem = useMemo(
+    () =>
+      lines.map((l) => {
+        const item = MIAOI_MENU.find((i) => i.id === l.itemId);
+        const unit =
+          l.useAltPrice && item?.priceAltVnd
+            ? item.priceAltVnd
+            : item?.priceVnd || 0;
+        return { id: l.itemId, priceVnd: unit, qty: l.qty };
+      }),
+    [lines]
+  );
+  const redeemPreview = redeemTier
+    ? computeGuestPointsRedeem({
+        zoneCode: "MIA_OI",
+        tier: redeemTier,
+        items: cartItemsForRedeem,
+      })
+    : null;
+  const pointsDiscount =
+    redeemPreview?.ok ? redeemPreview.discountVnd : 0;
+  const total = Math.max(0, priced.totalVnd - pointsDiscount);
+  const canRedeem50 =
+    pointsBalance >= 50 &&
+    cartItemsForRedeem.some((i) => i.priceVnd <= REDEEM_DRINK_MAX_VND);
+  const canRedeem100 = false;
 
   function setQty(item: MiaOiMenuItem, qty: number, useAlt = false) {
     const key = lineKey(item.id, useAlt);
@@ -130,6 +166,14 @@ export default function MiaOiOrderPage() {
           priceVnd: unit,
         };
       });
+      if (redeemTier) {
+        const check = computeGuestPointsRedeem({
+          zoneCode: "MIA_OI",
+          tier: redeemTier,
+          items: cartItems,
+        });
+        if (!check.ok) throw new Error(check.error || "Không đổi điểm được");
+      }
       const cartRes = await fetch("/api/me/cart", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -140,6 +184,7 @@ export default function MiaOiOrderPage() {
           items: cartItems,
           offerIds: appliedOffers.map((o) => o.id),
           discountVnd: priced.discountVnd,
+          pointsRedeemTier: redeemTier,
         }),
       });
       const cartData = await cartRes.json();
@@ -147,7 +192,11 @@ export default function MiaOiOrderPage() {
         throw new Error(cartData.error || "Không tạo được yêu cầu QR");
       }
       const paid = cartData.cart?.totalVnd ?? total;
+      if (typeof cartData.pointsBalance === "number") {
+        setPointsBalance(cartData.pointsBalance);
+      }
       setCart({});
+      setRedeemTier(null);
       setSuccess({
         totalVnd: paid,
         lines: [
@@ -157,6 +206,9 @@ export default function MiaOiOrderPage() {
               ? `Voucher ${l.offer.title} −${formatVnd(l.discountVnd)}`
               : `Voucher ${l.offer.title}`
           ),
+          ...(redeemTier
+            ? [`Đổi ${redeemTier} điểm (−${formatVnd(pointsDiscount)})`]
+            : []),
           `Tổng ${formatVnd(paid)}`,
         ],
         cartToken: cartData.cart?.token || "",
@@ -217,6 +269,8 @@ export default function MiaOiOrderPage() {
           </Link>
         </div>
 
+        <PointsBalanceBar points={pointsBalance} />
+
         <div className="flex gap-2 overflow-x-auto pb-1">
           {MIAOI_CATEGORIES.map((c) => (
             <button
@@ -272,15 +326,24 @@ export default function MiaOiOrderPage() {
                   </div>
                 </div>
                 {selected ? (
-                  <div className="mt-3 flex items-center gap-2 border-t border-oasis-line/50 pt-3">
-                    <VoucherApplyButton
-                      appliedOffers={appliedOffers}
-                      onOpen={() => setVoucherPickerOpen(true)}
-                      onClear={() => setAppliedOffers([])}
+                  <div className="mt-3 space-y-2 border-t border-oasis-line/50 pt-3">
+                    <div className="flex items-center gap-2">
+                      <VoucherApplyButton
+                        appliedOffers={appliedOffers}
+                        onOpen={() => setVoucherPickerOpen(true)}
+                        onClear={() => setAppliedOffers([])}
+                      />
+                      <span className="shrink-0 text-xs font-semibold text-oasis-mute">
+                        Số lượng
+                      </span>
+                    </div>
+                    <PointsRedeemControl
+                      pointsBalance={pointsBalance}
+                      redeemTier={redeemTier}
+                      canRedeem50={canRedeem50}
+                      canRedeem100={canRedeem100}
+                      onChange={setRedeemTier}
                     />
-                    <span className="shrink-0 text-xs font-semibold text-oasis-mute">
-                      Số lượng
-                    </span>
                   </div>
                 ) : null}
               </div>
@@ -297,9 +360,10 @@ export default function MiaOiOrderPage() {
             <p className="text-xs text-oasis-mute">Giỏ hàng</p>
             <p className="font-bold text-oasis-ink">
               {lines.reduce((n, l) => n + l.qty, 0)} món · {formatVnd(total)}
-              {priced.discountVnd > 0
-                ? ` (−${formatVnd(priced.discountVnd)})`
+              {priced.discountVnd + pointsDiscount > 0
+                ? ` (−${formatVnd(priced.discountVnd + pointsDiscount)})`
                 : ""}
+              {redeemTier ? ` · đổi ${redeemTier}đ` : ""}
             </p>
           </div>
           <button

@@ -121,23 +121,7 @@ export async function activateLongNuongTable(opts: {
     return s;
   });
 
-  if (opts.cartStatus === "OPEN" || opts.cartStatus === "PENDING_APPROVAL") {
-    const raw = Array.isArray(opts.items) ? opts.items : [];
-    const subtotal = raw
-      .filter((i) => i && !String((i as { id?: string }).id || "").startsWith("voucher-"))
-      .reduce((s, i) => {
-        const row = i as { qty?: number; priceVnd?: number };
-        return s + Math.max(0, Number(row.priceVnd) || 0) * Math.max(1, Number(row.qty) || 1);
-      }, 0);
-    const { awardPurchasePoints } = await import("@/lib/points");
-    await awardPurchasePoints({
-      customerId: opts.customerId,
-      refType: "SERVICE_CART",
-      refId: opts.cartId,
-      subtotalVnd: subtotal,
-      note: `Lòng Nướng · ${subtotal}đ trước giảm`,
-    }).catch((err) => console.error("[long-nuong points]", err));
-  }
+  // Điểm chỉ cộng ở Mía Ơi + Hồ Olympic — Lòng Nướng không cộng.
 
   return {
     activated: true as const,

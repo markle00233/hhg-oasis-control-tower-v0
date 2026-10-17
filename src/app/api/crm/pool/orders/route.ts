@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
-import { getPoolItem } from "@/lib/olympic-pool-menu";
+import {
+  applyOlympicMembership,
+  isOlympicMembershipActive,
+  pickPrimaryOlympicPackage,
+} from "@/lib/olympic-membership";
+import { computePoolPricing } from "@/lib/pool-pricing";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +34,10 @@ export async function POST(req: NextRequest) {
     const scanEventId = String(body.scanEventId || "").trim();
     const lines = Array.isArray(body.items) ? (body.items as CartLine[]) : [];
     const note = String(body.note || "").trim().slice(0, 300);
+    const manualDiscountVnd = Math.max(
+      0,
+      Math.round(Number(body.manualDiscountVnd) || 0)
+    );
 
     if (!customerId || !scanEventId) {
       return NextResponse.json(
@@ -43,34 +52,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const orderItems: {
-      itemId: string;
-      nameVi: string;
-      nameEn: string | null;
-      unitPriceVnd: number;
-      qty: number;
-    }[] = [];
-    let totalVnd = 0;
-    for (const line of lines) {
-      const qty = Math.min(Math.max(Number(line.qty) || 0, 0), 99);
-      if (qty < 1) continue;
-      const item = getPoolItem(String(line.itemId || ""));
-      if (!item) continue;
-      totalVnd += item.priceVnd * qty;
-      orderItems.push({
-        itemId: item.id,
-        nameVi: item.nameVi,
-        nameEn: item.nameEn || null,
-        unitPriceVnd: item.priceVnd,
-        qty,
-      });
-    }
-    if (!orderItems.length) {
+    const priced = computePoolPricing(lines, { manualDiscountVnd });
+    if (!priced.lines.length) {
       return NextResponse.json(
         { error: "Danh sách vé không hợp lệ." },
         { status: 400 }
       );
     }
+    const orderItems = priced.lines.map((l) => ({
+      itemId: l.itemId,
+      nameVi: l.nameVi,
+      nameEn: l.nameEn,
+      unitPriceVnd: l.unitPriceVnd,
+      qty: l.qty,
+    }));
+    const totalVnd = priced.totalVnd;
+    const subtotalVnd = priced.subtotalVnd;
 
     const service = await olympicService();
     if (!service) {
@@ -78,6 +75,46 @@ export async function POST(req: NextRequest) {
         { error: "Chưa cấu hình dịch vụ OLYMPIC_POOL." },
         { status: 500 }
       );
+    }
+
+    const pkgIdEarly = pickPrimaryOlympicPackage(
+      orderItems.map((i) => i.itemId)
+    );
+    if (pkgIdEarly) {
+      const existing = await prisma.appCustomer.findUnique({
+        where: { id: customerId },
+        select: {
+          segment: true,
+          vipExpiresAt: true,
+          vipPlanLabel: true,
+          status: true,
+        },
+      });
+      if (!existing || existing.status !== "ACTIVE") {
+        return NextResponse.json(
+          { error: "Khách không hợp lệ." },
+          { status: 404 }
+        );
+      }
+      if (
+        isOlympicMembershipActive({
+          segment: existing.segment,
+          vipExpiresAt: existing.vipExpiresAt,
+        })
+      ) {
+        const exp = existing.vipExpiresAt
+          ? existing.vipExpiresAt.toLocaleDateString("vi-VN")
+          : null;
+        return NextResponse.json(
+          {
+            error: exp
+              ? `Khách đang dùng ${existing.vipPlanLabel || "gói hội viên"} đến ${exp}. Hết hạn mới được chọn gói mới.`
+              : "Khách đang dùng gói hội viên. Hết hạn mới được chọn gói mới.",
+            membershipLocked: true,
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const result = await prisma.$transaction(async (tx) => {
@@ -121,13 +158,30 @@ export async function POST(req: NextRequest) {
       }
 
       const verifiedAt = new Date();
+      const discountParts: string[] = [];
+      if (priced.accessoryDiscountVnd > 0) {
+        discountParts.push(
+          `phụ kiện −10% (−${priced.accessoryDiscountVnd.toLocaleString("vi-VN")}đ)`
+        );
+      }
+      if (priced.manualDiscountVnd > 0) {
+        discountParts.push(
+          `giảm tay −${priced.manualDiscountVnd.toLocaleString("vi-VN")}đ`
+        );
+      }
+      const discountNote = discountParts.length
+        ? ` · ${discountParts.join(" · ")}`
+        : "";
+
       const order = await tx.appOrder.create({
         data: {
           customerId: customer.id,
           serviceId: service.id,
           status: "CONFIRMED",
           totalVnd,
-          note: note || `Xác thực lúc quét ${scan.createdAt.toISOString()}`,
+          note:
+            (note || `Xác thực lúc quét ${scan.createdAt.toISOString()}`) +
+            discountNote,
           items: { create: orderItems },
         },
         include: { items: true },
@@ -151,6 +205,9 @@ export async function POST(req: NextRequest) {
             entryAt: scan.createdAt.toISOString(),
             orderId: order.id,
             totalVnd,
+            subtotalVnd,
+            accessoryDiscountVnd: priced.accessoryDiscountVnd,
+            manualDiscountVnd: priced.manualDiscountVnd,
             placedBy: "desk",
             verifiedByUserId: gate.user.id,
             items: metaItems,
@@ -181,16 +238,45 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      return { customer, scan, order, metaItems, totalVnd };
+      return {
+        customer,
+        scan,
+        order,
+        metaItems,
+        totalVnd,
+        subtotalVnd,
+        accessoryDiscountVnd: priced.accessoryDiscountVnd,
+        manualDiscountVnd: priced.manualDiscountVnd,
+        packageItemIds: orderItems.map((i) => i.itemId),
+      };
     });
+
+    const pkgId = pickPrimaryOlympicPackage(result.packageItemIds);
+    let membership: {
+      vipPlanLabel: string;
+      vipExpiresAt: Date;
+      offerIds: string[];
+    } | null = null;
+    if (pkgId) {
+      const applied = await applyOlympicMembership(prisma, {
+        customerId: result.customer.id,
+        packageId: pkgId,
+      }).catch((err) => {
+        console.error("[pool/orders membership]", err);
+        return null;
+      });
+      if (applied && !applied.alreadyActive) {
+        membership = applied;
+      }
+    }
 
     const { awardPurchasePoints } = await import("@/lib/points");
     const pts = await awardPurchasePoints({
       customerId: result.customer.id,
       refType: "APP_ORDER",
       refId: result.order.id,
-      subtotalVnd: result.totalVnd,
-      note: `Hồ Olympic · ${result.totalVnd}đ trước giảm`,
+      subtotalVnd: result.subtotalVnd,
+      note: `Hồ Olympic · ${result.subtotalVnd}đ trước giảm`,
     }).catch((err) => {
       console.error("[pool/orders points]", err);
       return null;
@@ -202,6 +288,19 @@ export async function POST(req: NextRequest) {
       pointsBalance: pts?.balance ?? null,
       scanEventId: result.scan.id,
       entryAt: result.scan.createdAt,
+      pricing: {
+        subtotalVnd: result.subtotalVnd,
+        accessoryDiscountVnd: result.accessoryDiscountVnd,
+        manualDiscountVnd: result.manualDiscountVnd,
+        totalVnd: result.totalVnd,
+      },
+      membership: membership
+        ? {
+            planLabel: membership.vipPlanLabel,
+            expiresAt: membership.vipExpiresAt,
+            vouchersGranted: membership.offerIds,
+          }
+        : null,
       customer: {
         fullName: result.customer.fullName,
         phone: result.customer.phone,

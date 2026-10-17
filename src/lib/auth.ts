@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { User } from "@prisma/client";
+import { isZoneDeskAdmin } from "@/lib/desk-zones";
 import { prisma } from "@/lib/prisma";
 import { readSessionUserId } from "@/lib/session";
 
@@ -30,6 +31,15 @@ export function toSafeUser(user: User): SafeUser {
 
 export function isSystemAdmin(user: Pick<User, "systemRole">): boolean {
   return user.systemRole === "SYSTEM_ADMIN";
+}
+
+/** SYSTEM_ADMIN hoặc ADMINISTRATION{khu} trong đúng khu. */
+export function isDeskAdminForZone(
+  user: Pick<User, "systemRole" | "deskZone" | "username">,
+  zoneCode: string
+): boolean {
+  if (isSystemAdmin(user)) return true;
+  return isZoneDeskAdmin(user, zoneCode);
 }
 
 /** Zone-desk staff or SYSTEM_ADMIN. */

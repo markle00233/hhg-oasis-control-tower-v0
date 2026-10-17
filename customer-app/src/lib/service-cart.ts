@@ -36,6 +36,9 @@ export async function createServiceCart(opts: {
   /** @deprecated use offerIds */
   offerId?: string;
   offerIds?: string[];
+  /** 50 | 100 — đổi điểm ngay khi tạo QR (trừ điểm sau khi tạo cart) */
+  pointsRedeemTier?: number | null;
+  pointsRedeemDiscountVnd?: number;
 }) {
   const items = opts.items
     .map((i) => ({
@@ -63,7 +66,7 @@ export async function createServiceCart(opts: {
   );
 
   const subtotal = items.reduce((s, i) => s + i.priceVnd * i.qty, 0);
-  const discountVnd = Math.min(
+  let discountVnd = Math.min(
     subtotal,
     Math.max(0, Math.round(Number(opts.discountVnd) || 0))
   );
@@ -82,6 +85,28 @@ export async function createServiceCart(opts: {
           : offerIds.join(", "),
     });
   }
+
+  const redeemTier = Math.round(Number(opts.pointsRedeemTier) || 0);
+  const redeemDiscount = Math.max(
+    0,
+    Math.round(Number(opts.pointsRedeemDiscountVnd) || 0)
+  );
+  if (redeemTier === 50 || redeemTier === 100) {
+    const afterVoucher = Math.max(0, subtotal - discountVnd);
+    const ptsDisc = Math.min(afterVoucher, redeemDiscount || afterVoucher);
+    discountVnd = Math.min(subtotal, discountVnd + ptsDisc);
+    items.push({
+      id: `points-redeem-${redeemTier}`,
+      nameVi: `Đổi ${redeemTier} điểm`,
+      qty: 1,
+      priceVnd: 0,
+      note:
+        ptsDisc > 0
+          ? `−${ptsDisc}đ · chờ quầy xác nhận`
+          : `−${redeemTier} điểm · chờ quầy xác nhận`,
+    });
+  }
+
   const totalVnd = Math.max(0, subtotal - discountVnd);
   const ttlHours = opts.ttlHours ?? 48;
   const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
@@ -106,6 +131,7 @@ export async function createServiceCart(opts: {
         payload: serviceCartQrPayload(cart.token),
         discountVnd,
         offerIds,
+        pointsRedeemTier: redeemTier === 50 || redeemTier === 100 ? redeemTier : null,
       };
     } catch {
       // unique collision

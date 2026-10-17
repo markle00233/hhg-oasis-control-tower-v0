@@ -1,13 +1,17 @@
-HHG Oasis — Zone QR (2026-10-08)
-App: https://hhg-oasis-customer-app.vercel.app
-Gallery: https://hhg-oasis-customer-app.vercel.app/dev/qr
+HHG Oasis — Zone QR (2026-10-17)
+App: https://huyhoanggiaoasis.vercel.app
+Gallery: https://huyhoanggiaoasis.vercel.app/dev/qr
 
-ENTRANCE	https://hhg-oasis-customer-app.vercel.app/s/ENTRANCE
-OLYMPIC_POOL	https://hhg-oasis-customer-app.vercel.app/s/OLYMPIC_POOL
-RESORT_POOL	https://hhg-oasis-customer-app.vercel.app/s/RESORT_POOL
-VIP_RESORT	https://hhg-oasis-customer-app.vercel.app/s/VIP_RESORT
-SAUNA	https://hhg-oasis-customer-app.vercel.app/s/SAUNA
-JACUZZI	https://hhg-oasis-customer-app.vercel.app/s/JACUZZI
-MIA_OI	https://hhg-oasis-customer-app.vercel.app/s/MIA_OI
-PICKLEBALL	https://hhg-oasis-customer-app.vercel.app/s/PICKLEBALL
-EXIT	https://hhg-oasis-customer-app.vercel.app/s/EXIT
+ENTRANCE	https://huyhoanggiaoasis.vercel.app/s/ENTRANCE
+OLYMPIC_POOL	https://huyhoanggiaoasis.vercel.app/s/OLYMPIC_POOL
+SPA	https://huyhoanggiaoasis.vercel.app/s/SPA
+SAUNA	https://huyhoanggiaoasis.vercel.app/s/SAUNA
+MIA_OI	https://huyhoanggiaoasis.vercel.app/s/MIA_OI
+PICKLEBALL	https://huyhoanggiaoasis.vercel.app/s/PICKLEBALL
+LONG_NUONG	https://huyhoanggiaoasis.vercel.app/s/LONG_NUONG
+RESORT_POOL	https://huyhoanggiaoasis.vercel.app/s/RESORT_POOL
+JACUZZI	https://huyhoanggiaoasis.vercel.app/s/JACUZZI
+EXIT	https://huyhoanggiaoasis.vercel.app/s/EXIT
+
+# Deprecated
+# VIP_RESORT	https://huyhoanggiaoasis.vercel.app/s/VIP_RESORT

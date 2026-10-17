@@ -12,6 +12,7 @@ import {
 } from "@/lib/device";
 import { matchBookingToArrival } from "@/lib/booking-match";
 import { awardCheckInPoints } from "@/lib/points";
+import { getSessionCustomer } from "@/lib/session";
 
 export const preferredRegion = "sin1";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,11 @@ export async function POST(req: NextRequest) {
 
     if (!customerId) {
       customerId = await readPendingCustomerId();
+    }
+    // Login session (đã mở app trước) cũng đủ để confirm check-in on-site
+    if (!customerId) {
+      const session = await getSessionCustomer().catch(() => null);
+      customerId = session?.id || null;
     }
     if (!customerId) {
       return NextResponse.json(

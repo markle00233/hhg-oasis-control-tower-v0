@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isSystemAdmin, requireDeskZone, toSafeUser } from "@/lib/auth";
+import {
+  isDeskAdminForZone,
+  isSystemAdmin,
+  requireDeskZone,
+  toSafeUser,
+} from "@/lib/auth";
+import { parseCartPromo } from "@/lib/cart-promo";
 import { CART_STATUS, isPastVnCutOff } from "@/lib/cart-status";
 import { DESK_ZONES, deskZoneAliases, getDeskZone } from "@/lib/desk-zones";
 import { prisma } from "@/lib/prisma";
@@ -37,6 +43,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Khu vực không hợp lệ." }, { status: 400 });
   }
 
+  // Quầy học bơi — không dùng bảng duyệt QR; list học viên qua /api/crm/desk/swim-students
+  if (zone === "SWIM_LESSON") {
+    return NextResponse.json({
+      ok: true,
+      hours,
+      zones,
+      zone,
+      zoneName: meta.name,
+      user: toSafeUser(gate.user),
+      isAdmin: isDeskAdminForZone(gate.user, zone),
+      isSystemAdmin: isSystemAdmin(gate.user),
+      arrivals: [],
+      swimLesson: true,
+    });
+  }
+
   try {
     // Auto: quá 21:30 VN (hồ/resort) hoặc hết expiresAt → NO_SHOW
     const poolLike =
@@ -68,24 +90,100 @@ export async function GET(req: NextRequest) {
         .catch(() => undefined);
     }
 
+    /**
+     * Lòng Nướng: booking đã tạo nhưng thiếu cart PENDING → backfill để NV duyệt được.
+     */
+    if (zone === "LONG_NUONG") {
+      try {
+        const { createServiceCart } = await import("@/lib/service-cart");
+        const orphanBookings = await prisma.appBooking.findMany({
+          where: {
+            createdAt: { gte: since },
+            status: {
+              in: ["PENDING", "CONFIRMED", "ARRIVED", "CHECKED_IN"],
+            },
+            customerId: { not: null },
+            service: { serviceCode: "LONG_NUONG" },
+          },
+          take: 40,
+          orderBy: { createdAt: "desc" },
+          include: {
+            resource: { select: { id: true, code: true, name: true } },
+            customer: { select: { id: true } },
+          },
+        });
+        for (const b of orphanBookings) {
+          if (!b.customerId || !b.resource) continue;
+          const tag = `bookingId:${b.id}`;
+          const carts = await prisma.appServiceCart.findMany({
+            where: {
+              customerId: b.customerId,
+              zoneCode: "LONG_NUONG",
+              createdAt: { gte: since },
+            },
+            select: { items: true },
+            take: 20,
+          });
+          const hasCart = carts.some((c) => {
+            const items = Array.isArray(c.items) ? c.items : [];
+            return items.some(
+              (it) =>
+                it &&
+                typeof it === "object" &&
+                String((it as { note?: string }).note || "").includes(tag)
+            );
+          });
+          if (hasCart) continue;
+          const arriveLabel = b.startAt.toLocaleString("vi-VN", {
+            day: "2-digit",
+            month: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          });
+          await createServiceCart({
+            customerId: b.customerId,
+            zoneCode: "LONG_NUONG",
+            zoneName: "Lòng Nướng Chí Phèo",
+            items: [
+              {
+                id: `table-${b.resource.code}`,
+                nameVi: `${b.resource.name} · ${arriveLabel}`,
+                qty: 1,
+                priceVnd: 0,
+                note: `resourceId:${b.resource.id}|bookingId:${b.id}|code:${b.bookingCode}`,
+              },
+            ],
+            ttlHours: 48,
+          });
+        }
+      } catch (err) {
+        console.error("[crm/desk long-nuong backfill]", err);
+      }
+    }
+
+    /**
+     * Khách có cart PENDING/OPEN phải hiện để Duyệt — kể cả thiếu SĐT.
+     * (Trước đây `phoneNormalized: { not: null }` làm mất đặt bàn Lòng Nướng / QR.)
+     */
     const rows = await prisma.appCustomer.findMany({
       where: {
-        phoneNormalized: { not: null },
         OR: [
-          {
-            events: {
-              some: {
-                createdAt: { gte: since },
-                eventType: "SERVICE_USE",
-                service: { serviceCode: { in: aliases } },
-              },
-            },
-          },
           {
             serviceCarts: {
               some: {
                 createdAt: { gte: since },
                 zoneCode: { in: aliases },
+              },
+            },
+          },
+          {
+            phoneNormalized: { not: null },
+            events: {
+              some: {
+                createdAt: { gte: since },
+                eventType: "SERVICE_USE",
+                service: { serviceCode: { in: aliases } },
               },
             },
           },
@@ -96,12 +194,16 @@ export async function GET(req: NextRequest) {
       select: {
         id: true,
         customerCode: true,
+        username: true,
         fullName: true,
         phone: true,
         phoneNormalized: true,
         phoneLast4: true,
         shortId: true,
         segment: true,
+        pointsBalance: true,
+        vipPlanLabel: true,
+        vipExpiresAt: true,
         intendedServices: true,
         adminConfirmedAt: true,
         adminNote: true,
@@ -203,6 +305,10 @@ export async function GET(req: NextRequest) {
     today.setHours(0, 0, 0, 0);
 
     const memberPhones = new Set<string>();
+    const membershipByPhone = new Map<
+      string,
+      { planLabel: string | null; expiresAt: Date | null }
+    >();
     if (phones.length) {
       try {
         const members = await prisma.crmCustomer.findMany({
@@ -215,9 +321,32 @@ export async function GET(req: NextRequest) {
               },
             },
           },
-          select: { phoneNormalized: true },
+          select: {
+            phoneNormalized: true,
+            memberships: {
+              where: {
+                status: "ACTIVE",
+                expiryDate: { gte: today },
+              },
+              orderBy: { expiryDate: "desc" },
+              take: 1,
+              select: {
+                expiryDate: true,
+                plan: { select: { name: true, planCode: true } },
+              },
+            },
+          },
         });
-        for (const m of members) memberPhones.add(m.phoneNormalized);
+        for (const m of members) {
+          memberPhones.add(m.phoneNormalized);
+          const mem = m.memberships[0];
+          if (mem) {
+            membershipByPhone.set(m.phoneNormalized, {
+              planLabel: mem.plan?.name || mem.plan?.planCode || "Hội viên",
+              expiresAt: mem.expiryDate,
+            });
+          }
+        }
       } catch {
         /* CRM tables may be empty */
       }
@@ -228,9 +357,23 @@ export async function GET(req: NextRequest) {
         const crmMember = !!(
           c.phoneNormalized && memberPhones.has(c.phoneNormalized)
         );
-        const segment =
-          c.segment === "MEMBER" || crmMember ? "MEMBER" : "WALK_IN";
-
+        const vipActive =
+          String(c.segment || "").toUpperCase() === "VIP" &&
+          (!c.vipExpiresAt || c.vipExpiresAt.getTime() > Date.now());
+        const segment = vipActive
+          ? "VIP"
+          : c.segment === "MEMBER" || crmMember
+            ? "MEMBER"
+            : "WALK_IN";
+        const crmMem =
+          (c.phoneNormalized && membershipByPhone.get(c.phoneNormalized)) ||
+          null;
+        const packageLabel =
+          (vipActive && c.vipPlanLabel) ||
+          crmMem?.planLabel ||
+          (segment === "MEMBER" ? "Hội viên" : null);
+        const packageExpiresAt =
+          (vipActive && c.vipExpiresAt) || crmMem?.expiresAt || null;
         const scans = c.events.map((e) => {
           const meta =
             e.metadata && typeof e.metadata === "object"
@@ -298,6 +441,12 @@ export async function GET(req: NextRequest) {
 
         const carts = (c.serviceCarts || []).map((row) => {
           const items = parseCartItems(row.items);
+          const menuItems = items.filter(
+            (i) =>
+              !i.id.startsWith("voucher-") &&
+              !i.id.startsWith("points-redeem-")
+          );
+          const promo = parseCartPromo(items);
           return {
             token: row.token,
             zoneCode: row.zoneCode,
@@ -308,9 +457,12 @@ export async function GET(req: NextRequest) {
             adminNote: row.adminNote,
             createdAt: row.createdAt,
             expiresAt: row.expiresAt,
-            billText: items.length
-              ? items.map((i) => `${i.qty}× ${i.nameVi}`).join(", ")
+            billText: menuItems.length
+              ? menuItems.map((i) => `${i.qty}× ${i.nameVi}`).join(", ")
               : "—",
+            promoLabel: promo.label !== "—" ? promo.label : null,
+            hasVoucher: promo.hasVoucher,
+            hasPointsRedeem: promo.hasPointsRedeem,
           };
         });
         const pendingCart = carts.find(
@@ -331,14 +483,37 @@ export async function GET(req: NextRequest) {
         const todayPackageVnd = orders.reduce((s, o) => s + o.totalVnd, 0);
         const cartCreatedAt = latestCart?.createdAt || null;
 
+        const phone =
+          c.phone ||
+          c.phoneNormalized ||
+          null;
+        const shortId =
+          c.phoneLast4 ||
+          c.shortId ||
+          (phone ? String(phone).replace(/\D/g, "").slice(-4) : null) ||
+          (c.customerCode ? String(c.customerCode).slice(-6) : null);
+        const fullName =
+          (c.fullName && c.fullName.trim()) ||
+          c.username ||
+          c.customerCode ||
+          null;
+
         return {
           id: c.id,
           customerCode: c.customerCode,
-          fullName: c.fullName,
-          phone: c.phone,
-          shortId: c.phoneLast4 || c.shortId,
+          fullName,
+          phone,
+          shortId,
           segment,
-          segmentLabel: segment === "MEMBER" ? "Member" : "Khách lẻ",
+          segmentLabel:
+            segment === "VIP"
+              ? "VIP"
+              : segment === "MEMBER"
+                ? "Member"
+                : "Khách lẻ",
+          pointsBalance: c.pointsBalance ?? 0,
+          packageLabel,
+          packageExpiresAt,
           intendedServices: c.intendedServices
             ? safeParseServices(c.intendedServices)
             : [],
@@ -375,7 +550,8 @@ export async function GET(req: NextRequest) {
       zone,
       zoneName: meta.name,
       user: toSafeUser(gate.user),
-      isAdmin: isSystemAdmin(gate.user),
+      isAdmin: isDeskAdminForZone(gate.user, zone),
+      isSystemAdmin: isSystemAdmin(gate.user),
       arrivals,
     });
   } catch (e) {

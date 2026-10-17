@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
 import { isValidPhone } from "@/lib/phone";
 
@@ -26,7 +25,6 @@ type Step =
   | "returning"
   | "identify"
   | "recovery"
-  | "remember"
   | "success"
   | "error";
 
@@ -39,11 +37,9 @@ function formatTime(iso: string) {
 }
 
 export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
-  const router = useRouter();
   const [step, setStep] = useState<Step>("loading");
   const [service, setService] = useState<ServiceInfo | null>(null);
   const [customer, setCustomer] = useState<CustomerInfo | null>(null);
-  const [fromIdentify, setFromIdentify] = useState(false);
   const [phone, setPhone] = useState("");
   const [fullName, setFullName] = useState("");
   const [last4, setLast4] = useState("");
@@ -55,6 +51,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
   const [error, setError] = useState("");
   const [eventAt, setEventAt] = useState<string | null>(null);
   const [duplicate, setDuplicate] = useState(false);
+  const [maskedName, setMaskedName] = useState("");
 
   const token = serviceToken.trim();
 
@@ -69,11 +66,14 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không tải được dịch vụ");
       setService(data.service);
-      if (data.remembered && data.customer) {
+      // Device cookie HOẶC login session → hỏi xác nhận, không bắt password
+      if (data.customer && (data.remembered || data.fromSession)) {
         setCustomer(data.customer);
+        setMaskedName(data.maskedName || data.customer.name || "Khách");
         setStep("returning");
       } else {
         setCustomer(null);
+        setMaskedName("");
         setStep("identify");
       }
     } catch (e) {
@@ -101,6 +101,11 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
       if (data.customer) setCustomer(data.customer);
       setEventAt(data.event?.createdAt || new Date().toISOString());
       setDuplicate(!!data.duplicate);
+      // Đồng bộ device cookie = đúng người vừa check-in (xoá cookie người cũ)
+      await fetch("/api/checkin/remember", {
+        method: "POST",
+        credentials: "same-origin",
+      }).catch(() => undefined);
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Xác nhận thất bại");
@@ -115,6 +120,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
     if (ok) setStep("success");
   }
 
+  /** Identify → create check-in (SERVICE_USE) → save device → success. */
   async function finishIdentify(body: Record<string, unknown>) {
     const res = await fetch("/api/checkin/identify", {
       method: "POST",
@@ -132,7 +138,6 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
       throw new Error(data.error || "Không xác định được khách");
     }
     setCustomer(data.customer);
-    setFromIdentify(true);
 
     const conf = await fetch("/api/checkin/confirm", {
       method: "POST",
@@ -141,11 +146,18 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
       body: JSON.stringify({ token }),
     });
     const confData = await conf.json();
-    if (!conf.ok) throw new Error(confData.error || "Xác nhận thất bại");
+    if (!conf.ok) throw new Error(confData.error || "Check-in thất bại");
     if (confData.customer) setCustomer(confData.customer);
     setEventAt(confData.event?.createdAt || new Date().toISOString());
     setDuplicate(!!confData.duplicate);
-    setStep("remember");
+
+    // TARGET Case 2: luôn lưu device cookie sau identify (không hỏi thêm)
+    await fetch("/api/checkin/remember", {
+      method: "POST",
+      credentials: "same-origin",
+    }).catch(() => undefined);
+
+    setStep("success");
   }
 
   async function lookupPhoneThenContinue() {
@@ -209,30 +221,6 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
     setError("");
   }
 
-  async function onRemember(agree: boolean) {
-    setBusy(true);
-    setError("");
-    try {
-      if (agree) {
-        const res = await fetch("/api/checkin/remember", {
-          method: "POST",
-          credentials: "same-origin",
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Không lưu được thiết bị");
-      }
-      if (fromIdentify) {
-        router.replace("/account");
-        return;
-      }
-      setStep("success");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Lỗi ghi nhớ thiết bị");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function onNotMe() {
     setBusy(true);
     setError("");
@@ -242,10 +230,12 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
         credentials: "same-origin",
       });
       setCustomer(null);
+      setMaskedName("");
       setPhone("");
       setFullName("");
       setLast4("");
-      setStep("recovery");
+      setIdPhase("phone");
+      setStep("identify");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi");
     } finally {
@@ -293,7 +283,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             ✓
           </div>
           <h1 className="mt-6 font-display text-4xl font-semibold text-oasis-ink">
-            Đã ghi nhận ✓
+            Check-in thành công
           </h1>
           <p className="mt-3 text-lg font-semibold text-oasis-moss">{serviceName}</p>
           {customer?.name ? (
@@ -305,68 +295,20 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             {eventAt ? formatTime(eventAt) : ""}
           </p>
           {duplicate ? (
-            <p className="mt-3 text-sm text-oasis-coral">
-              Bạn vừa ghi nhận dịch vụ này gần đây.
+            <p className="mt-3 text-sm text-oasis-mute">
+              Bạn vừa check-in khu này gần đây — không tạo thêm lần mới.
             </p>
-          ) : null}
-          {service?.code === "MIA_OI" ? (
-            <Link
-              href="/order/miaoi"
-              className="mt-10 flex h-14 w-full max-w-sm items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand"
-            >
-              Gọi món Mía Ơi
-            </Link>
-          ) : null}
+          ) : (
+            <p className="mt-3 text-sm text-oasis-mute">
+              Nhân viên đã thấy bạn trên quầy. Order do NV xử lý.
+            </p>
+          )}
           <Link
-            href="/account"
-            className={`flex h-14 w-full max-w-sm items-center justify-center rounded-2xl text-base font-bold ${
-              service?.code === "MIA_OI"
-                ? "mt-3 border border-oasis-line bg-white/80 text-oasis-mute"
-                : "mt-10 bg-oasis-deep text-oasis-sand"
-            }`}
+            href="/home"
+            className="mt-10 flex h-14 w-full max-w-sm items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand"
           >
-            {service?.code === "MIA_OI" ? "Vào tài khoản" : "Xong · Tài khoản"}
+            Quay về home dashboard
           </Link>
-        </div>
-      </Shell>
-    );
-  }
-
-  if (step === "remember") {
-    return (
-      <Shell showNav={false}>
-        <div className="animate-rise flex min-h-[70dvh] flex-col justify-end pb-6">
-          <div className="rounded-[28px] bg-white/95 px-6 py-7 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-oasis-gold">
-              HHG Oasis
-            </p>
-            <h2 className="mt-3 font-display text-2xl font-semibold text-oasis-ink">
-              Lưu thông tin trên thiết bị này?
-            </h2>
-            <p className="mt-3 text-sm leading-relaxed text-oasis-mute">
-              Cho phép HHG Oasis ghi nhớ bạn trên thiết bị này để những lần quét
-              QR sau không cần nhập lại thông tin.
-            </p>
-            {error ? (
-              <p className="mt-3 text-sm text-oasis-coral">{error}</p>
-            ) : null}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void onRemember(true)}
-              className="mt-6 flex h-14 w-full items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand disabled:opacity-40"
-            >
-              {busy ? "Đang lưu…" : "Đồng ý và ghi nhớ"}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void onRemember(false)}
-              className="mt-3 flex h-12 w-full items-center justify-center text-sm font-semibold text-oasis-mute"
-            >
-              Không, lần sau hỏi lại
-            </button>
-          </div>
         </div>
       </Shell>
     );
@@ -380,14 +322,17 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-oasis-gold">
               HHG Oasis
             </p>
-            <h1 className="mt-2 font-display text-3xl font-semibold text-oasis-ink">
-              Xin chào, {customer.name}
-            </h1>
-            <p className="mt-4 text-sm text-oasis-mute">Bạn sắp sử dụng:</p>
+            <p className="mt-3 text-sm text-oasis-mute">Check-in tại</p>
             <p className="mt-1 font-display text-2xl font-semibold text-oasis-moss">
               {serviceName}
             </p>
-            <p className="mt-3 text-sm text-oasis-mute">Đã nhận diện bạn</p>
+            <h1 className="mt-6 font-display text-2xl font-semibold leading-snug text-oasis-ink">
+              Bạn có phải{" "}
+              <span className="text-oasis-moss">
+                {maskedName || customer.name}
+              </span>{" "}
+              không?
+            </h1>
           </div>
 
           {error ? (
@@ -402,7 +347,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             onClick={() => void onReturningConfirm()}
             className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold tracking-wide text-oasis-sand disabled:opacity-40"
           >
-            {busy ? "Đang ghi nhận…" : "Xác nhận sử dụng"}
+            {busy ? "Đang check-in…" : "Đúng · Check-in"}
           </button>
           <button
             type="button"
@@ -410,7 +355,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             onClick={() => void onNotMe()}
             className="flex h-12 items-center justify-center text-sm font-semibold text-oasis-mute underline-offset-2 hover:underline"
           >
-            Không phải bạn?
+            Không phải tôi
           </button>
         </div>
       </Shell>
@@ -566,7 +511,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
               onClick={() => void identify("phone")}
               className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold text-oasis-sand disabled:opacity-40"
             >
-              {busy ? "Đang xử lý…" : "Lưu & vào"}
+              {busy ? "Đang check-in…" : "Check-in"}
             </button>
           ) : null}
           {recoveryMode === "phone" && idPhase === "confirm" ? (
@@ -577,7 +522,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
                 onClick={() => void identify("confirm")}
                 className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold text-oasis-sand disabled:opacity-40"
               >
-                {busy ? "Đang vào…" : "Đúng, tiếp tục"}
+                {busy ? "Đang check-in…" : "Đúng · Check-in"}
               </button>
               <button
                 type="button"
@@ -585,7 +530,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
                 onClick={resetPhoneEntry}
                 className="flex h-12 w-full items-center justify-center text-sm font-semibold text-oasis-mute"
               >
-                Không phải — đăng nhập lại
+                Không phải tôi
               </button>
             </div>
           ) : null}
@@ -713,7 +658,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             onClick={() => void identify("phone")}
             className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold tracking-wide text-oasis-sand disabled:opacity-40"
           >
-            {busy ? "Đang lưu…" : "Lưu tên & vào"}
+            {busy ? "Đang check-in…" : "Check-in"}
           </button>
         ) : null}
         {idPhase === "confirm" ? (
@@ -724,7 +669,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
               onClick={() => void identify("confirm")}
               className="flex h-16 w-full items-center justify-center rounded-[28px] bg-oasis-deep text-lg font-bold tracking-wide text-oasis-sand disabled:opacity-40"
             >
-              {busy ? "Đang vào…" : "Đúng, tiếp tục"}
+              {busy ? "Đang check-in…" : "Đúng · Check-in"}
             </button>
             <button
               type="button"
@@ -732,7 +677,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
               onClick={resetPhoneEntry}
               className="flex h-12 w-full items-center justify-center text-sm font-semibold text-oasis-mute"
             >
-              Không phải — đăng nhập lại
+              Không phải tôi
             </button>
           </div>
         ) : null}

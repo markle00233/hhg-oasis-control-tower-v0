@@ -81,7 +81,10 @@ export const OLYMPIC_MONTHLY: ServicePackage[] = [
     nameVi: "Gói 1 tháng",
     priceVnd: k(700),
     note: "700K/tháng · Gội đầu Spa 30' · Mía Ơi −5%",
-    includes: ["01 gội đầu Spa 30'", "Mía Ơi giảm 5%"],
+    includes: [
+      "01 gội đầu Spa 30'",
+      "Giảm giá nước Mía Ơi 5% (trong hạn gói)",
+    ],
   },
   {
     id: "oly-3m",
@@ -92,7 +95,7 @@ export const OLYMPIC_MONTHLY: ServicePackage[] = [
     includes: [
       "01 massage Spa 45'",
       "01 voucher Lòng Nướng 100K (HĐ từ 500K)",
-      "Mía Ơi giảm 5%",
+      "Giảm giá nước Mía Ơi 5% (trong hạn gói)",
     ],
   },
   {
@@ -105,7 +108,7 @@ export const OLYMPIC_MONTHLY: ServicePackage[] = [
       "03 massage Spa 45'",
       "03 voucher Lòng Nướng 100K (HĐ từ 500K)",
       "+01 tháng bơi",
-      "Mía Ơi giảm 10%",
+      "Giảm giá nước Mía Ơi 10% (trong hạn gói)",
     ],
   },
   {
@@ -118,7 +121,7 @@ export const OLYMPIC_MONTHLY: ServicePackage[] = [
       "08 massage Spa 45'",
       "08 voucher Lòng Nướng 100K (HĐ từ 500K)",
       "+02 tháng bơi",
-      "Mía Ơi giảm 10%",
+      "Giảm giá nước Mía Ơi 10% (trong hạn gói)",
     ],
   },
 ];
@@ -197,171 +200,156 @@ export const OLYMPIC_ACCESSORIES: ServicePackage[] = [
   },
 ];
 
+/** Spa — PDF menu + poster đang chạy (Giờ Vàng · Date · Family). Chỉ bán dịch vụ, không đặt giường. */
 export const SPA_CATEGORIES: CatalogCategory[] = [
-  { id: "hydro", nameVi: "6 gói Hydro" },
-  { id: "gio-vang", nameVi: "Giờ vàng 199K" },
-  { id: "goi-duong", nameVi: "Gội dưỡng" },
-  { id: "duong-sinh", nameVi: "Dưỡng sinh" },
-  { id: "foot", nameVi: "Dưỡng chân" },
-  { id: "duong-da", nameVi: "Dưỡng da" },
-  { id: "uu-dai", nameVi: "Quà / ưu đãi" },
-  { id: "the", nameVi: "Thẻ trả trước" },
+  { id: "gio-vang", nameVi: "00 · Giờ Vàng Oasis" },
+  { id: "goi-nhom", nameVi: "00b · Gói nhóm" },
+  { id: "goi-duong", nameVi: "01 · Oasis Gội dưỡng" },
+  { id: "duong-sinh", nameVi: "02 · Oasis Dưỡng sinh" },
+  { id: "foot", nameVi: "03 · Oasis Dưỡng chân" },
+  { id: "dich-vu-them", nameVi: "04 · Dịch vụ thêm" },
 ];
 
-/** Full Spa menu from posters (Hydro + Giờ vàng + à la carte + deals + prepaid). */
 export const SPA_MENU: ServicePackage[] = [
-  // —— 6 gói Hydro (hình giá) ——
+  // 00 GIỜ VÀNG — T2–T6 · 13:00–16:00 · 199K
   {
-    id: "hydro-relax",
-    category: "hydro",
-    nameVi: "01 · Hydro Relax",
-    nameEn: "Thư giãn & tái tạo",
-    durationMin: 30,
+    id: "gv-goi-thu-gian",
+    category: "gio-vang",
+    nameVi: "Giờ Vàng · Oasis Gội thư giãn",
+    nameEn: "60′ · 199K",
+    durationMin: 60,
     priceVnd: k(199),
-    includes: ["Jacuzzi nóng lạnh", "Xông hơi ướt/khô", "Ngâm chân thảo dược"],
-    image:
-      "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=60",
-  },
-  {
-    id: "hydro-head-spa",
-    category: "hydro",
-    nameVi: "02 · Hydro & Head Spa",
-    nameEn: "Đầu – cổ – vai gáy",
-    durationMin: 90,
-    priceVnd: k(399),
+    note: "T2–T6 · 13:00–16:00",
     includes: [
-      "Jacuzzi 15'",
-      "Xông hơi 15'",
-      "Ngâm chân 10'",
-      "Gội & massage đầu 60'",
-    ],
-    image:
-      "https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=800&q=60",
-  },
-  {
-    id: "hydro-sport",
-    category: "hydro",
-    nameVi: "03 · Hydro Sport Recovery",
-    nameEn: "Phục hồi sau vận động",
-    durationMin: 105,
-    priceVnd: k(499),
-    includes: [
-      "Jacuzzi 20'",
-      "Xông hơi 15'",
-      "Ngâm chân 10'",
-      "Foot phục hồi 45'",
-      "Massage cổ vai gáy 15'",
+      "Sạch da đầu · tóc khoẻ",
+      "Thư giãn tinh thần",
+      "Giảm căng thẳng hiệu quả",
     ],
     image:
       "https://images.unsplash.com/photo-1519823551278-64ac927cff56?auto=format&fit=crop&w=800&q=60",
   },
   {
-    id: "hydro-body",
-    category: "hydro",
-    nameVi: "04 · Hydro & Body Recovery",
-    nameEn: "Thư giãn toàn thân",
-    durationMin: 120,
-    priceVnd: k(599),
+    id: "gv-foot-phuc-hoi",
+    category: "gio-vang",
+    nameVi: "Giờ Vàng · Oasis Foot phục hồi",
+    nameEn: "45′ · 199K",
+    durationMin: 45,
+    priceVnd: k(199),
+    note: "T2–T6 · 13:00–16:00",
     includes: [
-      "Jacuzzi 20'",
-      "Xông hơi 15'",
-      "Ngâm chân 10'",
-      "Dưỡng sinh đá nóng 75'",
+      "Phục hồi sau vận động",
+      "Hỗ trợ tuần hoàn",
+      "Giảm mỏi chân",
     ],
     image:
-      "https://images.unsplash.com/photo-1600334129128-685c5582fd35?auto=format&fit=crop&w=800&q=60",
+      "https://images.unsplash.com/photo-1519415387720-a4b0c40c63df?auto=format&fit=crop&w=800&q=60",
   },
   {
-    id: "hydro-retreat-1",
-    category: "hydro",
-    nameVi: "05 · Oasis Hydro Retreat 1",
-    nameEn: "Trọn vẹn · 4 giờ",
-    durationMin: 240,
-    priceVnd: k(899),
+    id: "gv-duong-sinh",
+    category: "gio-vang",
+    nameVi: "Giờ Vàng · Oasis Dưỡng sinh",
+    nameEn: "45′ · 199K",
+    durationMin: 45,
+    priceVnd: k(199),
+    note: "T2–T6 · 13:00–16:00",
     includes: [
-      "Hồ muối khoáng",
-      "Jacuzzi + sauna + ngâm chân",
-      "Gội dưỡng sinh 90'",
-      "Foot phục hồi 45'",
-      "Tặng Mía Ơi + bữa dưỡng sinh",
-    ],
-    image:
-      "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=800&q=60",
-  },
-  {
-    id: "hydro-retreat-2",
-    category: "hydro",
-    nameVi: "06 · Oasis Hydro Retreat 2",
-    nameEn: "Phục hồi toàn thân · 5 giờ",
-    durationMin: 300,
-    priceVnd: k(999),
-    includes: [
-      "Hồ muối khoáng",
-      "Jacuzzi + sauna + ngâm chân",
-      "Body phục hồi 120' + DDS / hồng ngoại",
-      "Tặng Mía Ơi + bữa dưỡng sinh",
+      "Giảm cứng cổ vai",
+      "Thư giãn cơ thể",
+      "Tái tạo năng lượng",
     ],
     image:
       "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=60",
   },
 
-  // —— Giờ vàng Oasis ——
+  // 00b GÓI NHÓM
   {
-    id: "gv-goi-thu-gian",
-    category: "gio-vang",
-    nameVi: "Oasis Gội thư giãn (Giờ vàng)",
-    durationMin: 60,
-    priceVnd: k(199),
-    note: "T2–T6 · 13:00–16:00 · đồng giá 199K",
+    id: "pkg-date-for-two",
+    category: "goi-nhom",
+    nameVi: "Wellness Date For Two",
+    nameEn: "2 người · 1.490K",
+    priceVnd: k(1490),
+    note: "Giá lẻ 1.798K · tiết kiệm 308K",
+    includes: [
+      "Hồ bơi ×2",
+      "Xông hơi ×2",
+      "Ngâm bồn & hồ muối ×2",
+      "Massage chân ×2",
+      "Gội đầu thư giãn ×2",
+    ],
+    image:
+      "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=800&q=60",
   },
   {
-    id: "gv-foot-phuc-hoi",
-    category: "gio-vang",
-    nameVi: "Oasis Foot phục hồi (Giờ vàng)",
-    durationMin: 45,
-    priceVnd: k(199),
-    note: "T2–T6 · 13:00–16:00 · đồng giá 199K",
-  },
-  {
-    id: "gv-duong-sinh",
-    category: "gio-vang",
-    nameVi: "Oasis Dưỡng sinh (Giờ vàng)",
-    durationMin: 45,
-    priceVnd: k(199),
-    note: "T2–T6 · 13:00–16:00 · đồng giá 199K",
+    id: "pkg-family-retreat",
+    category: "goi-nhom",
+    nameVi: "Family Wellness Retreat",
+    nameEn: "4 người · 2.990K",
+    priceVnd: k(2990),
+    note: "Giá lẻ 3.596K · tiết kiệm 606K",
+    includes: [
+      "Hồ bơi ×4",
+      "Xông hơi ×4",
+      "Ngâm bồn & hồ muối ×4",
+      "Massage chân ×4",
+      "Tặng 4 gội đầu thư giãn",
+    ],
+    image:
+      "https://images.unsplash.com/photo-1576013551627-0cc20b96c2a7?auto=format&fit=crop&w=800&q=60",
   },
 
-  // —— Gội dưỡng ——
+  // 01 OASIS GỘI DƯỠNG
   {
     id: "goi-sau-the-thao",
     category: "goi-duong",
-    nameVi: "Oasis Gội sạch sau vận động",
+    nameVi: "Oasis Gội sạch sau vận động thể thao",
+    nameEn: "Sau bơi / Pickleball",
     durationMin: 30,
     priceVnd: k(89),
-    note: "Sau bơi / Pickleball",
+    note: "Gội sạch, xả dưỡng · loại clo · tẩy trang, rửa mặt, cấp ẩm",
+    includes: ["Gội sạch sau thể thao", "Xả dưỡng tóc", "Tẩy trang · rửa mặt"],
+    image:
+      "https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=800&q=60",
   },
   {
     id: "goi-thu-gian-duong-sinh",
     category: "goi-duong",
     nameVi: "Oasis Gội thư giãn dưỡng sinh",
+    nameEn: "Thư giãn sâu · giảm căng thẳng",
     durationMin: 60,
     priceVnd: k(249),
+    note: "Massage da đầu · cổ vai gáy · chăm sóc da mặt cơ bản",
+    includes: ["Massage da đầu", "Cổ vai gáy", "Chăm sóc da mặt cơ bản"],
+    image:
+      "https://images.unsplash.com/photo-1519823551278-64ac927cff56?auto=format&fit=crop&w=800&q=60",
   },
   {
     id: "goi-toan-dien",
     category: "goi-duong",
-    nameVi: "Oasis Gội chăm sóc toàn diện tóc & da mặt",
+    nameVi: "Oasis Gội chăm sóc toàn diện tóc và da mặt",
+    nameEn: "Tóc + da mặt chuyên sâu",
     durationMin: 90,
     priceVnd: k(349),
+    note: "Tẩy da chết mặt · ủ dưỡng tóc thảo dược · massage đầu",
+    includes: [
+      "Tẩy da chết mặt",
+      "Ủ dưỡng tóc thảo dược",
+      "Massage đầu · cổ vai gáy",
+    ],
+    image:
+      "https://images.unsplash.com/photo-1600334129128-685c5582fd35?auto=format&fit=crop&w=800&q=60",
   },
 
-  // —— Dưỡng sinh ——
+  // 02 OASIS DƯỠNG SINH
   {
     id: "ds-dau-co-vai",
     category: "duong-sinh",
-    nameVi: "Oasis Dưỡng sinh đầu cổ vai",
+    nameVi: "Oasis Dưỡng sinh đầu cổ vai giảm căng thẳng",
     durationMin: 45,
     priceVnd: k(249),
+    priceAltVnd: k(399),
+    note: "45–60′ · Giải cảm +150K",
+    image:
+      "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=60",
   },
   {
     id: "ds-toan-than",
@@ -370,78 +358,160 @@ export const SPA_MENU: ServicePackage[] = [
     durationMin: 60,
     priceVnd: k(349),
     priceAltVnd: k(449),
-    note: "60–75 phút",
+    note: "60′ · Trị liệu +100K",
+    image:
+      "https://images.unsplash.com/photo-1519823551278-64ac927cff56?auto=format&fit=crop&w=800&q=60",
   },
   {
     id: "ds-co-vai-gay-lung",
     category: "duong-sinh",
-    nameVi: "Oasis Dưỡng sinh cổ vai gáy lưng",
-    durationMin: 75,
+    nameVi: "Oasis Dưỡng sinh cổ vai gáy lưng giảm đau mỏi",
+    durationMin: 90,
     priceVnd: k(449),
     priceAltVnd: k(549),
-    note: "75–90 phút",
+    note: "90′ · Trị liệu +100K",
+    image:
+      "https://images.unsplash.com/photo-1600334129128-685c5582fd35?auto=format&fit=crop&w=800&q=60",
   },
   {
     id: "ds-phuc-hoi-lieu-phap",
     category: "duong-sinh",
-    nameVi: "Oasis Dưỡng sinh phục hồi toàn thân",
+    nameVi: "Oasis Dưỡng sinh phục hồi toàn thân bằng liệu pháp",
     durationMin: 90,
     priceVnd: k(649),
     priceAltVnd: k(749),
-    note: "90–120 phút",
-  },
-  {
-    id: "ngam-chan-thao-moc",
-    category: "duong-sinh",
-    nameVi: "Ngâm chân thảo mộc",
-    priceVnd: 0,
-    note: "Addon / theo liệu trình",
+    note: "90–120′",
+    image:
+      "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=800&q=60",
   },
 
-  // —— Foot ——
+  // 03 OASIS DƯỠNG CHÂN
   {
     id: "foot-tinh-dau",
     category: "foot",
     nameVi: "Oasis Foot thư giãn với tinh dầu",
     durationMin: 30,
     priceVnd: k(189),
+    image:
+      "https://images.unsplash.com/photo-1519415387720-a4b0c40c63df?auto=format&fit=crop&w=800&q=60",
   },
   {
     id: "foot-an-huyet",
     category: "foot",
-    nameVi: "Oasis Foot phục hồi ấn huyệt",
+    nameVi: "Oasis Foot phục hồi ấn huyệt bàn chân",
     durationMin: 45,
     priceVnd: k(249),
+    image:
+      "https://images.unsplash.com/photo-1519415387720-a4b0c40c63df?auto=format&fit=crop&w=800&q=60",
   },
   {
     id: "foot-chuyen-sau",
     category: "foot",
-    nameVi: "Oasis Foot chuyên sâu ấn huyệt & tẩy tế bào chết",
+    nameVi: "Oasis Foot chuyên sâu ấn huyệt và tẩy tế bào chết",
     durationMin: 60,
     priceVnd: k(349),
+    image:
+      "https://images.unsplash.com/photo-1519415387720-a4b0c40c63df?auto=format&fit=crop&w=800&q=60",
   },
 
-  // —— Dưỡng da ——
+  // 04 DỊCH VỤ THÊM
   {
-    id: "da-thuong-kho",
-    category: "duong-da",
-    nameVi: "Chăm sóc da thường / khô — cấp ẩm",
-    priceVnd: k(390),
+    id: "addon-toc-noi-dai",
+    category: "dich-vu-them",
+    nameVi: "Tóc nối / tóc dài dày qua thắt lưng eo",
+    priceVnd: k(60),
   },
   {
-    id: "da-dau-hon-hop",
-    category: "duong-da",
-    nameVi: "Chăm sóc da dầu / hỗn hợp — kiểm soát dầu",
-    priceVnd: k(390),
+    id: "addon-mat-na-b5",
+    category: "dich-vu-them",
+    nameVi: "Mặt nạ B5 phục hồi da",
+    priceVnd: k(40),
   },
   {
-    id: "da-lao-hoa",
-    category: "duong-da",
-    nameVi: "Chăm sóc da lão hóa — nâng cơ phục hồi",
-    priceVnd: k(550),
+    id: "addon-tay-te-bao-chet-da-dau",
+    category: "dich-vu-them",
+    nameVi: "Tẩy tế bào chết da đầu",
+    priceVnd: k(40),
   },
+  {
+    id: "addon-cao-gio-dau-mat",
+    category: "dich-vu-them",
+    nameVi: "Cạo gió vùng đầu mặt",
+    priceVnd: k(89),
+  },
+  {
+    id: "addon-massage-mat-tinh-dau",
+    category: "dich-vu-them",
+    nameVi: "Massage mặt bằng tinh dầu (Hạt Nho / JoJoBa)",
+    priceVnd: k(80),
+  },
+  {
+    id: "addon-massage-kem-vitamin-e",
+    category: "dich-vu-them",
+    nameVi: "Massage kem Vitamin E",
+    priceVnd: k(70),
+  },
+  {
+    id: "addon-massage-mat-da-nong",
+    category: "dich-vu-them",
+    nameVi: "Massage mắt bằng đá nóng",
+    priceVnd: k(60),
+  },
+  {
+    id: "addon-giac-hoi-cao-gio",
+    category: "dich-vu-them",
+    nameVi: "Giác hơi / Cạo gió",
+    priceVnd: k(99),
+  },
+];
 
-  // —— Quà / ưu đãi ——
+/** @deprecated Hydro gói đã gỡ khỏi menu Spa mới — giữ export rỗng để không vỡ import. */
+export const SPA_HYDRO_PACKAGES: ServicePackage[] = [];
+
+/** VIP — amenities + prepaid / deals (không nằm trong PDF Spa menu). */
+export const VIP_AMENITIES: {
+  id: string;
+  nameVi: string;
+  blurb: string;
+  mark: string;
+  bg: string;
+  fg: string;
+}[] = [
+  {
+    id: "sauna",
+    nameVi: "Sauna / Xông hơi",
+    blurb: "Xông hơi ướt · khô trong khu VIP Oasis",
+    mark: "SA",
+    bg: "#ffedd5",
+    fg: "#9a3412",
+  },
+  {
+    id: "jacuzzi",
+    nameVi: "Jacuzzi nóng lạnh",
+    blurb: "Bồn sục nóng lạnh · hydrotherapy",
+    mark: "JC",
+    bg: "#ede9fe",
+    fg: "#5b21b6",
+  },
+  {
+    id: "mineral-pool",
+    nameVi: "Hồ muối khoáng",
+    blurb: "Mineral salt pool trong khu VIP",
+    mark: "HO",
+    bg: "#ccfbf1",
+    fg: "#115e59",
+  },
+  {
+    id: "foot-soak",
+    nameVi: "Ngâm chân thảo dược",
+    blurb: "Herbal foot soak",
+    mark: "NC",
+    bg: "#dcfce7",
+    fg: "#14532d",
+  },
+];
+
+export const VIP_DEALS: ServicePackage[] = [
   {
     id: "deal-mua5-tang1",
     category: "uu-dai",
@@ -465,8 +535,9 @@ export const SPA_MENU: ServicePackage[] = [
     priceVnd: 0,
     note: "Review ngay nhận quà · Hotline 0919 430 553",
   },
+];
 
-  // —— Thẻ trả trước (VIP privileges) ——
+export const VIP_PREPAID: ServicePackage[] = [
   {
     id: "the-goi-1",
     category: "the",
@@ -523,52 +594,3 @@ export const SPA_MENU: ServicePackage[] = [
     ],
   },
 ];
-
-/** Alias — 6 hydro only (home poster). */
-export const SPA_HYDRO_PACKAGES = SPA_MENU.filter((p) => p.category === "hydro");
-
-/** VIP — amenities + prepaid highlighted */
-export const VIP_AMENITIES: {
-  id: string;
-  nameVi: string;
-  blurb: string;
-  mark: string;
-  bg: string;
-  fg: string;
-}[] = [
-  {
-    id: "sauna",
-    nameVi: "Sauna / Xông hơi",
-    blurb: "Xông hơi ướt · khô trong khu VIP Oasis",
-    mark: "SA",
-    bg: "#ffedd5",
-    fg: "#9a3412",
-  },
-  {
-    id: "jacuzzi",
-    nameVi: "Jacuzzi nóng lạnh",
-    blurb: "Bồn sục nóng lạnh · hydrotherapy",
-    mark: "JC",
-    bg: "#ede9fe",
-    fg: "#5b21b6",
-  },
-  {
-    id: "mineral-pool",
-    nameVi: "Hồ muối khoáng",
-    blurb: "Mineral salt pool trong khu VIP",
-    mark: "HO",
-    bg: "#ccfbf1",
-    fg: "#115e59",
-  },
-  {
-    id: "foot-soak",
-    nameVi: "Ngâm chân thảo dược",
-    blurb: "Herbal foot soak",
-    mark: "NC",
-    bg: "#dcfce7",
-    fg: "#14532d",
-  },
-];
-
-export const VIP_PREPAID = SPA_MENU.filter((p) => p.category === "the");
-export const VIP_DEALS = SPA_MENU.filter((p) => p.category === "uu-dai");

@@ -62,6 +62,9 @@ export async function POST(req: NextRequest) {
             shortId: true,
             phoneLast4: true,
             customerCode: true,
+            segment: true,
+            vipExpiresAt: true,
+            vipPlanLabel: true,
           },
         },
       },
@@ -101,10 +104,38 @@ export async function POST(req: NextRequest) {
           .catch(() => undefined);
         return NextResponse.json({ error: "Yêu cầu đã hết hạn." }, { status: 410 });
       }
+
+      const {
+        cartItemsIncludeMembership,
+        isOlympicMembershipActive,
+      } = await import("@/lib/olympic-membership");
+      if (
+        cartItemsIncludeMembership(cart.items) &&
+        isOlympicMembershipActive({
+          segment: cart.customer.segment,
+          vipExpiresAt: cart.customer.vipExpiresAt,
+        })
+      ) {
+        const exp = cart.customer.vipExpiresAt
+          ? cart.customer.vipExpiresAt.toLocaleDateString("vi-VN")
+          : null;
+        return NextResponse.json(
+          {
+            error: exp
+              ? `Khách đang dùng ${cart.customer.vipPlanLabel || "gói hội viên"} đến ${exp}. Hết hạn mới duyệt gói mới.`
+              : "Khách đang dùng gói hội viên. Hết hạn mới duyệt gói mới.",
+          },
+          { status: 409 }
+        );
+      }
+
       const updated = await prisma.appServiceCart.update({
         where: { id: cart.id },
         data: { status: CART_STATUS.OPEN, adminNote: null },
       });
+
+      // Gói tháng: duyệt → OPEN QR; gắn VIP khi NV quét (resolve-qr).
+
       const pts = await awardCheckInPoints({
         customerId: cart.customerId,
         refType: "SERVICE_CART",
@@ -120,6 +151,7 @@ export async function POST(req: NextRequest) {
         customer: cart.customer,
         pointsAwarded: pts?.delta ?? 0,
         pointsBalance: pts?.balance ?? null,
+        membership: null,
       });
     }
 
@@ -141,6 +173,53 @@ export async function POST(req: NextRequest) {
       await releaseLongNuongTableHold(cart.items).catch((err) =>
         console.error("[approve-cart release table]", err)
       );
+    }
+    // Hoàn điểm nếu khách đã đổi điểm khi tạo QR
+    try {
+      const items = Array.isArray(cart.items) ? cart.items : [];
+      for (const row of items) {
+        if (!row || typeof row !== "object") continue;
+        const id = String((row as { id?: string }).id || "");
+        if (!id.startsWith("points-redeem-")) continue;
+        const cost = Math.round(Number(id.replace("points-redeem-", "")) || 0);
+        if (cost !== 50 && cost !== 100) continue;
+        const { refundRedeemPoints } = await import("@/lib/points-refund");
+        await refundRedeemPoints({
+          customerId: cart.customerId,
+          cost,
+          refId: cart.id,
+          note: `Hoàn ${cost} điểm · quầy từ chối`,
+        });
+      }
+    } catch (err) {
+      console.error("[approve-cart refund points]", err);
+    }
+    // Hoàn lượt voucher hội viên (đã trừ khi tạo vé)
+    try {
+      const { isLimitedMembershipVoucher } = await import("@/lib/hhg-vouchers");
+      const { refundMembershipVoucherUse } = await import(
+        "@/lib/membership-voucher-qty"
+      );
+      const items = Array.isArray(cart.items) ? cart.items : [];
+      const offerIds = new Set<string>();
+      for (const row of items) {
+        if (!row || typeof row !== "object") continue;
+        const id = String((row as { id?: string }).id || "");
+        if (id.startsWith("voucher-")) {
+          for (const oid of id.slice("voucher-".length).split("+")) {
+            if (oid.trim()) offerIds.add(oid.trim());
+          }
+        }
+      }
+      for (const offerId of offerIds) {
+        if (!isLimitedMembershipVoucher(offerId)) continue;
+        await refundMembershipVoucherUse(prisma, {
+          customerId: cart.customerId,
+          offerId,
+        });
+      }
+    } catch (err) {
+      console.error("[approve-cart refund voucher]", err);
     }
     return NextResponse.json({
       ok: true,

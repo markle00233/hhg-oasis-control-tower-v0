@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
+import { CART_STATUS } from "@/lib/cart-status";
 import { deskZoneAliases } from "@/lib/desk-zones";
 import { findCustomerByIdentityToken } from "@/lib/identity-qr";
 import { activateLongNuongTable } from "@/lib/long-nuong-activate";
+import {
+  applyOlympicMembership,
+  pickPrimaryOlympicPackage,
+} from "@/lib/olympic-membership";
 import { activatePickleballCourt } from "@/lib/pickleball-activate";
 import { confirmMiaOiCartPayment } from "@/lib/miaoi-confirm-cart";
 import { prisma } from "@/lib/prisma";
@@ -126,6 +131,65 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      /** Hồ Olympic — gói tháng: quét QR OPEN = xác nhận nâng cấp → VIP + theme. */
+      let membership: {
+        planLabel: string;
+        expiresAt: Date;
+        packageId: string;
+      } | null = null;
+      if (
+        (zone === "OLYMPIC_POOL" || zone === "OLYMPIC") &&
+        cart.status === "OPEN"
+      ) {
+        const itemIds = Array.isArray(cart.items)
+          ? cart.items
+              .map((row) =>
+                row && typeof row === "object"
+                  ? String((row as { id?: string }).id || "")
+                  : ""
+              )
+              .filter(Boolean)
+          : [];
+        const pkgId = pickPrimaryOlympicPackage(itemIds);
+        if (pkgId) {
+          const applied = await applyOlympicMembership(prisma, {
+            customerId: cart.customer.id,
+            packageId: pkgId,
+          }).catch((err) => {
+            console.error("[resolve-qr membership]", err);
+            return null;
+          });
+          if (applied?.alreadyActive) {
+            const exp = applied.vipExpiresAt.toLocaleDateString("vi-VN");
+            return NextResponse.json(
+              {
+                error: `Khách đang dùng ${applied.vipPlanLabel} đến ${exp}. Hết hạn mới được gắn gói mới (không nâng/hạ gói khi còn hạn).`,
+                membershipLocked: true,
+                membership: {
+                  planLabel: applied.vipPlanLabel,
+                  expiresAt: applied.vipExpiresAt,
+                  packageId: pkgId,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          if (applied && !applied.alreadyActive) {
+            membership = {
+              planLabel: applied.vipPlanLabel,
+              expiresAt: applied.vipExpiresAt,
+              packageId: pkgId,
+            };
+            await prisma.appServiceCart
+              .update({
+                where: { id: cart.id },
+                data: { status: CART_STATUS.USED },
+              })
+              .catch(() => undefined);
+          }
+        }
+      }
+
       return NextResponse.json({
         ok: true,
         mode: "SERVICE_CART",
@@ -139,7 +203,8 @@ export async function POST(req: NextRequest) {
           status:
             tableActivation?.activated ||
             courtActivation?.activated ||
-            miaPaid?.paid
+            miaPaid?.paid ||
+            membership
               ? "USED"
               : cart.status,
           expiresAt: cart.expiresAt,
@@ -161,13 +226,14 @@ export async function POST(req: NextRequest) {
             }
           : null,
         payment: miaPaid,
+        membership,
         customer: {
           id: cart.customer.id,
           customerCode: cart.customer.customerCode,
           fullName: cart.customer.fullName,
           phone: cart.customer.phone,
           shortId: cart.customer.shortId || cart.customer.phoneLast4,
-          segment: cart.customer.segment,
+          segment: membership ? "VIP" : cart.customer.segment,
         },
         bookings: [],
       });

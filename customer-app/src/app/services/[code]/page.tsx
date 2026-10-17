@@ -9,6 +9,8 @@ import {
   VoucherApplyButton,
   VoucherPickerModal,
 } from "@/components/VoucherPicker";
+import { PointsBalanceBar } from "@/components/PointsBalanceBar";
+import { PointsRedeemControl } from "@/components/PointsRedeemControl";
 import {
   applyOffersDiscount,
   getOfferById,
@@ -27,6 +29,11 @@ import {
   VIP_PREPAID,
   type ServicePackage,
 } from "@/lib/service-catalogs";
+import {
+  computeGuestPointsRedeem,
+  isSwimTicketId,
+  REDEEM_DRINK_MAX_VND,
+} from "@/lib/points-redeem";
 
 const META: Record<string, { title: string; body: string; accent: string }> = {
   OLYMPIC_POOL: {
@@ -36,7 +43,7 @@ const META: Record<string, { title: string; body: string; accent: string }> = {
   },
   GYM: {
     title: "Gym",
-    body: "Chọn gói → Áp voucher (nếu có) → tạo QR. Tích điểm theo tiền trước giảm giá.",
+    body: "Chọn gói → Áp voucher (nếu có) → tạo QR mang quầy.",
     accent: "#3730a3",
   },
   VIP_RESORT: {
@@ -46,7 +53,7 @@ const META: Record<string, { title: string; body: string; accent: string }> = {
   },
   SPA: {
     title: "Oasis Spa",
-    body: "Tick nhiều dịch vụ · áp voucher trong ví đúng khu Spa · tạo QR mang tất cả.",
+    body: "Chọn dịch vụ / gói (Giờ Vàng · Date · Family) · áp voucher hoặc đổi điểm · tạo QR mang quầy.",
     accent: "#9f1239",
   },
   LONG_NUONG: {
@@ -118,9 +125,15 @@ function PackageCard({
   onToggle,
   onQty,
   showQty,
+  disabled,
   appliedOffers,
   onOpenVoucher,
   onClearVoucher,
+  pointsBalance,
+  redeemTier,
+  canRedeem50,
+  canRedeem100,
+  onRedeemChange,
 }: {
   p: ServicePackage;
   selected: boolean;
@@ -128,17 +141,28 @@ function PackageCard({
   onToggle: () => void;
   onQty: (n: number) => void;
   showQty?: boolean;
+  disabled?: boolean;
   appliedOffers?: HomeOffer[];
   onOpenVoucher?: () => void;
   onClearVoucher?: () => void;
+  pointsBalance?: number;
+  redeemTier?: 50 | 100 | null;
+  canRedeem50?: boolean;
+  canRedeem100?: boolean;
+  onRedeemChange?: (tier: 50 | 100 | null) => void;
 }) {
   return (
     <div
       className={`overflow-hidden rounded-[24px] bg-white shadow-soft ring-offset-2 ${
         selected ? "ring-2 ring-oasis-deep" : ""
-      }`}
+      } ${disabled ? "opacity-55" : ""}`}
     >
-      <button type="button" onClick={onToggle} className="w-full text-left">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={disabled}
+        className="w-full text-left disabled:cursor-not-allowed"
+      >
         {p.image ? (
           <div
             className="h-32 w-full bg-cover bg-center"
@@ -189,8 +213,9 @@ function PackageCard({
           </div>
         </div>
       </button>
-      {selected && (onOpenVoucher || showQty) ? (
-        <div className="flex flex-wrap items-center gap-2 border-t border-oasis-line/50 px-4 py-3">
+      {selected && (onOpenVoucher || showQty || onRedeemChange) ? (
+        <div className="space-y-2 border-t border-oasis-line/50 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
           {onOpenVoucher ? (
             <VoucherApplyButton
               appliedOffers={appliedOffers}
@@ -219,6 +244,16 @@ function PackageCard({
                 +
               </button>
             </div>
+          ) : null}
+          </div>
+          {onRedeemChange ? (
+            <PointsRedeemControl
+              pointsBalance={pointsBalance ?? 0}
+              redeemTier={redeemTier ?? null}
+              canRedeem50={!!canRedeem50}
+              canRedeem100={!!canRedeem100}
+              onChange={onRedeemChange}
+            />
           ) : null}
         </div>
       ) : null}
@@ -254,7 +289,11 @@ export default function ServiceInfoPage({
     accent: homeMeta?.fg || "#0b1220",
   };
 
-  const [spaCat, setSpaCat] = useState(SPA_CATEGORIES[0]?.id || "hydro");
+  const [spaCat, setSpaCat] = useState(
+    SPA_CATEGORIES.find((c) => c.id === "gio-vang")?.id ||
+      SPA_CATEGORIES[0]?.id ||
+      "goi-duong"
+  );
   const [selected, setSelected] = useState<SelMap>({});
   const [amenitySel, setAmenitySel] = useState<Record<string, boolean>>({});
   const [showQr, setShowQr] = useState(false);
@@ -270,16 +309,25 @@ export default function ServiceInfoPage({
   const [walletOffers, setWalletOffers] = useState<HomeOffer[]>([]);
   const [appliedOffers, setAppliedOffers] = useState<HomeOffer[]>([]);
   const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
-
-  const voucherField = {
-    appliedOffers,
-    onOpenVoucher: () => setVoucherPickerOpen(true),
-    onClearVoucher: () => setAppliedOffers([]),
-  };
+  const [pointsBalance, setPointsBalance] = useState(0);
+  const [redeemTier, setRedeemTier] = useState<50 | 100 | null>(null);
+  const [membershipLocked, setMembershipLocked] = useState(false);
+  const [membershipExpiresLabel, setMembershipExpiresLabel] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const me = await fetch("/api/auth/me", { cache: "no-store" });
+      if (me.ok) {
+        const md = await me.json();
+        if (!cancelled && md.authenticated) {
+          setPointsBalance(Number(md.customer?.pointsBalance) || 0);
+          setMembershipLocked(!!md.customer?.membershipLocked || !!md.customer?.vip);
+          setMembershipExpiresLabel(md.customer?.vipExpiresLabel || null);
+        }
+      }
       const res = await fetch("/api/me/offers", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
@@ -384,8 +432,45 @@ export default function ServiceInfoPage({
     () => applyOffersDiscount(afterAccessoryVnd, appliedOffers),
     [afterAccessoryVnd, appliedOffers]
   );
-  const totalVnd = priced.totalVnd;
-  const totalDiscountVnd = accessoryAutoDiscount + priced.discountVnd;
+
+  const redeemItems = useMemo(
+    () =>
+      selectedPkgs.map(({ pkg, qty }) => ({
+        id: pkg.id,
+        priceVnd: pkg.priceVnd,
+        qty,
+      })),
+    [selectedPkgs]
+  );
+  const canRedeem50 =
+    pointsBalance >= 50 &&
+    redeemItems.some((i) => i.priceVnd > 0 && i.priceVnd <= REDEEM_DRINK_MAX_VND);
+  const canRedeem100 =
+    pointsBalance >= 100 &&
+    (code === "OLYMPIC_POOL" || code === "OLYMPIC") &&
+    redeemItems.some((i) => isSwimTicketId(i.id));
+  const redeemPreview = redeemTier
+    ? computeGuestPointsRedeem({
+        zoneCode: code,
+        tier: redeemTier,
+        items: redeemItems,
+      })
+    : null;
+  const pointsDiscount = redeemPreview?.ok ? redeemPreview.discountVnd : 0;
+  const totalVnd = Math.max(0, priced.totalVnd - pointsDiscount);
+  const totalDiscountVnd =
+    accessoryAutoDiscount + priced.discountVnd + pointsDiscount;
+
+  const voucherField = {
+    appliedOffers,
+    onOpenVoucher: () => setVoucherPickerOpen(true),
+    onClearVoucher: () => setAppliedOffers([]),
+    pointsBalance,
+    redeemTier,
+    canRedeem50,
+    canRedeem100,
+    onRedeemChange: setRedeemTier,
+  };
 
   const count =
     selectedPkgs.reduce((n, x) => n + x.qty, 0) + selectedAmenities.length;
@@ -418,6 +503,11 @@ export default function ServiceInfoPage({
         lines.push(`Voucher ${line.offer.title}`);
       }
     }
+    if (redeemTier && pointsDiscount > 0) {
+      lines.push(
+        `Đổi ${redeemTier} điểm −${new Intl.NumberFormat("vi-VN").format(pointsDiscount)}đ`
+      );
+    }
     if (totalVnd > 0 || subtotalVnd > 0) {
       lines.push(
         `Tổng ~ ${new Intl.NumberFormat("vi-VN").format(totalVnd)}đ`
@@ -432,6 +522,8 @@ export default function ServiceInfoPage({
     subtotalVnd,
     priced.lines,
     accessoryAutoDiscount,
+    redeemTier,
+    pointsDiscount,
   ]);
 
   async function createCartQr() {
@@ -455,6 +547,14 @@ export default function ServiceInfoPage({
           note: pkg.note,
         })),
       ];
+      if (redeemTier) {
+        const check = computeGuestPointsRedeem({
+          zoneCode: code,
+          tier: redeemTier,
+          items: redeemItems,
+        });
+        if (!check.ok) throw new Error(check.error || "Không đổi điểm được");
+      }
       const res = await fetch("/api/me/cart", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -464,11 +564,15 @@ export default function ServiceInfoPage({
           zoneName: meta.title,
           items,
           offerIds: appliedOffers.map((o) => o.id),
-          discountVnd: totalDiscountVnd,
+          discountVnd: accessoryAutoDiscount + priced.discountVnd,
+          pointsRedeemTier: redeemTier,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không gửi được yêu cầu");
+      if (typeof data.pointsBalance === "number") {
+        setPointsBalance(data.pointsBalance);
+      }
       setCartToken(data.cart?.token || "");
       setCartStatus(data.cart?.status || "PENDING_APPROVAL");
       setCartPayload(data.payload || null);
@@ -567,6 +671,8 @@ export default function ServiceInfoPage({
           ) : null}
         </div>
 
+        <PointsBalanceBar points={pointsBalance} />
+
         {code === "OLYMPIC_POOL" ? (
           <>
             <section className="space-y-3">
@@ -591,8 +697,13 @@ export default function ServiceInfoPage({
                 Gói tháng + quyền lợi
               </h2>
               <p className="text-xs text-oasis-mute">
-                Kèm voucher HHG Oasis áp dụng phân khu khác (Lòng Nướng, Mía Ơi,
-                Spa…).
+                {membershipLocked
+                  ? `Đang dùng gói hội viên${
+                      membershipExpiresLabel
+                        ? ` đến ${membershipExpiresLabel}`
+                        : ""
+                    }. Hết hạn mới chọn gói mới.`
+                  : "1 gói / lần · hết hạn về khách thường mới chọn tiếp. Kèm voucher HHG (LN, Mía Ơi, Spa…)."}
               </p>
               {OLYMPIC_MONTHLY.map((p) => (
                 <PackageCard
@@ -601,8 +712,12 @@ export default function ServiceInfoPage({
                   selected={!!selected[p.id]}
                   qty={selected[p.id] || 1}
                   showQty={false}
+                  disabled={membershipLocked}
                   {...voucherField}
-                  onToggle={() => setSelected((s) => toggleId(s, p.id))}
+                  onToggle={() => {
+                    if (membershipLocked) return;
+                    setSelected((s) => toggleId(s, p.id));
+                  }}
                   onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
                 />
               ))}

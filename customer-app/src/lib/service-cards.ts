@@ -14,6 +14,8 @@ export type ServiceCardViewModel = {
   partySize: number | null;
   status: string;
   statusLabel: string;
+  /** ok | warn | bad — màu badge */
+  statusTone?: "ok" | "warn" | "bad" | "mute";
   accent: string;
   href: string;
   showQrHint: boolean;
@@ -21,6 +23,11 @@ export type ServiceCardViewModel = {
   referenceId: string;
   bucket: "active" | "upcoming" | "history";
   bookingCode?: string | null;
+  /** Chi tiết món / gói */
+  detailLines?: string[];
+  /** Voucher / đổi điểm */
+  promoLabel?: string | null;
+  totalLabel?: string | null;
 };
 
 const ZONE_ACCENT: Record<string, string> = {
@@ -107,29 +114,49 @@ function orderStatusLabel(status: string): string {
   }
 }
 
-/** Trạng thái yêu cầu QR dịch vụ: tạo mã → duyệt → NV xác nhận. */
+function orderStatusTone(
+  status: string
+): "ok" | "warn" | "bad" | "mute" {
+  if (["CANCELLED"].includes(status)) return "bad";
+  if (["SERVED", "DONE", "CONFIRMED", "ACCEPTED", "READY"].includes(status))
+    return "ok";
+  if (["PENDING", "SUBMITTED", "PREPARING"].includes(status)) return "warn";
+  return "mute";
+}
+
+/** Trạng thái yêu cầu QR dịch vụ: tạo mã → duyệt → NV xác nhận / từ chối. */
 function cartStatusLabel(status: string, zoneCode?: string): string {
   const z = (zoneCode || "").toUpperCase();
   switch (status) {
     case "PENDING_APPROVAL":
-      return "Mã tạo thành công · chờ duyệt";
+      return "Đã tạo mã · chờ quầy duyệt";
     case "OPEN":
       return z === "MIA_OI"
-        ? "Đã duyệt · chờ NV xác nhận TT"
-        : "Đã duyệt · chờ NV xác nhận";
+        ? "Đã duyệt · chờ NV xác nhận thanh toán"
+        : "Đã duyệt · chờ NV quét / xác nhận";
     case "USED":
-      return "Nhân viên đã xác nhận";
+      return z === "MIA_OI"
+        ? "NV đã xác nhận TT · hoàn tất"
+        : "NV đã xác nhận · hoàn tất";
     case "REJECTED":
-      return "Quầy từ chối";
+      return "Quầy từ chối yêu cầu";
     case "CANCELLED":
-      return "Đã huỷ";
+      return "Khách đã huỷ";
     case "NO_SHOW":
-      return "Không tới";
+      return "Không tới (no-show)";
     case "EXPIRED":
       return "Hết hạn";
     default:
       return status;
   }
+}
+
+function cartStatusTone(status: string): "ok" | "warn" | "bad" | "mute" {
+  if (status === "USED") return "ok";
+  if (status === "PENDING_APPROVAL" || status === "OPEN") return "warn";
+  if (status === "REJECTED" || status === "CANCELLED" || status === "NO_SHOW")
+    return "bad";
+  return "mute";
 }
 
 function cartBucket(status: string): "active" | "upcoming" | "history" {
@@ -149,6 +176,61 @@ function remainingBetween(endAt: Date, now = new Date()) {
 
 function formatVnd(n: number) {
   return new Intl.NumberFormat("vi-VN").format(n) + "đ";
+}
+
+function parseCartPromoLines(items: unknown): {
+  itemLines: string[];
+  promoLabel: string | null;
+  hasVoucher: boolean;
+  hasPoints: boolean;
+} {
+  if (!Array.isArray(items)) {
+    return {
+      itemLines: [],
+      promoLabel: null,
+      hasVoucher: false,
+      hasPoints: false,
+    };
+  }
+  const itemLines: string[] = [];
+  let hasVoucher = false;
+  let pointsTier: number | null = null;
+  for (const row of items) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as {
+      id?: string;
+      nameVi?: string;
+      qty?: number;
+      priceVnd?: number;
+    };
+    const id = String(r.id || "");
+    if (id.startsWith("voucher-")) {
+      hasVoucher = true;
+      continue;
+    }
+    if (id.startsWith("points-redeem-")) {
+      const t = Math.round(Number(id.replace("points-redeem-", "")) || 0);
+      if (t === 50 || t === 100) pointsTier = t;
+      continue;
+    }
+    if (!r.nameVi) continue;
+    const qty = Math.max(1, Number(r.qty) || 1);
+    const price = Math.max(0, Number(r.priceVnd) || 0);
+    itemLines.push(
+      price > 0
+        ? `${qty}× ${r.nameVi} · ${formatVnd(price * qty)}`
+        : `${qty}× ${r.nameVi}`
+    );
+  }
+  const parts: string[] = [];
+  if (hasVoucher) parts.push("Có voucher");
+  if (pointsTier) parts.push(`Đổi ${pointsTier} điểm`);
+  return {
+    itemLines,
+    promoLabel: parts.length ? parts.join(" · ") : null,
+    hasVoucher,
+    hasPoints: !!pointsTier,
+  };
 }
 
 function bookingBucket(
@@ -252,12 +334,20 @@ async function collectCards(
             "PREPARING",
             "READY",
             "SERVED",
+            "CONFIRMED",
+            "DONE",
+            "CANCELLED",
           ],
         },
-        createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
+        createdAt: {
+          gte: new Date(
+            now.getTime() -
+              (opts.historyLimit > 0 ? 14 : 1) * 24 * 60 * 60 * 1000
+          ),
+        },
       },
       orderBy: { createdAt: "desc" },
-      take: 10,
+      take: opts.historyLimit > 0 ? 25 : 10,
       include: {
         service: { select: { serviceCode: true, serviceName: true } },
         items: true,
@@ -327,15 +417,17 @@ async function collectCards(
       partySize: null,
       status: "IN_SERVICE",
       statusLabel: "Đang sử dụng",
+      statusTone: "ok",
       accent: accentFor(zone),
       href: s.bookingId
         ? `/activity/booking/${s.bookingId}`
-        : `/activity/session/${s.id}`,
+        : "/activity",
       showQrHint: false,
       remainingLabel: end ? remainingBetween(end, now) : null,
       referenceId: s.id,
       bucket: "active",
       bookingCode: s.booking?.bookingCode || null,
+      detailLines: s.resource.name ? [`Tài nguyên: ${s.resource.name}`] : [],
     });
   }
 
@@ -358,6 +450,13 @@ async function collectCards(
       partySize: b.partySize,
       status: b.status,
       statusLabel: bookingStatusLabel(b.status),
+      statusTone: (["CANCELLED", "NO_SHOW"].includes(b.status)
+        ? "bad"
+        : ["COMPLETED"].includes(b.status)
+          ? "ok"
+          : ["PENDING"].includes(b.status)
+            ? "warn"
+            : "ok") as "ok" | "warn" | "bad" | "mute",
       accent: accentFor(zone),
       href: `/activity/booking/${b.id}`,
       showQrHint: ["PENDING", "CONFIRMED"].includes(b.status),
@@ -371,7 +470,27 @@ async function collectCards(
 
   for (const o of openOrders) {
     const zone = o.service?.serviceCode || "MIA_OI";
-    const done = ["SERVED", "DONE", "CONFIRMED"].includes(o.status);
+    const done = ["SERVED", "DONE", "CONFIRMED", "CANCELLED"].includes(
+      o.status
+    );
+    if (opts.historyLimit === 0 && done) continue;
+    const detailLines = (o.items || []).map(
+      (it) =>
+        `${it.qty}× ${it.nameVi}${
+          it.unitPriceVnd
+            ? ` · ${formatVnd(it.unitPriceVnd * it.qty)}`
+            : ""
+        }`
+    );
+    const note = String(o.note || "");
+    const promoParts: string[] = [];
+    if (/voucher/i.test(note)) promoParts.push("Có voucher");
+    const pointsMatch = note.match(/đổi\s*(\d+)\s*điểm/i) || note.match(/(\d+)\s*điểm/i);
+    if (pointsMatch) {
+      promoParts.push(`Đổi ${pointsMatch[1]} điểm`);
+    } else if (/điểm|đổi/i.test(note)) {
+      promoParts.push("Đổi điểm");
+    }
     cards.push({
       id: `order-${o.id}`,
       type: "ORDER",
@@ -385,70 +504,111 @@ async function collectCards(
       partySize: null,
       status: o.status,
       statusLabel: orderStatusLabel(o.status),
+      statusTone: orderStatusTone(o.status),
       accent: accentFor(zone),
-      href: `/activity/order/${o.id}`,
+      href: "/activity",
       showQrHint: false,
       remainingLabel: null,
       referenceId: o.id,
       bucket: done ? "history" : "active",
+      detailLines,
+      promoLabel: promoParts.length ? promoParts.join(" · ") : null,
+      totalLabel: formatVnd(o.totalVnd),
     });
   }
 
   for (const cart of carts) {
     const zone = cart.zoneCode;
-    const items = Array.isArray(cart.items)
-      ? (cart.items as { nameVi?: string; qty?: number }[])
-      : [];
-    const bill = items
-      .filter((i) => i && !String((i as { id?: string }).id || "").startsWith("voucher-"))
-      .map((i) => `${i.qty || 1}× ${i.nameVi || "món"}`)
-      .join(", ");
+    const promo = parseCartPromoLines(cart.items);
+    const bill =
+      promo.itemLines.join(", ") || formatVnd(cart.totalVnd);
     const bucket = cartBucket(cart.status);
     if (opts.historyLimit === 0 && bucket === "history") continue;
+    const detailLines = [...promo.itemLines];
+    if (cart.adminNote && cart.status === "REJECTED") {
+      detailLines.push(`Lý do: ${cart.adminNote}`);
+    }
     cards.push({
       id: `cart-${cart.id}`,
       type: "TICKET",
       zoneCode: zone,
       zoneName: cart.zoneName || zone,
       title: cart.zoneName || zone,
-      subtitle: bill || formatVnd(cart.totalVnd),
+      subtitle: bill,
       dateLabel: dateLabel(cart.createdAt),
       timeLabel: hm(cart.createdAt),
       resourceName: null,
       partySize: null,
       status: cart.status,
       statusLabel: cartStatusLabel(cart.status, zone),
+      statusTone: cartStatusTone(cart.status),
       accent: accentFor(zone),
-      href: cart.status === "OPEN" ? `/q/${cart.token}` : "/activity",
+      href:
+        cart.status === "OPEN" || cart.status === "PENDING_APPROVAL"
+          ? `/q/${cart.token}`
+          : "/activity",
       showQrHint: cart.status === "OPEN" || cart.status === "PENDING_APPROVAL",
       remainingLabel: null,
       referenceId: cart.token,
       bucket,
+      detailLines,
+      promoLabel: promo.promoLabel,
+      totalLabel: formatVnd(cart.totalVnd),
     });
   }
 
   for (const e of recentUses) {
     const zone = e.service.serviceCode;
+    const meta =
+      e.metadata && typeof e.metadata === "object"
+        ? (e.metadata as Record<string, unknown>)
+        : {};
+    const metaItems = Array.isArray(meta.items)
+      ? (meta.items as { name?: string; qty?: number; unitPriceVnd?: number }[])
+      : [];
+    const detailLines = metaItems.map((i) => {
+      const qty = Number(i.qty) || 1;
+      const price = Number(i.unitPriceVnd) || 0;
+      return price > 0
+        ? `${qty}× ${i.name || "món"} · ${formatVnd(price * qty)}`
+        : `${qty}× ${i.name || "món"}`;
+    });
+    const totalVnd =
+      typeof meta.totalVnd === "number" ? meta.totalVnd : null;
     cards.push({
       id: `use-${e.id}`,
       type: "SERVICE_USE",
       zoneCode: zone,
       zoneName: e.service.serviceName,
       title: e.service.serviceName,
-      subtitle: "Check-in",
+      subtitle:
+        detailLines[0] ||
+        (totalVnd != null ? formatVnd(totalVnd) : "Check-in"),
       dateLabel: dateLabel(e.createdAt),
       timeLabel: hm(e.createdAt),
       resourceName: null,
       partySize: null,
       status: e.operationalStatus,
       statusLabel:
-        e.operationalStatus === "COMPLETED" ? "Đã sử dụng" : e.operationalStatus,
+        e.operationalStatus === "COMPLETED"
+          ? "Đã sử dụng"
+          : e.operationalStatus === "CANCELLED"
+            ? "Đã huỷ"
+            : e.operationalStatus,
+      statusTone:
+        e.operationalStatus === "COMPLETED"
+          ? "ok"
+          : e.operationalStatus === "CANCELLED"
+            ? "bad"
+            : "mute",
       accent: accentFor(zone),
-      href: `/activity`,
+      href: "/activity",
       showQrHint: false,
       remainingLabel: null,
       referenceId: e.id,
       bucket: "history",
+      detailLines,
+      totalLabel: totalVnd != null ? formatVnd(totalVnd) : null,
     });
   }
 

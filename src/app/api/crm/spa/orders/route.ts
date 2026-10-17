@@ -107,22 +107,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const { awardPurchasePoints } = await import("@/lib/points");
-    const pts = await awardPurchasePoints({
-      customerId: customer.id,
-      refType: "APP_ORDER",
-      refId: order.id,
-      subtotalVnd: totalVnd,
-      note: `Spa · ${totalVnd}đ trước giảm`,
-    }).catch((err) => {
-      console.error("[spa/orders points]", err);
-      return null;
-    });
-
+    // Điểm chỉ cộng ở Mía Ơi + Hồ Olympic — Spa không cộng.
     return NextResponse.json({
       ok: true,
-      pointsAwarded: pts?.delta ?? 0,
-      pointsBalance: pts?.balance ?? null,
+      pointsAwarded: 0,
+      pointsBalance: null,
       order: {
         id: order.id,
         status: order.status,

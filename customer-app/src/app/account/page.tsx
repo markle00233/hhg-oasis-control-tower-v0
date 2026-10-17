@@ -31,6 +31,8 @@ export default function AccountPage() {
     vip?: boolean;
     vipPlanLabel?: string | null;
     vipExpiresLabel?: string | null;
+    packageLabel?: string | null;
+    packageExpiresLabel?: string | null;
   } | null>(null);
   const [cards, setCards] = useState<ServiceCardViewModel[]>([]);
   const [carts, setCarts] = useState<AccountCart[]>([]);
@@ -46,6 +48,14 @@ export default function AccountPage() {
       discountVnd?: number;
       discountPercent?: number;
       sourceLabel?: string;
+      qtyTotal?: number | null;
+      qtyRemaining?: number | null;
+      exhausted?: boolean;
+      canUse?: boolean;
+      membership?: boolean;
+      membershipExpired?: boolean;
+      unlimitedInTerm?: boolean;
+      validUntilLabel?: string | null;
     }[]
   >([]);
   const [qrDataUrl, setQrDataUrl] = useState("");
@@ -232,9 +242,13 @@ export default function AccountPage() {
                 {customer?.shortId ? ` · ID ${customer.shortId}` : ""}
               </p>
               <p className="mt-2 text-xs text-[#d4af37]/75">
-                {customer.vipPlanLabel || "Gói VIP HHG Oasis"}
-                {customer.vipExpiresLabel
-                  ? ` · đến ${customer.vipExpiresLabel}`
+                {customer.packageLabel ||
+                  customer.vipPlanLabel ||
+                  "Gói VIP HHG Oasis"}
+                {customer.packageExpiresLabel || customer.vipExpiresLabel
+                  ? ` · đến ${
+                      customer.packageExpiresLabel || customer.vipExpiresLabel
+                    }`
                   : ""}
               </p>
             </>
@@ -250,6 +264,14 @@ export default function AccountPage() {
                 {customer?.customerCode || "—"}
                 {customer?.shortId ? ` · ID ${customer.shortId}` : ""}
               </p>
+              {customer?.packageLabel ? (
+                <p className="mt-2 text-xs text-oasis-mute">
+                  {customer.packageLabel}
+                  {customer.packageExpiresLabel
+                    ? ` · đến ${customer.packageExpiresLabel}`
+                    : ""}
+                </p>
+              ) : null}
             </>
           )}
         </div>
@@ -262,16 +284,21 @@ export default function AccountPage() {
             {customer?.pointsBalance ?? 0} điểm
           </p>
           <p className="mt-1 text-xs text-oasis-mute">
-            10.000đ trước giảm giá = 5 điểm (khi thanh toán / check-in dịch vụ).
+            Cộng điểm chỉ từ Mía Ơi & Hồ Olympic (10.000đ trước giảm = 5
+            điểm). Đổi: 50đ đồ uống / 100đ vé bơi.
           </p>
         </div>
 
         {error ? <p className="text-sm text-oasis-coral">{error}</p> : null}
 
-        {customer?.vip && vouchers.length > 0 ? (
+        {vouchers.length > 0 ? (
           <section className="space-y-2">
-            <h2 className="text-sm font-bold lowercase tracking-wide text-[#8a7429]">
-              đặc quyền VIP
+            <h2
+              className={`text-sm font-bold lowercase tracking-wide ${
+                customer?.vip ? "text-[#8a7429]" : "text-oasis-mute"
+              }`}
+            >
+              {customer?.vip ? "đặc quyền VIP / voucher" : "voucher của bạn"}
             </h2>
             <div
               className="scrollbar-none"
@@ -300,34 +327,106 @@ export default function AccountPage() {
                     ? `−${new Intl.NumberFormat("vi-VN").format(v.discountVnd)}đ`
                     : v.discountType === "percent" && v.discountPercent
                       ? `−${v.discountPercent}%`
-                      : "Đặc quyền";
-                return (
-                  <Link
-                    key={v.id}
-                    href={href}
-                    className="flex shrink-0 flex-col justify-between rounded-[22px] bg-black p-4 shadow-soft"
-                    style={{
-                      width: "min(78vw, 300px)",
-                      minWidth: "min(78vw, 300px)",
-                      minHeight: 148,
-                      scrollSnapAlign: "center",
-                      flexShrink: 0,
-                    }}
-                  >
+                      : "Ưu đãi";
+                const vipCard = !!customer?.vip;
+                const hasQty = v.qtyTotal != null && v.qtyTotal > 0;
+                const remaining = v.qtyRemaining ?? 0;
+                const membershipExpired = !!v.membershipExpired;
+                const exhausted =
+                  !!v.exhausted ||
+                  (hasQty && remaining <= 0) ||
+                  membershipExpired;
+                const cardClass = `relative flex shrink-0 flex-col justify-between rounded-[22px] p-4 shadow-soft ${
+                  vipCard ? "bg-black" : "bg-white"
+                } ${exhausted ? "opacity-55" : ""}`;
+                const cardStyle = {
+                  width: "min(78vw, 300px)",
+                  minWidth: "min(78vw, 300px)",
+                  minHeight: 148,
+                  scrollSnapAlign: "center" as const,
+                  flexShrink: 0,
+                };
+                const body = (
+                  <>
+                    {hasQty ? (
+                      <span
+                        className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[11px] font-black tabular-nums ${
+                          vipCard
+                            ? exhausted
+                              ? "bg-[#d4af37]/20 text-[#d4af37]/70"
+                              : "bg-[#d4af37] text-black"
+                            : exhausted
+                              ? "bg-oasis-line text-oasis-mute"
+                              : "bg-oasis-moss text-white"
+                        }`}
+                      >
+                        {remaining}/{v.qtyTotal}
+                      </span>
+                    ) : v.unlimitedInTerm && !membershipExpired ? (
+                      <span
+                        className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-black ${
+                          vipCard
+                            ? "bg-[#d4af37] text-black"
+                            : "bg-oasis-moss text-white"
+                        }`}
+                      >
+                        Trong hạn
+                      </span>
+                    ) : null}
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#d4af37]/85">
+                      <p
+                        className={`text-[10px] font-bold uppercase tracking-[0.18em] ${
+                          vipCard ? "text-[#d4af37]/85" : "text-oasis-mute"
+                        }`}
+                      >
                         {v.zoneLabel} · {deal}
                       </p>
-                      <p className="mt-1 font-display text-xl font-semibold text-[#d4af37]">
+                      <p
+                        className={`mt-1 font-display text-xl font-semibold ${
+                          vipCard ? "text-[#d4af37]" : "text-oasis-ink"
+                        }`}
+                      >
                         {v.title}
                       </p>
-                      <p className="mt-1 line-clamp-2 text-sm text-[#d4af37]/70">
+                      <p
+                        className={`mt-1 line-clamp-2 text-sm ${
+                          vipCard ? "text-[#d4af37]/70" : "text-oasis-mute"
+                        }`}
+                      >
                         {v.subtitle}
                       </p>
                     </div>
-                    <p className="mt-3 text-xs font-bold text-[#d4af37]">
-                      Chạm để dùng tại {v.zoneLabel} →
+                    <p
+                      className={`mt-3 text-xs font-bold ${
+                        vipCard ? "text-[#d4af37]" : "text-oasis-moss"
+                      }`}
+                    >
+                      {membershipExpired
+                        ? `Hết hạn gói${
+                            v.validUntilLabel ? ` · ${v.validUntilLabel}` : ""
+                          }`
+                        : exhausted
+                          ? hasQty
+                            ? `Hết lượt (0/${v.qtyTotal})`
+                            : "Không dùng được"
+                          : v.validUntilLabel
+                            ? `Đến ${v.validUntilLabel} · dùng tại ${v.zoneLabel} →`
+                            : `Chạm để dùng tại ${v.zoneLabel} →`}
                     </p>
+                  </>
+                );
+                return exhausted ? (
+                  <div key={v.id} className={cardClass} style={cardStyle}>
+                    {body}
+                  </div>
+                ) : (
+                  <Link
+                    key={v.id}
+                    href={href}
+                    className={cardClass}
+                    style={cardStyle}
+                  >
+                    {body}
                   </Link>
                 );
               })}
@@ -500,9 +599,15 @@ function WalletCard({
   card: ServiceCardViewModel;
   qrDataUrl: string;
 }) {
+  const href =
+    card.type === "BOOKING" && card.referenceId
+      ? `/activity/booking/${encodeURIComponent(card.referenceId)}`
+      : card.href && card.href !== "/activity"
+        ? card.href
+        : "/activity";
   return (
     <Link
-      href={`/activity/booking/${encodeURIComponent(card.id)}`}
+      href={href}
       className="flex gap-3 rounded-[22px] bg-white/90 p-3 shadow-soft"
     >
       <IdentityQrThumb

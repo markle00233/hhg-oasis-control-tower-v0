@@ -56,6 +56,10 @@ export default function DevQrPage() {
         <p className="mt-2 text-sm text-oasis-mute">
           Scroll ngang — tên phân khu nằm trên mỗi mã QR.
         </p>
+        <p className="mt-1 text-xs text-oasis-mute">
+          Cập nhật: domain huyhoanggiaoasis · Home không Ưu đãi · có Upgrade hội
+          viên · không in VIP/Gym.
+        </p>
       </div>
 
       {error ? <p className="mb-4 text-oasis-coral">{error}</p> : null}

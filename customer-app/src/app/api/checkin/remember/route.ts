@@ -4,23 +4,32 @@ import {
   createRememberDevice,
   readPendingCustomerId,
   resolveDeviceCustomer,
+  revokeCurrentDevice,
 } from "@/lib/device";
 import { publicCustomer } from "@/lib/checkin";
+import { getSessionCustomer } from "@/lib/session";
 
 export const preferredRegion = "sin1";
 export const dynamic = "force-dynamic";
 
-/** User agreed to remember this browser/device. */
+/** Save / sync device cookie to the current customer (session > pending > device). */
 export async function POST() {
   try {
     const pendingId = await readPendingCustomerId();
     const already = await resolveDeviceCustomer();
-    const customerId = pendingId || already?.id;
+    const session = await getSessionCustomer().catch(() => null);
+    // Session đang login trên Home luôn là nguồn đúng khi sync device
+    const customerId = session?.id || pendingId || already?.id;
     if (!customerId) {
       return NextResponse.json(
         { error: "Chưa xác định khách. Vui lòng nhập thông tin trước." },
         { status: 400 }
       );
+    }
+
+    // Đổi người → huỷ device cũ rồi tạo mới
+    if (already && already.id !== customerId) {
+      await revokeCurrentDevice().catch(() => undefined);
     }
 
     const customer = await prisma.appCustomer.findUnique({

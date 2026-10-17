@@ -33,7 +33,11 @@ function mapDeskZoneToService(zone: string) {
   return map[zone] || zone;
 }
 
-/** Quầy tạo khách lẻ: lưu tên + SĐT, hiện trên dashboard khu. */
+/**
+ * Quầy + Member / khách lẻ:
+ * - Tạo AppCustomer = tài khoản My Oasis (đăng nhập bằng SĐT)
+ * - Mật khẩu tạm = số điện thoại (khách đổi sau trên app)
+ */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -47,6 +51,8 @@ export async function POST(req: NextRequest) {
       String(body.segment || "WALK_IN").trim().toUpperCase() === "MEMBER"
         ? "MEMBER"
         : "WALK_IN";
+    /** Staff có thể cấp lại mật khẩu tạm = SĐT cho tài khoản đã có */
+    const reissuePassword = body.reissuePassword === true;
     const phoneNormalized = normalizePhone(phoneRaw);
     if (!fullName) {
       return NextResponse.json({ error: "Nhập tên khách." }, { status: 400 });
@@ -61,39 +67,48 @@ export async function POST(req: NextRequest) {
       ? phoneNormalized
       : `0${phoneNormalized}`;
     const shortId = phoneShortId(phoneDisplay);
+    /** Mật khẩu tạm ≥8 ký tự (hashPassword) — dùng SĐT đầy đủ */
+    const temporaryPassword =
+      phoneDisplay.length >= 8
+        ? phoneDisplay
+        : `Oasis${phoneDisplay}`.padEnd(8, "0");
 
     let customer = await prisma.appCustomer.findFirst({
       where: { phoneNormalized },
     });
     let created = false;
+    let issuedPassword: string | null = null;
 
     if (customer) {
+      const patch: Prisma.AppCustomerUpdateInput = {
+        fullName,
+        phone: phoneDisplay,
+        phoneLast4: shortId,
+        shortId,
+        status: "ACTIVE",
+        segment: customer.segment === "VIP" ? "VIP" : wantSegment,
+        ...(!customer.identityToken
+          ? { identityToken: `oq_${randomBytes(18).toString("base64url")}` }
+          : {}),
+      };
+      if (reissuePassword) {
+        patch.passwordHash = await hashPassword(temporaryPassword);
+        issuedPassword = temporaryPassword;
+      }
       customer = await prisma.appCustomer.update({
         where: { id: customer.id },
-        data: {
-          fullName,
-          phone: phoneDisplay,
-          phoneLast4: shortId,
-          shortId,
-          status: "ACTIVE",
-          segment:
-            customer.segment === "VIP" ? "VIP" : wantSegment,
-          ...(!customer.identityToken
-            ? { identityToken: `oq_${randomBytes(18).toString("base64url")}` }
-            : {}),
-        },
+        data: patch,
       });
     } else {
-      const passwordHash = await hashPassword(
-        `desk_${randomBytes(12).toString("base64url")}`
-      );
+      const passwordHash = await hashPassword(temporaryPassword);
       for (let i = 0; i < 6; i++) {
         const customerCode = generateCustomerCode();
         try {
           customer = await prisma.appCustomer.create({
             data: {
               customerCode,
-              username: customerCode,
+              /** Đăng nhập bằng SĐT cũng khớp username */
+              username: phoneNormalized,
               passwordHash,
               status: "ACTIVE",
               fullName,
@@ -104,10 +119,11 @@ export async function POST(req: NextRequest) {
               segment: wantSegment,
               identityToken: `oq_${randomBytes(18).toString("base64url")}`,
               adminConfirmedAt: new Date(),
-              adminNote: `Tạo tại quầy ${zone}`,
+              adminNote: `Tạo tại quầy ${zone} · tài khoản app`,
             },
           });
           created = true;
+          issuedPassword = temporaryPassword;
           break;
         } catch (e) {
           if (
@@ -176,18 +192,31 @@ export async function POST(req: NextRequest) {
       ok: true,
       created,
       scanEventId,
+      /** Chỉ trả khi vừa cấp — NV đọc cho khách đăng nhập app */
+      temporaryPassword: issuedPassword,
+      loginHint: issuedPassword
+        ? `Đăng nhập app: SĐT ${phoneDisplay} · mật khẩu tạm = số điện thoại`
+        : `SĐT đã có tài khoản — khách đăng nhập app bằng SĐT + mật khẩu đã cấp`,
       customer: {
         id: customer.id,
         customerCode: customer.customerCode,
+        username: customer.username,
         fullName: customer.fullName,
         phone: customer.phone,
         shortId: customer.shortId || customer.phoneLast4,
         segment,
-        segmentLabel: segment === "MEMBER" ? "Member" : "Khách lẻ",
+        segmentLabel:
+          segment === "VIP"
+            ? "VIP"
+            : segment === "MEMBER"
+              ? "Member"
+              : "Khách lẻ",
       },
       message: created
-        ? "Đã tạo khách mới."
-        : "SĐT đã có — cập nhật tên và mở khách.",
+        ? "Đã tạo tài khoản app + hiện trên dashboard khu."
+        : issuedPassword
+          ? "Đã cấp lại mật khẩu tạm (= SĐT) và mở khách."
+          : "SĐT đã có tài khoản — cập nhật tên và mở khách.",
     });
   } catch (e) {
     console.error("[desk/create-guest]", e);

@@ -40,14 +40,6 @@ export const HOME_GROUPS: HomeGroup[] = [
         fg: "#3f6212",
         mark: "PB",
       },
-      {
-        code: "GYM",
-        name: "Gym",
-        href: "/services/GYM",
-        bg: "#e0e7ff",
-        fg: "#3730a3",
-        mark: "GYM",
-      },
     ],
   },
   {
@@ -55,14 +47,6 @@ export const HOME_GROUPS: HomeGroup[] = [
     title: "Wellness",
     subtitle: "Chăm sóc",
     services: [
-      {
-        code: "VIP_RESORT",
-        name: "VIP",
-        href: "/services/VIP_RESORT",
-        bg: "#fef3c7",
-        fg: "#92400e",
-        mark: "VIP",
-      },
       {
         code: "SPA",
         name: "Spa",
@@ -132,9 +116,9 @@ const MARKETING_OFFERS: HomeOffer[] = [
     discountVnd: 50_000,
   },
   {
-    id: "spa-hydro",
-    title: "6 gói Hydrotherapy",
-    subtitle: "Giảm 10% gói Spa · từ Hydro Relax",
+    id: "hhg-spa-review-10",
+    title: "Review Google Maps — giảm 10% bill Spa",
+    subtitle: "Review ngay · giảm trực tiếp 10% vào bill Spa",
     zoneCode: "SPA",
     zoneLabel: "Spa",
     href: "/services/SPA",
@@ -142,6 +126,18 @@ const MARKETING_OFFERS: HomeOffer[] = [
       "https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=1200&q=60",
     discountType: "percent",
     discountPercent: 10,
+    sourceLabel: "Ưu đãi HHG Oasis Spa",
+  },
+  {
+    id: "spa-gio-vang",
+    title: "Giờ Vàng Oasis — 199K",
+    subtitle: "T2–T6 · 13:00–16:00 · Gội / Foot / Dưỡng sinh",
+    zoneCode: "SPA",
+    zoneLabel: "Spa",
+    href: "/services/SPA",
+    image:
+      "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=1200&q=60",
+    discountType: "perk",
   },
   {
     id: "olympic-combo",

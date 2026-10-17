@@ -18,6 +18,48 @@ body {
     radial-gradient(900px 500px at 100% 0%, rgba(31, 107, 86, 0.14), transparent 50%),
     linear-gradient(180deg, #f8f4ec 0%, #eef5f1 45%, #f6f1e8 100%);
   color: #0c1f1a;
+  transition: background 0.45s ease, color 0.35s ease;
+}
+
+/* Gói 1 tháng — trắng */
+body.theme-m1 {
+  background: linear-gradient(180deg, #ffffff 0%, #f4f7fb 55%, #eef2f7 100%);
+  color: #0f172a;
+}
+
+/* Gói 3 tháng — xanh biển nhạt */
+body.theme-m3 {
+  background: linear-gradient(180deg, #e8f4fc 0%, #d4ebf8 45%, #c5e3f5 100%);
+  color: #0c4a6e;
+}
+
+/* Gói 6 tháng — cam nhạt */
+body.theme-m6 {
+  background: linear-gradient(180deg, #fff4e8 0%, #ffe4cc 45%, #ffd9b8 100%);
+  color: #9a3412;
+}
+
+/* Gói 12 tháng — đen + chữ vàng */
+body.theme-m12 {
+  background: linear-gradient(180deg, #0a0a0a 0%, #141414 50%, #0f0f0f 100%);
+  color: #f5d76e;
+}
+body.theme-m12 .text-oasis-ink,
+body.theme-m12 .text-oasis-moss,
+body.theme-m12 h1,
+body.theme-m12 h2,
+body.theme-m12 h3 {
+  color: #f5d76e !important;
+}
+body.theme-m12 .text-oasis-mute {
+  color: rgba(245, 215, 110, 0.65) !important;
+}
+body.theme-m12 .bg-white,
+body.theme-m12 .bg-white\/90,
+body.theme-m12 .bg-white\/80,
+body.theme-m12 .bg-white\/70 {
+  background-color: rgba(24, 24, 24, 0.92) !important;
+  color: #f5d76e;
 }
 
 * {

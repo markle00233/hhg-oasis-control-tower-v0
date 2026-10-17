@@ -117,3 +117,160 @@ export async function awardPurchasePoints(opts: {
     throw e;
   }
 }
+
+export {
+  REDEEM_TIER_DRINK,
+  REDEEM_TIER_SWIM,
+  REDEEM_DRINK_MAX_VND,
+  computeGuestPointsRedeem,
+  parsePointsRedeemFromCartItems,
+  cartHasVoucherItem,
+} from "./points-redeem";
+
+/**
+ * Trừ đủ `cost` điểm (idempotent). Không đủ → throws { status: 400 }.
+ */
+export async function redeemPoints(opts: {
+  customerId: string;
+  cost: number;
+  refType: PointRefType | "DESK_REDEEM";
+  refId: string;
+  note?: string;
+}) {
+  if (!POINTS_ENABLED) {
+    return { redeemed: false as const, balance: 0, delta: 0 };
+  }
+  const refId = opts.refId.trim();
+  const cost = Math.round(Number(opts.cost) || 0);
+  if (!opts.customerId || !refId || cost <= 0) {
+    const c = opts.customerId
+      ? await prisma.appCustomer.findUnique({
+          where: { id: opts.customerId },
+          select: { pointsBalance: true },
+        })
+      : null;
+    return {
+      redeemed: false as const,
+      balance: c?.pointsBalance ?? 0,
+      delta: 0,
+    };
+  }
+
+  const existing = await prisma.appPointLedger.findFirst({
+    where: { reason: "REDEEM", refType: opts.refType, refId },
+    select: { id: true, balanceAfter: true, delta: true },
+  });
+  if (existing) {
+    const c = await prisma.appCustomer.findUnique({
+      where: { id: opts.customerId },
+      select: { pointsBalance: true },
+    });
+    return {
+      redeemed: false as const,
+      balance: c?.pointsBalance ?? existing.balanceAfter,
+      delta: existing.delta,
+    };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const before = await tx.appCustomer.findUnique({
+        where: { id: opts.customerId },
+        select: { pointsBalance: true },
+      });
+      if (!before) {
+        throw Object.assign(new Error("Khách không tồn tại."), { status: 404 });
+      }
+      if (before.pointsBalance < cost) {
+        throw Object.assign(
+          new Error(
+            `Không đủ điểm (cần ${cost}, đang có ${before.pointsBalance}).`
+          ),
+          { status: 400 }
+        );
+      }
+      const customer = await tx.appCustomer.update({
+        where: { id: opts.customerId },
+        data: { pointsBalance: { decrement: cost } },
+        select: { pointsBalance: true },
+      });
+      await tx.appPointLedger.create({
+        data: {
+          customerId: opts.customerId,
+          delta: -cost,
+          balanceAfter: customer.pointsBalance,
+          reason: "REDEEM",
+          refType: opts.refType,
+          refId,
+          note: opts.note || `Đổi −${cost} điểm`,
+        },
+      });
+      return customer.pointsBalance;
+    });
+    return { redeemed: true as const, balance: result, delta: -cost };
+  } catch (e) {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === "P2002"
+    ) {
+      const c = await prisma.appCustomer.findUnique({
+        where: { id: opts.customerId },
+        select: { pointsBalance: true },
+      });
+      return {
+        redeemed: false as const,
+        balance: c?.pointsBalance ?? 0,
+        delta: 0,
+      };
+    }
+    throw e;
+  }
+}
+
+/** Hoàn điểm khi quầy từ chối / khách xoá yêu cầu đã đổi điểm. */
+export async function refundRedeemPoints(opts: {
+  customerId: string;
+  cost: number;
+  refId: string;
+  note?: string;
+}) {
+  const cost = Math.round(Number(opts.cost) || 0);
+  const refundRef = `refund:${opts.refId}`;
+  if (!opts.customerId || cost <= 0) {
+    return { refunded: false as const, balance: 0 };
+  }
+  const existing = await prisma.appPointLedger.findFirst({
+    where: {
+      reason: "ADJUST",
+      refType: "SERVICE_CART",
+      refId: refundRef,
+    },
+  });
+  if (existing) {
+    const c = await prisma.appCustomer.findUnique({
+      where: { id: opts.customerId },
+      select: { pointsBalance: true },
+    });
+    return { refunded: false as const, balance: c?.pointsBalance ?? 0 };
+  }
+  const result = await prisma.$transaction(async (tx) => {
+    const customer = await tx.appCustomer.update({
+      where: { id: opts.customerId },
+      data: { pointsBalance: { increment: cost } },
+      select: { pointsBalance: true },
+    });
+    await tx.appPointLedger.create({
+      data: {
+        customerId: opts.customerId,
+        delta: cost,
+        balanceAfter: customer.pointsBalance,
+        reason: "ADJUST",
+        refType: "SERVICE_CART",
+        refId: refundRef,
+        note: opts.note || `Hoàn +${cost} điểm (huỷ đổi điểm)`,
+      },
+    });
+    return customer.pointsBalance;
+  });
+  return { refunded: true as const, balance: result };
+}
