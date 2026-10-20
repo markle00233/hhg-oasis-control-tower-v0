@@ -10,10 +10,10 @@ import { parseCartTableRef } from "@/lib/long-nuong";
 import {
   computeGuestPointsRedeem,
   redeemPoints,
-  refundRedeemPoints,
-  parsePointsRedeemFromCartItems,
+  settlePointsOnCancel,
 } from "@/lib/points";
 import { prisma } from "@/lib/prisma";
+import { isStaffScanVoucher } from "@/lib/voucher-pass";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "sin1";
@@ -292,9 +292,11 @@ export async function POST(req: NextRequest) {
     const {
       consumeMembershipVoucherUse,
     } = await import("@/lib/membership-voucher-qty");
-    const burnIds = savedOfferIds.filter((id) => !isDurationMembershipVoucher(id));
-    const membershipUseIds = savedOfferIds.filter((id) =>
-      isDurationMembershipVoucher(id)
+    const burnIds = savedOfferIds.filter(
+      (id) => !isDurationMembershipVoucher(id) && !isStaffScanVoucher(id)
+    );
+    const membershipUseIds = savedOfferIds.filter(
+      (id) => isDurationMembershipVoucher(id) && !isStaffScanVoucher(id)
     );
     if (burnIds.length) {
       await prisma.appCollectedOffer
@@ -426,15 +428,14 @@ export async function DELETE(req: NextRequest) {
       where: { id: cart.id },
       data: { status: CART_STATUS.CANCELLED },
     });
-    const redeem = parsePointsRedeemFromCartItems(cart.items);
-    if (redeem) {
-      await refundRedeemPoints({
-        customerId: customer.id,
-        cost: redeem.cost,
-        refId: cart.id,
-        note: `Hoàn ${redeem.cost} điểm · khách xoá QR`,
-      }).catch((err) => console.error("[me/cart DELETE refund]", err));
-    }
+    const settled = await settlePointsOnCancel({
+      customerId: customer.id,
+      refIds: [cart.id],
+      note: "Hoàn điểm · khách xoá vé",
+    }).catch((err) => {
+      console.error("[me/cart DELETE refund]", err);
+      return null;
+    });
     // Hoàn lượt voucher hội viên đã trừ khi tạo vé
     {
       const { isLimitedMembershipVoucher } = await import("@/lib/hhg-vouchers");
@@ -481,7 +482,13 @@ export async function DELETE(req: NextRequest) {
         }
       }
     }
-    return NextResponse.json({ ok: true, status: CART_STATUS.CANCELLED });
+    return NextResponse.json({
+      ok: true,
+      status: CART_STATUS.CANCELLED,
+      pointsBalance: settled?.balance ?? null,
+      pointsRefunded: settled?.refunded ?? 0,
+      pointsClawed: settled?.clawed ?? 0,
+    });
   } catch (e) {
     console.error("[me/cart DELETE]", e);
     return NextResponse.json(

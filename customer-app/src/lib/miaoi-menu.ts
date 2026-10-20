@@ -93,11 +93,10 @@ export function formatVnd(n: number) {
 }
 
 export function formatMenuPrice(item: MiaOiMenuItem) {
-  const base = Math.round(item.priceVnd / 1000);
   if (item.priceAltVnd) {
-    return `${base}/${Math.round(item.priceAltVnd / 1000)}`;
+    return `${formatVnd(item.priceVnd)}/${formatVnd(item.priceAltVnd)}`;
   }
-  return String(base);
+  return formatVnd(item.priceVnd);
 }
 
 export function getMiaOiItem(id: string) {

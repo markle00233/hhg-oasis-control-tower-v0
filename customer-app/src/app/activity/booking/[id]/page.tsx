@@ -7,6 +7,7 @@ import { Shell } from "@/components/Shell";
 
 type Detail = {
   bookingCode: string;
+  zoneCode?: string;
   zoneName: string;
   resourceName: string | null;
   startAt: string;
@@ -16,6 +17,7 @@ type Detail = {
   statusLabel: string;
   remainingLabel: string | null;
   showQrHint: boolean;
+  qrToken?: string | null;
   createdAt: string;
   source: string;
 };
@@ -96,21 +98,35 @@ export default function BookingDetailPage() {
               )}
             </div>
 
+            {b.zoneCode === "LONG_NUONG" ? (
+              <p className="rounded-2xl bg-white px-4 py-3 text-sm text-oasis-ink shadow-soft">
+                Quầy sẽ gọi để xác nhận. Khi đến, nói tên hoặc số điện thoại.
+              </p>
+            ) : null}
+
             {b.showQrHint ? (
               <Link
-                href="/qr"
+                href={
+                  b.qrToken
+                    ? `/q/${encodeURIComponent(b.qrToken)}`
+                    : "/qr"
+                }
                 className="flex h-14 items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand"
               >
-                Hiện My Oasis QR
+                {b.qrToken ? "Hiện QR" : "Hiện My Oasis QR"}
               </Link>
             ) : null}
 
             <div className="flex gap-3">
               <Link
-                href="/book/pickleball"
+                href={
+                  b.zoneCode === "LONG_NUONG"
+                    ? "/book/long-nuong"
+                    : "/book/pickleball"
+                }
                 className="flex h-12 flex-1 items-center justify-center rounded-2xl bg-white text-sm font-bold text-oasis-ink shadow-soft"
               >
-                Đặt thêm sân
+                {b.zoneCode === "LONG_NUONG" ? "Đặt bàn khác" : "Đặt thêm sân"}
               </Link>
               <Link
                 href="/home"

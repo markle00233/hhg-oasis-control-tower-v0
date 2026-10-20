@@ -127,7 +127,13 @@ export function parseCartTableRef(items: unknown): {
     const item = raw as Record<string, unknown>;
     const id = String(item.id || "");
     const note = String(item.note || "");
-    if (!id.startsWith("table-") && !note.includes("resourceId:")) continue;
+    if (
+      !id.startsWith("table-") &&
+      !note.includes("resourceId:") &&
+      !note.includes("bookingId:")
+    ) {
+      continue;
+    }
     return {
       resourceId: note.match(/resourceId:([^|]+)/)?.[1]?.trim() || null,
       bookingId: note.match(/bookingId:([^|]+)/)?.[1]?.trim() || null,

@@ -43,18 +43,19 @@ export function DeskQrScanner({ onCode, onClose }: Props) {
       onCodeRef.current(raw.trim());
     }
 
-    async function stopAll() {
+    function releaseStream() {
       nativeAbort?.abort();
       nativeAbort = null;
       stream?.getTracks().forEach((t) => t.stop());
       stream = null;
-      const inst = scanner;
-      scanner = null;
+    }
+
+    async function shutdownScanner(inst: ScannerHandle | null) {
       if (!inst) return;
       try {
-        if (inst.isScanning) await inst.stop();
+        await inst.stop();
       } catch {
-        /* ignore */
+        /* Not started yet: stop() throws instead of rejecting. */
       }
       try {
         inst.clear();
@@ -104,7 +105,7 @@ export function DeskQrScanner({ onCode, onClose }: Props) {
             },
           });
           if (cancelled) {
-            await stopAll();
+            releaseStream();
             return;
           }
 
@@ -164,13 +165,13 @@ export function DeskQrScanner({ onCode, onClose }: Props) {
             onSuccess: (decoded: string) => void,
             onFailure: () => void
           ) => Promise<void>;
-          isScanning: boolean;
         };
         scanner = inst;
 
         const cameras = await Html5Qrcode.getCameras();
         if (cancelled) {
-          await stopAll();
+          scanner = null;
+          await shutdownScanner(inst);
           return;
         }
         if (!cameras.length) {
@@ -199,6 +200,12 @@ export function DeskQrScanner({ onCode, onClose }: Props) {
           () => undefined
         );
 
+        if (cancelled) {
+          scanner = null;
+          await shutdownScanner(inst);
+          return;
+        }
+
         // Strip any accidental media UI on injected <video>
         const vid = host.querySelector("video");
         if (vid) {
@@ -224,27 +231,10 @@ export function DeskQrScanner({ onCode, onClose }: Props) {
 
     return () => {
       cancelled = true;
-      void (async () => {
-        /* cleanup */
-        try {
-          const host = document.getElementById(regionId);
-          if (host) host.innerHTML = "";
-        } catch {
-          /* ignore */
-        }
-      })();
-      // sync stop
-      nativeAbort?.abort();
-      stream?.getTracks().forEach((t) => t.stop());
+      releaseStream();
       const inst = scanner;
-      if (inst) {
-        void inst.stop().catch(() => undefined);
-        try {
-          inst.clear();
-        } catch {
-          /* ignore */
-        }
-      }
+      scanner = null;
+      void shutdownScanner(inst);
     };
   }, [regionId, retryKey]);
 
@@ -313,12 +303,17 @@ export function DeskQrScanner({ onCode, onClose }: Props) {
           type="button"
           onClick={onClose}
           style={{
-            height: 44,
+            height: 36,
+            padding: "0 12px",
             borderRadius: 12,
-            border: "1px solid #e2e8f0",
+            border: "1px solid #cbd5e1",
             background: "#fff",
-            fontWeight: 700,
+            color: "#0f172a",
+            fontWeight: 800,
+            fontSize: 13,
+            lineHeight: 1,
             cursor: "pointer",
+            justifySelf: "start",
           }}
         >
           Đóng

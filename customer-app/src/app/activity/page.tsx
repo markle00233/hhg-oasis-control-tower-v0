@@ -13,6 +13,7 @@ export default function ActivityPage() {
   const [history, setHistory] = useState<ServiceCardViewModel[]>([]);
   const [tab, setTab] = useState<"active" | "upcoming" | "history">("active");
   const [error, setError] = useState("");
+  const [cancellingId, setCancellingId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +48,39 @@ export default function ActivityPage() {
       clearInterval(t);
     };
   }, [router]);
+
+  async function cancelOrder(card: ServiceCardViewModel) {
+    if (cancellingId) return;
+    if (
+      !window.confirm(
+        "Huỷ đơn này? Điểm đã đổi sẽ được hoàn, điểm đã cộng từ đơn sẽ bị thu lại."
+      )
+    ) {
+      return;
+    }
+    setCancellingId(card.id);
+    setError("");
+    try {
+      const res = await fetch("/api/me/orders", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderId: card.referenceId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không huỷ được đơn");
+      const res2 = await fetch("/api/cards/activity", { cache: "no-store" });
+      const next = await res2.json();
+      if (res2.ok) {
+        setActive(next.active || []);
+        setUpcoming(next.upcoming || []);
+        setHistory(next.history || []);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không huỷ được đơn");
+    } finally {
+      setCancellingId("");
+    }
+  }
 
   const list =
     tab === "active" ? active : tab === "upcoming" ? upcoming : history;
@@ -99,7 +133,12 @@ export default function ActivityPage() {
         ) : (
           <div className="space-y-3">
             {list.map((c) => (
-              <ServiceCard key={c.id} card={c} />
+              <ServiceCard
+                key={c.id}
+                card={c}
+                cancelling={cancellingId === c.id}
+                onCancel={(card) => void cancelOrder(card)}
+              />
             ))}
           </div>
         )}

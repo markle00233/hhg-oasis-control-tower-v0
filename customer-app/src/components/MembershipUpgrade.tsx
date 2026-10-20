@@ -273,7 +273,7 @@ export function MembershipUpgrade({
           return (
             <div
               key={t}
-              className="flex w-[70%] max-w-[240px] shrink-0 flex-col rounded-[22px] bg-[#dbeafe] p-4 shadow-soft"
+              className="flex w-[70%] max-w-[240px] shrink-0 flex-col rounded-[22px] bg-white p-4"
               style={{ scrollSnapAlign: "center" }}
             >
               <p className="text-center text-sm font-black tracking-wide text-[#1e3a8a]">
@@ -297,7 +297,7 @@ export function MembershipUpgrade({
                   {c.save}
                 </p>
               ) : (
-                <p className="mt-3 rounded-full bg-[#fef08a]/80 py-1.5 text-center text-[11px] font-bold text-[#1e3a8a]">
+                <p className="mt-3 rounded-full bg-[#fef08a] py-1.5 text-center text-[11px] font-bold text-[#1e3a8a]">
                   Giá {t} tháng
                 </p>
               )}
@@ -305,7 +305,7 @@ export function MembershipUpgrade({
                 {c.perks.slice(0, 3).map((line) => (
                   <li
                     key={line}
-                    className="rounded-xl bg-white/70 px-2.5 py-1.5 text-[11px] font-semibold text-[#1e3a8a]"
+                    className="px-0.5 py-0.5 text-[11px] font-semibold text-[#1e3a8a]"
                   >
                     {line}
                   </li>
