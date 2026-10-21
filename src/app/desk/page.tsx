@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MIAOI_CATEGORIES,
   MIAOI_MENU,
@@ -32,6 +32,7 @@ import { DeskCourtSchedule } from "@/components/desk-court-schedule";
 import { DeskResourceGrid } from "@/components/desk-resource-grid";
 import { DeskQrScanner } from "@/components/DeskQrScanner";
 import { DeskSwimStudents } from "@/components/desk-swim-students";
+import { DeskCalendar } from "@/components/desk-calendar";
 import {
   checkInLabel,
   checkInUiFromCart,
@@ -353,6 +354,11 @@ export default function DeskAdministrationPage() {
   const [ordering, setOrdering] = useState(false);
   const [verifyingScanId, setVerifyingScanId] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  /** YYYY-MM-DD — lọc dashboard theo ngày lịch; null = realtime 12h */
+  const [viewDate, setViewDate] = useState<string | null>(null);
+  const loadSeq = useRef(0);
+  const authFailStreak = useRef(0);
   const [scanError, setScanError] = useState("");
   const [scanBusy, setScanBusy] = useState(false);
   const [scanSession, setScanSession] = useState(0);
@@ -480,42 +486,82 @@ export default function DeskAdministrationPage() {
 
   const load = useCallback(async () => {
     if (!zone) return;
+    const seq = ++loadSeq.current;
     try {
-      const res = await fetch(
-        `/api/crm/desk?hours=12&zone=${encodeURIComponent(zone)}`,
-        { cache: "no-store" }
-      );
-      if (res.status === 401 || res.status === 403) {
+      const qs = new URLSearchParams({
+        hours: "12",
+        zone,
+      });
+      if (viewDate) qs.set("date", viewDate);
+      const res = await fetch(`/api/crm/desk?${qs.toString()}`, {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (seq !== loadSeq.current) return;
+
+      if (res.status === 401) {
+        authFailStreak.current += 1;
+        // Xác nhận session thật sự mất — tránh logout vì race / deploy
+        if (authFailStreak.current < 2) return;
+        const me = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "same-origin",
+        })
+          .then((r) => r.json())
+          .catch(() => null);
+        if (seq !== loadSeq.current) return;
+        if (me?.authenticated === true) {
+          authFailStreak.current = 0;
+          setError("Không tải được dữ liệu quầy. Thử Làm mới.");
+          return;
+        }
         setStep("login");
         setArrivals([]);
         return;
       }
+      if (res.status === 403) {
+        authFailStreak.current = 0;
+        const data = await res.json().catch(() => ({}));
+        setError(
+          typeof data?.error === "string"
+            ? data.error
+            : "Không có quyền khu vực này."
+        );
+        return;
+      }
+
       const data = await res.json();
+      if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(data.error || "Load failed");
+      authFailStreak.current = 0;
       setIsAdmin(!!data.isAdmin);
       setIsSystemAdminUser(!!data.isSystemAdmin);
       setArrivals(data.arrivals || []);
       setError("");
-      setStep("dashboard");
       setSelected((prev) => {
         if (!prev) return null;
         return (data.arrivals || []).find((a: Arrival) => a.id === prev.id) || prev;
       });
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       setError(e instanceof Error ? e.message : "Load failed");
     }
-  }, [zone]);
+  }, [zone, viewDate]);
 
   // Resume session if already logged in for a zone (admin only can re-pick)
   useEffect(() => {
     void (async () => {
       try {
-        const res = await fetch("/api/auth/me", { cache: "no-store" });
+        const res = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
         const data = await res.json();
         if (data?.authenticated !== true || !data.user) return;
         const u = data.user;
         if (u.systemRole === "SYSTEM_ADMIN") {
           setIsAdmin(true);
+          setIsSystemAdminUser(true);
           return;
         }
         if (u.deskZone) {
@@ -546,11 +592,18 @@ export default function DeskAdministrationPage() {
 
   useEffect(() => {
     if (step !== "dashboard" || !zone) return;
+    // Đang mở lịch → tạm dừng poll để UI không giật
+    if (calendarOpen) return;
     void load();
-    const ms = pendingApprovalCount > 0 ? 1200 : 2500;
+    // Lịch sử: không cần poll nhanh. Realtime: chậm hơn trước (tránh lag + logout giả)
+    const ms = viewDate
+      ? 60_000
+      : pendingApprovalCount > 0
+        ? 4_000
+        : 10_000;
     const t = setInterval(() => void load(), ms);
     return () => clearInterval(t);
-  }, [step, zone, load, pendingApprovalCount]);
+  }, [step, zone, load, pendingApprovalCount, calendarOpen, viewDate]);
 
   async function approveCart(
     token: string,
@@ -1661,6 +1714,19 @@ export default function DeskAdministrationPage() {
             type="button"
             style={{
               ...styles.btn,
+              background: "#7c3aed",
+              height: 42,
+              padding: "0 16px",
+              fontSize: 14,
+            }}
+            onClick={() => setCalendarOpen(true)}
+          >
+            Lịch
+          </button>
+          <button
+            type="button"
+            style={{
+              ...styles.btn,
               background: "#1d4ed8",
               height: 42,
               padding: "0 16px",
@@ -1706,6 +1772,58 @@ export default function DeskAdministrationPage() {
           </button>
         </div>
       </header>
+
+      {calendarOpen && zone ? (
+        <DeskCalendar
+          zone={zone}
+          zoneName={zoneName || zone}
+          onClose={() => setCalendarOpen(false)}
+          onSelectDate={(date) => {
+            setCalendarOpen(false);
+            setViewDate(date);
+            setSelected(null);
+          }}
+        />
+      ) : null}
+
+      {viewDate ? (
+        <div
+          style={{
+            margin: "0 0 12px",
+            padding: "12px 14px",
+            borderRadius: 12,
+            background: "#ede9fe",
+            color: "#5b21b6",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ fontWeight: 700, fontSize: 14 }}>
+            Đang xem ngày{" "}
+            {viewDate.split("-").reverse().join("/")} — khách vào / yêu cầu
+            trong ngày
+          </span>
+          <button
+            type="button"
+            style={{
+              ...styles.btn,
+              height: 36,
+              padding: "0 14px",
+              fontSize: 13,
+              background: "#5b21b6",
+            }}
+            onClick={() => {
+              setViewDate(null);
+              setSelected(null);
+            }}
+          >
+            Về hôm nay
+          </button>
+        </div>
+      ) : null}
 
       {error ? <p style={styles.err}>{error}</p> : null}
       {orderMsg ? (
@@ -2289,8 +2407,9 @@ export default function DeskAdministrationPage() {
                   colSpan={hasCatalog ? 10 : 9}
                   style={{ ...styles.td, color: "#64748b", padding: 28 }}
                 >
-                  Chưa có khách gửi yêu cầu / quét QR{" "}
-                  <strong>{zoneName}</strong> trong 12 giờ.
+                  {viewDate
+                    ? `Không có khách vào / yêu cầu tại ${zoneName} ngày ${viewDate.split("-").reverse().join("/")}.`
+                    : `Chưa có khách gửi yêu cầu / quét QR ${zoneName} trong 12 giờ.`}
                 </td>
               </tr>
             ) : (

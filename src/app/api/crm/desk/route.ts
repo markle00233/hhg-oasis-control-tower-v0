@@ -11,6 +11,12 @@ import { DESK_ZONES, deskZoneAliases, getDeskZone } from "@/lib/desk-zones";
 import { prisma } from "@/lib/prisma";
 
 /** Quầy — mỗi yêu cầu QR = 1 dòng (không ghi đè cùng khách). */
+function vnDayBounds(ymd: string) {
+  const start = new Date(`${ymd}T00:00:00+07:00`);
+  const end = new Date(`${ymd}T24:00:00+07:00`);
+  return { start, end };
+}
+
 export async function GET(req: NextRequest) {
   const hours = Math.min(
     Math.max(Number(req.nextUrl.searchParams.get("hours") || 12) || 12, 1),
@@ -19,10 +25,20 @@ export async function GET(req: NextRequest) {
   const zone = String(req.nextUrl.searchParams.get("zone") || "")
     .trim()
     .toUpperCase();
-  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-  const dayStart = new Date();
+  const dateParam = String(req.nextUrl.searchParams.get("date") || "").trim();
+  const viewDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
+
+  let since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  let dayStart = new Date();
   dayStart.setHours(0, 0, 0, 0);
+  let dayEnd: Date | null = null;
   const now = new Date();
+  if (viewDate) {
+    const bounds = vnDayBounds(viewDate);
+    dayStart = bounds.start;
+    dayEnd = bounds.end;
+    since = bounds.start;
+  }
   const aliases = deskZoneAliases(zone);
 
   const zones = DESK_ZONES.map((z) => ({
@@ -60,40 +76,42 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Auto: quá 21:30 VN (hồ/resort) hoặc hết expiresAt → NO_SHOW
-    const poolLike =
-      zone === "OLYMPIC_POOL" ||
-      zone === "RESORT_POOL" ||
-      aliases.includes("OLYMPIC_POOL");
-    if (poolLike && isPastVnCutOff(now)) {
-      await prisma.appServiceCart
-        .updateMany({
-          where: {
-            zoneCode: { in: aliases },
-            status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
-            createdAt: { gte: since },
-          },
-          data: { status: CART_STATUS.NO_SHOW },
-        })
-        .catch(() => undefined);
-    } else {
-      await prisma.appServiceCart
-        .updateMany({
-          where: {
-            zoneCode: { in: aliases },
-            status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
-            expiresAt: { lt: now },
-            createdAt: { gte: since },
-          },
-          data: { status: CART_STATUS.NO_SHOW },
-        })
-        .catch(() => undefined);
+    // Auto NO_SHOW chỉ khi xem realtime (không đụng dữ liệu ngày lịch sử)
+    if (!viewDate) {
+      const poolLike =
+        zone === "OLYMPIC_POOL" ||
+        zone === "RESORT_POOL" ||
+        aliases.includes("OLYMPIC_POOL");
+      if (poolLike && isPastVnCutOff(now)) {
+        await prisma.appServiceCart
+          .updateMany({
+            where: {
+              zoneCode: { in: aliases },
+              status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
+              createdAt: { gte: since },
+            },
+            data: { status: CART_STATUS.NO_SHOW },
+          })
+          .catch(() => undefined);
+      } else {
+        await prisma.appServiceCart
+          .updateMany({
+            where: {
+              zoneCode: { in: aliases },
+              status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
+              expiresAt: { lt: now },
+              createdAt: { gte: since },
+            },
+            data: { status: CART_STATUS.NO_SHOW },
+          })
+          .catch(() => undefined);
+      }
     }
 
     /**
      * Lòng Nướng: booking đã tạo nhưng thiếu cart PENDING → backfill để NV duyệt được.
      */
-    if (zone === "LONG_NUONG") {
+    if (zone === "LONG_NUONG" && !viewDate) {
       try {
         const { createServiceCart } = await import("@/lib/service-cart");
         const orphanBookings = await prisma.appBooking.findMany({
@@ -172,7 +190,10 @@ export async function GET(req: NextRequest) {
           {
             serviceCarts: {
               some: {
-                createdAt: { gte: since },
+                createdAt: {
+                  gte: since,
+                  ...(dayEnd ? { lt: dayEnd } : {}),
+                },
                 zoneCode: { in: aliases },
               },
             },
@@ -181,7 +202,10 @@ export async function GET(req: NextRequest) {
             phoneNormalized: { not: null },
             events: {
               some: {
-                createdAt: { gte: since },
+                createdAt: {
+                  gte: since,
+                  ...(dayEnd ? { lt: dayEnd } : {}),
+                },
                 eventType: "SERVICE_USE",
                 service: { serviceCode: { in: aliases } },
               },
@@ -211,7 +235,10 @@ export async function GET(req: NextRequest) {
         updatedAt: true,
         events: {
           where: {
-            createdAt: { gte: dayStart },
+            createdAt: {
+              gte: dayStart,
+              ...(dayEnd ? { lt: dayEnd } : {}),
+            },
             OR: [
               {
                 eventType: "SERVICE_USE",
@@ -248,7 +275,10 @@ export async function GET(req: NextRequest) {
         },
         orders: {
           where: {
-            createdAt: { gte: dayStart },
+            createdAt: {
+              gte: dayStart,
+              ...(dayEnd ? { lt: dayEnd } : {}),
+            },
             ...(zone === "MIA_OI" ||
             zone === "SAUNA" ||
             zone === "OLYMPIC_POOL"
@@ -276,7 +306,10 @@ export async function GET(req: NextRequest) {
         },
         serviceCarts: {
           where: {
-            createdAt: { gte: since },
+            createdAt: {
+              gte: since,
+              ...(dayEnd ? { lt: dayEnd } : {}),
+            },
             zoneCode: { in: aliases },
           },
           orderBy: { createdAt: "desc" },
@@ -549,6 +582,7 @@ export async function GET(req: NextRequest) {
       zones,
       zone,
       zoneName: meta.name,
+      viewDate: viewDate || null,
       user: toSafeUser(gate.user),
       isAdmin: isDeskAdminForZone(gate.user, zone),
       isSystemAdmin: isSystemAdmin(gate.user),
