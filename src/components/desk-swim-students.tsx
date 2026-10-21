@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   SWIM_PACKAGES,
   formatSwimPrice,
@@ -19,8 +19,40 @@ type Student = {
   bonusVisitsLeft: number;
   status: string;
   note: string | null;
+  hasBillPhoto: boolean;
   updatedAt: string;
 };
+
+const BILL_MAX_CHARS = 700_000;
+
+/** Shrink a phone photo until the data URL is small enough to store and send. */
+async function fileToBillPhoto(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    let maxEdge = 1280;
+    let quality = 0.72;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Không đọc được ảnh bill.");
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      if (dataUrl.startsWith("data:image/jpeg") && dataUrl.length <= BILL_MAX_CHARS) {
+        return dataUrl;
+      }
+      quality = Math.max(0.42, quality - 0.12);
+      maxEdge = Math.round(maxEdge * 0.75);
+    }
+    throw new Error("Ảnh bill quá lớn. Chụp lại gần hơn hoặc rõ hơn.");
+  } finally {
+    bitmap.close();
+  }
+}
 
 const styles = {
   page: {
@@ -37,6 +69,7 @@ const styles = {
     borderRadius: 20,
     padding: 20,
     boxShadow: "0 8px 30px rgba(15,23,42,.06)",
+    overflow: "hidden",
   } as const,
   h1: { margin: 0, fontSize: 26, fontWeight: 800, color: "#0f172a" } as const,
   mute: { margin: "6px 0 0", fontSize: 13, color: "#64748b" } as const,
@@ -55,6 +88,9 @@ const styles = {
     padding: "0 12px",
     fontSize: 14,
     width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
   } as const,
   select: {
     height: 44,
@@ -63,6 +99,9 @@ const styles = {
     padding: "0 12px",
     fontSize: 14,
     width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
     background: "#fff",
   } as const,
   btn: {
@@ -125,6 +164,10 @@ export function DeskSwimStudents({
   const [phone, setPhone] = useState("");
   const [packageId, setPackageId] = useState(SWIM_PACKAGES[0]?.id || "");
   const [note, setNote] = useState("");
+  const [billPhoto, setBillPhoto] = useState("");
+  const [billName, setBillName] = useState("");
+  const [viewingBill, setViewingBill] = useState<string | null>(null);
+  const billInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -145,25 +188,36 @@ export function DeskSwimStudents({
   }, [q, statusFilter]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    const delay = q.trim() ? 280 : 0;
+    const timer = setTimeout(() => {
+      void load();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [load, q]);
 
   async function addStudent(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
+    if (!billPhoto) {
+      setError("Chụp ảnh bill trước khi chốt đơn.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       const res = await fetch("/api/crm/desk/swim-students", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fullName, phone, packageId, note }),
+        body: JSON.stringify({ fullName, phone, packageId, note, billPhoto }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không thêm được");
       setFullName("");
       setPhone("");
       setNote("");
+      setBillPhoto("");
+      setBillName("");
+      if (billInputRef.current) billInputRef.current.value = "";
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Thêm thất bại");
@@ -194,6 +248,38 @@ export function DeskSwimStudents({
     }
   }
 
+  async function onPickBill(file: File | undefined) {
+    if (!file) return;
+    setError("");
+    try {
+      if (!file.type.startsWith("image/")) {
+        throw new Error("Chỉ nhận ảnh bill.");
+      }
+      const dataUrl = await fileToBillPhoto(file);
+      setBillPhoto(dataUrl);
+      setBillName(file.name || "bill.jpg");
+    } catch (err) {
+      setBillPhoto("");
+      setBillName("");
+      setError(err instanceof Error ? err.message : "Không đọc được ảnh bill.");
+    }
+  }
+
+  async function openBill(id: string) {
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/crm/desk/swim-students?photoId=${encodeURIComponent(id)}`,
+        { cache: "no-store" }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không mở được bill");
+      setViewingBill(String(data.billPhoto || ""));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không mở được bill");
+    }
+  }
+
   const pkgGroups = SWIM_PACKAGES.reduce<Record<string, SwimPackage[]>>(
     (acc, p) => {
       (acc[p.programLabel] ||= []).push(p);
@@ -219,7 +305,7 @@ export function DeskSwimStudents({
             <h1 style={styles.h1}>Khách học bơi</h1>
             <p style={styles.mute}>
               Danh sách học viên · trừ buổi / lượt tự chọn · gói theo menu HHG
-              Oasis
+              Oasis. Chụp bill bắt buộc để chốt đơn.
             </p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -238,7 +324,10 @@ export function DeskSwimStudents({
             marginTop: 20,
             display: "grid",
             gap: 10,
-            gridTemplateColumns: "1.2fr 1fr 1.4fr auto",
+            width: "100%",
+            minWidth: 0,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(100%, 11rem), 1fr))",
           }}
         >
           <input
@@ -269,15 +358,84 @@ export function DeskSwimStudents({
               </optgroup>
             ))}
           </select>
-          <button type="submit" style={styles.btn} disabled={busy}>
-            {busy ? "…" : "Thêm"}
+          <button
+            type="submit"
+            style={{
+              ...styles.btn,
+              opacity: busy || !billPhoto ? 0.45 : 1,
+              cursor: busy || !billPhoto ? "not-allowed" : "pointer",
+            }}
+            disabled={busy || !billPhoto}
+          >
+            {busy ? "…" : "Chốt đơn"}
           </button>
+          <p style={{ ...styles.mute, gridColumn: "1 / -1", margin: 0 }}>
+            SĐT trùng số trên tài khoản khách để họ thấy buổi và lượt còn lại.
+          </p>
           <input
             style={{ ...styles.input, gridColumn: "1 / -1" }}
             placeholder="Ghi chú (tuỳ chọn)"
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
+          <div
+            style={{
+              gridColumn: "1 / -1",
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <input
+              ref={billInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                void onPickBill(file);
+              }}
+            />
+            <button
+              type="button"
+              style={styles.ghost}
+              onClick={() => billInputRef.current?.click()}
+            >
+              {billPhoto ? "Chụp lại bill" : "Chụp bill *"}
+            </button>
+            {billPhoto ? (
+              <button
+                type="button"
+                onClick={() => setViewingBill(billPhoto)}
+                style={{
+                  border: "1px solid #e2e8f0",
+                  background: "#fff",
+                  borderRadius: 12,
+                  padding: 0,
+                  cursor: "pointer",
+                  lineHeight: 0,
+                }}
+              >
+                <img
+                  src={billPhoto}
+                  alt={billName || "Bill"}
+                  style={{
+                    height: 64,
+                    width: 64,
+                    objectFit: "cover",
+                    borderRadius: 12,
+                    display: "block",
+                  }}
+                />
+              </button>
+            ) : (
+              <span style={{ ...styles.mute, margin: 0 }}>
+                Bắt buộc ảnh bill thanh toán trước khi chốt đơn.
+              </span>
+            )}
+          </div>
         </form>
 
         <div
@@ -425,6 +583,15 @@ export function DeskSwimStudents({
                             −1 lượt
                           </button>
                         ) : null}
+                        {s.hasBillPhoto ? (
+                          <button
+                            type="button"
+                            style={{ ...styles.ghost, height: 34, fontSize: 12 }}
+                            onClick={() => void openBill(s.id)}
+                          >
+                            Xem bill
+                          </button>
+                        ) : null}
                         {s.status === "ACTIVE" ? (
                           <button
                             type="button"
@@ -457,6 +624,35 @@ export function DeskSwimStudents({
           </table>
         </div>
       </div>
+      {viewingBill ? (
+        <div
+          role="dialog"
+          aria-label="Ảnh bill"
+          onClick={() => setViewingBill(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            background: "rgba(15,23,42,.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <img
+            src={viewingBill}
+            alt="Bill thanh toán"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: "100%",
+              maxHeight: "90dvh",
+              borderRadius: 12,
+              background: "#fff",
+            }}
+          />
+        </div>
+      ) : null}
     </main>
   );
 }

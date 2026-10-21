@@ -1109,6 +1109,9 @@ model AppSwimStudent {
   /// ACTIVE | PAUSED | DONE
   status           String    @default("ACTIVE")
   note             String?
+  /// Ảnh bill — bắt buộc khi chốt đơn gói học bơi.
+  billPhoto        String?
+  billPhotoAt      DateTime?
   startedAt        DateTime  @default(now())
   expiresAt        DateTime?
   createdAt        DateTime  @default(now())

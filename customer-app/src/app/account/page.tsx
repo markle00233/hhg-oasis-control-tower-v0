@@ -58,6 +58,18 @@ export default function AccountPage() {
       validUntilLabel?: string | null;
     }[]
   >([]);
+  const [swimReady, setSwimReady] = useState(false);
+  const [swimLessons, setSwimLessons] = useState<
+    {
+      id: string;
+      packageLabel: string;
+      sessionsTotal: number;
+      sessionsLeft: number;
+      bonusVisitsTotal: number;
+      bonusVisitsLeft: number;
+      status: string;
+    }[]
+  >([]);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -126,18 +138,18 @@ export default function AccountPage() {
       }
       if (!cancelled) setCustomer(meData.customer);
 
-      const [cardsRes, qrRes, offerRes] = await Promise.all([
+      const [cardsRes, qrRes, offerRes, swimRes] = await Promise.all([
         fetch("/api/cards/activity", { cache: "no-store" }),
         fetch("/api/me/qr", { cache: "no-store" }),
         fetch("/api/me/offers", { cache: "no-store" }),
+        fetch("/api/me/swim", { cache: "no-store" }),
       ]);
-      const data = await cardsRes.json();
+      const data = await cardsRes.json().catch(() => ({}));
       if (!cardsRes.ok) {
         if (!cancelled) setError(data.error || "Không tải được thẻ dịch vụ");
-        return;
+      } else if (!cancelled) {
+        setCards([...(data.active || []), ...(data.upcoming || [])]);
       }
-      if (cancelled) return;
-      setCards([...(data.active || []), ...(data.upcoming || [])]);
 
       const QRCode = (await import("qrcode")).default;
       if (qrRes.ok) {
@@ -162,6 +174,16 @@ export default function AccountPage() {
           /* ignore */
         }
       }
+
+      if (swimRes.ok) {
+        try {
+          const sd = await swimRes.json();
+          if (!cancelled && Array.isArray(sd.lessons)) setSwimLessons(sd.lessons);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!cancelled) setSwimReady(true);
 
       await loadCarts(isCancelled);
     })();
@@ -350,6 +372,67 @@ export default function AccountPage() {
             điểm). Đổi: 50đ đồ uống / 100đ vé bơi.
           </p>
         </div>
+
+        <section className="rounded-[22px] bg-white p-4 shadow-soft">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#0369a1]">
+            Gói học bơi
+          </p>
+          {!swimReady ? (
+            <p className="mt-2 text-sm text-oasis-mute">Đang tải buổi học…</p>
+          ) : swimLessons.length === 0 ? (
+            <p className="mt-2 text-sm text-oasis-mute">
+              {customer?.phone
+                ? "Chưa có buổi học gắn với số điện thoại này."
+                : "Thêm số điện thoại trong hồ sơ để xem buổi còn lại."}
+            </p>
+          ) : (
+            <div className="mt-3 space-y-3">
+              {swimLessons.map((lesson) => {
+                const monthly = lesson.sessionsTotal <= 0;
+                const statusLabel =
+                  lesson.status === "ACTIVE"
+                    ? "Đang học"
+                    : lesson.status === "PAUSED"
+                      ? "Tạm dừng"
+                      : "Xong";
+                return (
+                  <article key={lesson.id} className="space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-semibold text-oasis-ink">
+                        {lesson.packageLabel}
+                      </p>
+                      <span className="shrink-0 rounded-full bg-[#e0f2fe] px-2 py-0.5 text-[10px] font-bold text-[#0c4a6e]">
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-2xl bg-[#e0f2fe] px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-[#0369a1]">
+                          Buổi còn lại
+                        </p>
+                        <p className="mt-0.5 font-display text-2xl font-semibold text-[#0c4a6e]">
+                          {monthly
+                            ? "Theo tháng"
+                            : `${lesson.sessionsLeft}/${lesson.sessionsTotal}`}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl bg-[#fef08a] px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-[#0c4a6e]">
+                          Lượt tự chọn
+                        </p>
+                        <p className="mt-0.5 font-display text-2xl font-semibold text-[#0c4a6e]">
+                          {lesson.bonusVisitsTotal > 0
+                            ? `${lesson.bonusVisitsLeft}/${lesson.bonusVisitsTotal}`
+                            : "—"}
+                        </p>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
         {error ? <p className="text-sm text-oasis-coral">{error}</p> : null}
 
