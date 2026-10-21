@@ -29,6 +29,11 @@ export async function GET(req: NextRequest) {
   const viewDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
 
   let since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  // Đặt bàn Lòng Nướng có thể trước 14 ngày — giữ yêu cầu để quầy gọi xác nhận.
+  const cartSinceBase =
+    zone === "LONG_NUONG"
+      ? new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+      : since;
   let dayStart = new Date();
   dayStart.setHours(0, 0, 0, 0);
   let dayEnd: Date | null = null;
@@ -39,6 +44,7 @@ export async function GET(req: NextRequest) {
     dayEnd = bounds.end;
     since = bounds.start;
   }
+  const cartSince = viewDate ? since : cartSinceBase;
   const aliases = deskZoneAliases(zone);
 
   const zones = DESK_ZONES.map((z) => ({
@@ -77,6 +83,7 @@ export async function GET(req: NextRequest) {
 
   try {
     // Auto NO_SHOW chỉ khi xem realtime (không đụng dữ liệu ngày lịch sử)
+    // Quá 21:30 VN (hồ/resort) hoặc hết expiresAt → NO_SHOW
     if (!viewDate) {
       const poolLike =
         zone === "OLYMPIC_POOL" ||
@@ -100,7 +107,7 @@ export async function GET(req: NextRequest) {
               zoneCode: { in: aliases },
               status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
               expiresAt: { lt: now },
-              createdAt: { gte: since },
+              createdAt: { gte: cartSince },
             },
             data: { status: CART_STATUS.NO_SHOW },
           })
@@ -191,7 +198,7 @@ export async function GET(req: NextRequest) {
             serviceCarts: {
               some: {
                 createdAt: {
-                  gte: since,
+                  gte: cartSince,
                   ...(dayEnd ? { lt: dayEnd } : {}),
                 },
                 zoneCode: { in: aliases },
@@ -307,7 +314,7 @@ export async function GET(req: NextRequest) {
         serviceCarts: {
           where: {
             createdAt: {
-              gte: since,
+              gte: cartSince,
               ...(dayEnd ? { lt: dayEnd } : {}),
             },
             zoneCode: { in: aliases },
@@ -416,8 +423,10 @@ export async function GET(req: NextRequest) {
             ? (meta.items as { name?: string; qty?: number }[])
             : [];
           const ticketVerified =
-            e.eventType === "SERVICE_USE" &&
-            (meta.ticketVerified === true || !!meta.orderId);
+            (e.eventType === "SERVICE_USE" &&
+              (meta.ticketVerified === true || !!meta.orderId)) ||
+            (e.eventType === "MIA_OI_ORDER" &&
+              (meta.ticketVerified === true || !!meta.orderId));
           const orderSummary =
             e.eventType === "MIA_OI_ORDER" ||
             e.eventType === "SPA_ORDER" ||
@@ -439,15 +448,33 @@ export async function GET(req: NextRequest) {
             totalVnd:
               typeof meta.totalVnd === "number" ? meta.totalVnd : null,
             orderId: typeof meta.orderId === "string" ? meta.orderId : null,
-            ticketItems: orderItems.map((i) => ({
-              nameVi: String(i.name || ""),
-              qty: Number(i.qty) || 1,
-              unitPriceVnd:
-                typeof (i as { unitPriceVnd?: number }).unitPriceVnd ===
-                "number"
-                  ? (i as { unitPriceVnd: number }).unitPriceVnd
-                  : 0,
-            })),
+            cartToken:
+              typeof meta.cartToken === "string" ? meta.cartToken : null,
+            ticketItems: orderItems.map((i) => {
+              const row = i as {
+                name?: string;
+                qty?: number;
+                unitPriceVnd?: number;
+                itemId?: string;
+                pointsDiscountVnd?: number;
+                pointsRedeemTier?: number | null;
+              };
+              return {
+                nameVi: String(row.name || ""),
+                qty: Number(row.qty) || 1,
+                unitPriceVnd:
+                  typeof row.unitPriceVnd === "number" ? row.unitPriceVnd : 0,
+                itemId: typeof row.itemId === "string" ? row.itemId : "",
+                pointsDiscountVnd:
+                  typeof row.pointsDiscountVnd === "number"
+                    ? row.pointsDiscountVnd
+                    : 0,
+                pointsRedeemTier:
+                  row.pointsRedeemTier === 50 || row.pointsRedeemTier === 100
+                    ? row.pointsRedeemTier
+                    : null,
+              };
+            }),
           };
         });
 
@@ -513,7 +540,10 @@ export async function GET(req: NextRequest) {
                   s.operationalStatus === "ACKNOWLEDGED"
               ) || orders.length > 0);
 
-        const todayPackageVnd = orders.reduce((s, o) => s + o.totalVnd, 0);
+        const todayPackageVnd = orders.reduce(
+          (s, o) => (o.status === "CANCELLED" ? s : s + o.totalVnd),
+          0
+        );
         const cartCreatedAt = latestCart?.createdAt || null;
 
         const phone =

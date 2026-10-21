@@ -39,6 +39,10 @@ import {
   type CheckInUi,
 } from "@/lib/cart-status";
 import { parseCartPromo } from "@/lib/cart-promo";
+import {
+  REDEEM_DRINK_MAX_VND,
+  foldPointsOntoItems,
+} from "@/lib/bill-points";
 
 type CatalogItem = MiaOiMenuItem | SpaMenuItem;
 
@@ -46,6 +50,9 @@ type ScanTicketItem = {
   nameVi: string;
   qty: number;
   unitPriceVnd: number;
+  itemId?: string;
+  pointsDiscountVnd?: number;
+  pointsRedeemTier?: number | null;
 };
 
 type Scan = {
@@ -59,6 +66,7 @@ type Scan = {
   ticketVerified?: boolean;
   totalVnd?: number | null;
   orderId?: string | null;
+  cartToken?: string | null;
   ticketItems?: ScanTicketItem[];
 };
 
@@ -126,7 +134,13 @@ type DeskTicket = {
   orderLabel: string;
   billText: string;
   billTotal: number | null;
-  billItems: { nameVi: string; qty: number; priceVnd?: number }[];
+  billItems: {
+    nameVi: string;
+    qty: number;
+    priceVnd?: number;
+    lineVnd?: number;
+    pointsLabel?: string | null;
+  }[];
   pendingAdmin: boolean;
   needsApproval: boolean;
   checkInUi: CheckInUi;
@@ -158,9 +172,14 @@ function billFromItems(
 function cartOrderLabel(
   status: string | undefined,
   zoneCode: string | null,
-  withCatalog: boolean
+  withCatalog: boolean,
+  adminNote?: string | null
 ) {
   const z = (zoneCode || "").toUpperCase();
+  if (z === "LONG_NUONG") {
+    if (status === "PENDING_APPROVAL") return "Chờ gọi xác nhận";
+    if (status === "OPEN") return "Đã gọi xác nhận";
+  }
   if (status === "USED") {
     return z === "MIA_OI" ? "Đã TT · làm món" : "Đã dùng";
   }
@@ -170,9 +189,70 @@ function cartOrderLabel(
   }
   if (status === "PENDING_APPROVAL") return "Chờ duyệt";
   if (status === "REJECTED") return "Từ chối";
-  if (status === "CANCELLED") return "Khách xoá";
+  if (status === "CANCELLED") {
+    return (adminNote || "").includes("huỷ") ? "Đã huỷ" : "Khách xoá";
+  }
   if (status === "NO_SHOW") return "Không tới";
   return status || "—";
+}
+
+function poolScanGroupKey(row: Scan) {
+  if (row.eventType !== "SERVICE_USE") return `scan:${row.id}`;
+  if (row.orderId) return `order:${row.orderId}`;
+  if (!row.ticketVerified && !row.orderSummary) return "unverified";
+  return `scan:${row.id}`;
+}
+
+/** One confirmed check-in per order, even if several scans were merged. */
+function confirmedPoolBills(scans: Scan[]): Scan[] {
+  const byOrder = new Map<string, Scan>();
+  for (const s of scans) {
+    if (!s.ticketVerified || !s.orderId || !s.ticketItems?.length) continue;
+    const prev = byOrder.get(s.orderId);
+    if (!prev || (!prev.cartToken && s.cartToken)) byOrder.set(s.orderId, s);
+  }
+  return [...byOrder.values()];
+}
+
+function matchConfirmedBill(
+  bills: Scan[],
+  cart: GuestCartPreview,
+  usedCartCount: number
+): Scan | null {
+  const linked = bills.find(
+    (s) => s.cartToken && cart.token && s.cartToken === cart.token
+  );
+  if (linked) return linked;
+  if (cart.status === "USED" && bills.length === 1 && usedCartCount === 1) {
+    return bills[0];
+  }
+  return null;
+}
+
+function billItemsFromPoints(
+  items: {
+    id?: string;
+    nameVi: string;
+    qty: number;
+    unitPriceVnd: number;
+    pointsDiscountVnd?: number;
+    pointsRedeemTier?: number | null;
+  }[]
+) {
+  return foldPointsOntoItems(items).map((v) => ({
+    nameVi: v.nameVi,
+    qty: v.qty,
+    lineVnd: v.netVnd,
+    pointsLabel: v.pointsLabel,
+  }));
+}
+
+function confirmedBillForCart(
+  scans: Scan[],
+  cart: GuestCartPreview,
+  usedCartCount: number
+): Scan | null {
+  return matchConfirmedBill(confirmedPoolBills(scans), cart, usedCartCount);
 }
 
 /** Mỗi cart request = 1 dòng. Cùng khách tạo 3–4 lần → 3–4 dòng. */
@@ -191,6 +271,8 @@ function buildDeskTickets(
         : [];
 
     if (carts.length) {
+      const usedCartCount = carts.filter((c) => c.status === "USED").length;
+      const confirmedBills = confirmedPoolBills(a.todayScans || []);
       for (const cart of carts) {
         const ui = checkInUiFromCart({
           status: cart.status || "OPEN",
@@ -198,17 +280,30 @@ function buildDeskTickets(
           zoneCode: cart.zoneCode || zoneCode || undefined,
         });
         const need = cart.status === "PENDING_APPROVAL";
-        const billItems = (cart.items || [])
-          .filter(
-            (i) =>
-              !String(i.id || "").startsWith("voucher-") &&
-              !String(i.id || "").startsWith("points-redeem-")
-          )
-          .map((i) => ({
-            nameVi: i.nameVi,
-            qty: i.qty,
-            priceVnd: i.priceVnd,
-          }));
+        const confirmed = matchConfirmedBill(
+          confirmedBills,
+          cart,
+          usedCartCount
+        );
+        const billItems = confirmed
+          ? billItemsFromPoints(
+              (confirmed.ticketItems || []).map((i) => ({
+                id: i.itemId,
+                nameVi: i.nameVi,
+                qty: i.qty,
+                unitPriceVnd: i.unitPriceVnd,
+                pointsDiscountVnd: i.pointsDiscountVnd,
+                pointsRedeemTier: i.pointsRedeemTier,
+              }))
+            )
+          : billItemsFromPoints(
+              (cart.items || []).map((i) => ({
+                id: i.id,
+                nameVi: i.nameVi,
+                qty: i.qty,
+                unitPriceVnd: i.priceVnd,
+              }))
+            );
         const promo = parseCartPromo(cart.items);
         const promoLabel =
           cart.promoLabel && cart.promoLabel !== "—"
@@ -221,12 +316,17 @@ function buildDeskTickets(
           scanAt: cart.createdAt || a.lastVisitAt,
           orderStatus:
             cart.status === "USED" || ui === "yes" ? "ordered" : "pending",
-          orderLabel: cartOrderLabel(cart.status, zoneCode, withCatalog),
+          orderLabel: cartOrderLabel(
+            cart.status,
+            zoneCode,
+            withCatalog,
+            cart.adminNote
+          ),
           billText:
-            cart.billText ||
+            (confirmed ? confirmed.orderSummary : cart.billText) ||
             billItems.map((i) => `${i.qty}× ${i.nameVi}`).join(", ") ||
             "—",
-          billTotal: cart.totalVnd,
+          billTotal: confirmed ? confirmed.totalVnd ?? cart.totalVnd : cart.totalVnd,
           billItems,
           pendingAdmin: need,
           needsApproval: need,
@@ -270,6 +370,7 @@ function buildDeskTickets(
       .slice()
       .sort((x, y) => new Date(x.at).getTime() - new Date(y.at).getTime());
     const orders = (a.todayOrders || [])
+      .filter((o) => o.status !== "CANCELLED")
       .slice()
       .sort((x, y) => new Date(x.at).getTime() - new Date(y.at).getTime());
     const slots = Math.max(scans.length, orders.length);
@@ -286,11 +387,13 @@ function buildDeskTickets(
           orderLabel: "Đã order",
           billText: billFromItems(order.items, order.totalVnd),
           billTotal: order.totalVnd,
-          billItems: order.items.map((it) => ({
-            nameVi: it.nameVi,
-            qty: it.qty,
-            priceVnd: it.unitPriceVnd,
-          })),
+          billItems: billItemsFromPoints(
+            order.items.map((it) => ({
+              nameVi: it.nameVi,
+              qty: it.qty,
+              unitPriceVnd: it.unitPriceVnd,
+            }))
+          ),
           pendingAdmin: false,
           needsApproval: false,
           checkInUi: "yes",
@@ -346,12 +449,16 @@ export default function DeskAdministrationPage() {
   const [saving, setSaving] = useState(false);
   const [category, setCategory] = useState(MIAOI_CATEGORIES[0]?.id || "mia");
   const [cart, setCart] = useState<Record<string, CartLine>>({});
+  const [extraRedeemKey, setExtraRedeemKey] = useState<string | null>(null);
   /** Hồ Olympic: giỏ vé theo từng lần quét */
   const [scanCarts, setScanCarts] = useState<
     Record<string, Record<string, number>>
   >({});
   const [orderMsg, setOrderMsg] = useState("");
   const [ordering, setOrdering] = useState(false);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(
+    null
+  );
   const [verifyingScanId, setVerifyingScanId] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -402,25 +509,6 @@ export default function DeskAdministrationPage() {
   const [scanManualDiscount, setScanManualDiscount] = useState<
     Record<string, number>
   >({});
-  /** Claim voucher Spa / LN theo SĐT */
-  const [claimOpen, setClaimOpen] = useState(false);
-  const [claimPhone, setClaimPhone] = useState("");
-  const [claimBusy, setClaimBusy] = useState(false);
-  const [claimError, setClaimError] = useState("");
-  const [claimCustomer, setClaimCustomer] = useState<{
-    id: string;
-    fullName: string | null;
-    phone: string | null;
-    pointsBalance?: number;
-  } | null>(null);
-  const [claimWallet, setClaimWallet] = useState<
-    {
-      offerId: string;
-      title: string;
-      subtitle: string;
-      claimId: string;
-    }[]
-  >([]);
   const [claimLogs, setClaimLogs] = useState<
     {
       id: string;
@@ -432,6 +520,8 @@ export default function DeskAdministrationPage() {
       zoneCode: string;
     }[]
   >([]);
+  const [voucherMsg, setVoucherMsg] = useState("");
+  const [redeemedOpen, setRedeemedOpen] = useState(false);
 
   const zone = picked?.code || null;
   const zoneName = picked?.name || "";
@@ -439,8 +529,6 @@ export default function DeskAdministrationPage() {
   const isSpa = zone === "SAUNA";
   const isPool = zone === "OLYMPIC_POOL";
   const isLongNuong = zone === "LONG_NUONG";
-  /** Claim quầy đã tắt — khách Collect trên Home */
-  const canClaimOffers = false;
   /** Menu phía trên — pool bán vé dưới từng lần quét */
   const hasCatalog = isMiaOi || isSpa;
   const title = dashboardTitle(zoneName || "…");
@@ -457,8 +545,46 @@ export default function DeskAdministrationPage() {
     [arrivals, zone, hasCatalog]
   );
 
+  const poolScanGroups = useMemo(() => {
+    const groups = new Map<string, Scan[]>();
+    if (!isPool || !selected) return groups;
+    for (const row of selected.todayScans || []) {
+      if (row.eventType !== "SERVICE_USE") continue;
+      const key = poolScanGroupKey(row);
+      const list = groups.get(key);
+      if (list) list.push(row);
+      else groups.set(key, [row]);
+    }
+    for (const list of groups.values()) {
+      list.sort(
+        (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+      );
+    }
+    return groups;
+  }, [isPool, selected]);
+
+  const guestCartLines = useMemo(
+    () => approvedCartPoolLines(),
+    [guestCart]
+  );
+
+  const guestConfirmedBill = useMemo(() => {
+    if (!selected || !guestCart || guestCart.status === "PENDING_APPROVAL") {
+      return null;
+    }
+    const used =
+      (selected.carts || []).filter((c) => c.status === "USED").length ||
+      (guestCart.status === "USED" ? 1 : 0);
+    return confirmedBillForCart(selected.todayScans || [], guestCart, used);
+  }, [selected, guestCart]);
+
   const openOrderCount = useMemo(
-    () => deskTickets.filter((t) => t.orderStatus === "pending" && hasCatalog).length,
+    () =>
+      deskTickets.filter((t) => {
+        if (!hasCatalog || t.orderStatus !== "pending") return false;
+        const status = t.cart?.status;
+        return !status || status === "OPEN" || status === "PENDING_APPROVAL";
+      }).length,
     [deskTickets, hasCatalog]
   );
 
@@ -727,6 +853,7 @@ export default function DeskAdministrationPage() {
   function openCustomer(a: Arrival, cart?: GuestCartPreview | null) {
     setSelected(a);
     setCart({});
+    setExtraRedeemKey(null);
     setScanCarts({});
     setOrderMsg("");
     setGuestCart(null);
@@ -851,6 +978,7 @@ export default function DeskAdministrationPage() {
   ) {
     if (!cartPayload) {
       setGuestCart(null);
+      setExtraRedeemKey(null);
       return;
     }
     const rawItems = Array.isArray(cartPayload.items)
@@ -882,7 +1010,7 @@ export default function DeskAdministrationPage() {
       status: cartPayload.status,
       createdAt: cartPayload.createdAt,
     });
-    if (hasCatalog) {
+    if (hasCatalog && zone !== "MIA_OI") {
       const next: Record<string, CartLine> = {};
       for (const it of items) {
         const menuItem = catalogMenu.find((m) => m.id === it.id);
@@ -918,6 +1046,23 @@ export default function DeskAdministrationPage() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Không đọc được QR");
+
+        if (data.mode === "VOUCHER") {
+          setScanOpen(false);
+          setManualToken("");
+          const title = String(data.voucher?.offerTitle || "Voucher");
+          const when = data.log?.at
+            ? new Date(data.log.at).toLocaleString("vi-VN")
+            : "";
+          setVoucherMsg(
+            data.already
+              ? `Already scanned · ${title}${when ? ` · ${when}` : ""}`
+              : `Redeemed · ${title}`
+          );
+          setRedeemedOpen(true);
+          void loadClaimHistory();
+          return;
+        }
 
         const cust = data.customer as {
           id: string;
@@ -1079,6 +1224,38 @@ export default function DeskAdministrationPage() {
     return POOL_MENU.find((i) => i.id === id) || null;
   }
 
+  /** Lines already on an approved Olympic cart — not a second purchase. */
+  function approvedCartPoolLines(): { itemId: string; qty: number }[] {
+    if (!guestCart) return [];
+    const status = String(guestCart.status || "");
+    if (
+      status === "PENDING_APPROVAL" ||
+      status === "USED" ||
+      status === "REJECTED" ||
+      status === "CANCELLED" ||
+      status === "NO_SHOW"
+    ) {
+      return [];
+    }
+    const lines: { itemId: string; qty: number }[] = [];
+    for (const it of guestCart.items) {
+      if (!getPoolItemById(it.id) || it.qty < 1) continue;
+      lines.push({ itemId: it.id, qty: it.qty });
+    }
+    return lines;
+  }
+
+  function mergePoolLines(
+    base: { itemId: string; qty: number }[],
+    extra: { itemId: string; qty: number }[]
+  ) {
+    const qty = new Map<string, number>();
+    for (const line of [...base, ...extra]) {
+      qty.set(line.itemId, (qty.get(line.itemId) || 0) + line.qty);
+    }
+    return [...qty.entries()].map(([itemId, q]) => ({ itemId, qty: q }));
+  }
+
   function patchSelectedScan(scanId: string, patch: Partial<Scan>) {
     setSelected((prev) => {
       if (!prev) return prev;
@@ -1102,14 +1279,25 @@ export default function DeskAdministrationPage() {
     );
   }
 
-  async function verifyPoolScan(scan: Scan) {
+  async function verifyPoolScan(scan: Scan, mode: "cart" | "added" = "added") {
     if (!selected || !isPool) return;
+    if (poolOrderLocked()) {
+      setError("Đơn đã xác thực. Không mua thêm.");
+      return;
+    }
     const row = scanCarts[scan.id] || {};
-    const items = Object.entries(row)
+    const added = Object.entries(row)
       .filter(([, q]) => q > 0)
       .map(([itemId, qty]) => ({ itemId, qty }));
+    const fromCart = approvedCartPoolLines();
+    const items =
+      mode === "cart" ? fromCart : mergePoolLines(fromCart, added);
     if (!items.length) {
-      setError("Chọn ít nhất 1 vé trước khi xác thực.");
+      setError(
+        fromCart.length
+          ? "Giỏ đã duyệt không có vé hợp lệ."
+          : "Chọn ít nhất 1 vé trước khi xác thực."
+      );
       return;
     }
     setVerifyingScanId(scan.id);
@@ -1139,26 +1327,51 @@ export default function DeskAdministrationPage() {
           unitPriceVnd: i.unitPriceVnd,
         })
       );
+      const closedIds: string[] = Array.isArray(data.closedScanIds)
+        ? data.closedScanIds.map((id: unknown) => String(id))
+        : [scan.id];
       setScanCarts((prev) => {
         const next = { ...prev };
-        delete next[scan.id];
+        for (const id of closedIds) delete next[id];
         return next;
       });
       setScanManualDiscount((prev) => {
         const next = { ...prev };
-        delete next[scan.id];
+        for (const id of closedIds) delete next[id];
         return next;
       });
-      patchSelectedScan(scan.id, {
+      const scanPatch: Partial<Scan> = {
         ticketVerified: true,
         orderSummary: data.orderSummary || null,
         totalVnd: data.order?.totalVnd ?? null,
         orderId: data.order?.id ?? null,
         ticketItems,
+      };
+      const closed = new Set(closedIds);
+      setSelected((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          pointsBalance:
+            typeof data.pointsBalance === "number"
+              ? data.pointsBalance
+              : prev.pointsBalance,
+          todayScans: prev.todayScans.map((s) =>
+            closed.has(s.id) ? { ...s, ...scanPatch } : s
+          ),
+        };
       });
-      if (typeof data.pointsBalance === "number" && selected) {
-        setSelected({ ...selected, pointsBalance: data.pointsBalance });
-      }
+      setArrivals((prev) =>
+        prev.map((a) => {
+          if (a.id !== selected.id) return a;
+          return {
+            ...a,
+            todayScans: a.todayScans.map((s) =>
+              closed.has(s.id) ? { ...s, ...scanPatch } : s
+            ),
+          };
+        })
+      );
       const memNote = data.membership?.planLabel
         ? ` · gói ${data.membership.planLabel}`
         : "";
@@ -1242,32 +1455,6 @@ export default function DeskAdministrationPage() {
     }
   }
 
-  async function lookupClaimPhone() {
-    if (!zone || !claimPhone.trim()) {
-      setClaimError("Nhập SĐT khách.");
-      return;
-    }
-    setClaimBusy(true);
-    setClaimError("");
-    setClaimCustomer(null);
-    setClaimWallet([]);
-    try {
-      const q = new URLSearchParams({
-        phone: claimPhone.trim(),
-        zone,
-      });
-      const res = await fetch(`/api/crm/desk/offers?${q}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Không tìm thấy");
-      setClaimCustomer(data.customer);
-      setClaimWallet(Array.isArray(data.wallet) ? data.wallet : []);
-    } catch (e) {
-      setClaimError(e instanceof Error ? e.message : "Tra cứu thất bại");
-    } finally {
-      setClaimBusy(false);
-    }
-  }
-
   async function loadClaimHistory() {
     if (!zone) return;
     try {
@@ -1279,33 +1466,6 @@ export default function DeskAdministrationPage() {
       setClaimLogs(Array.isArray(data.logs) ? data.logs : []);
     } catch {
       /* ignore */
-    }
-  }
-
-  async function claimOffer(offerId: string) {
-    if (!zone || !claimCustomer) return;
-    if (!window.confirm("Claim voucher này tại quầy? Không hoàn lại.")) return;
-    setClaimBusy(true);
-    setClaimError("");
-    try {
-      const res = await fetch("/api/crm/desk/offers", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          zone,
-          customerId: claimCustomer.id,
-          offerId,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Claim thất bại");
-      setClaimWallet((prev) => prev.filter((v) => v.offerId !== offerId));
-      void loadClaimHistory();
-      setOrderMsg(`Đã claim · ${data.offerTitle || offerId}`);
-    } catch (e) {
-      setClaimError(e instanceof Error ? e.message : "Claim thất bại");
-    } finally {
-      setClaimBusy(false);
     }
   }
 
@@ -1325,19 +1485,68 @@ export default function DeskAdministrationPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không undo được");
-      patchSelectedScan(scan.id, {
-        ticketVerified: false,
-        orderSummary: null,
-        totalVnd: null,
-        orderId: null,
-        ticketItems: [],
-      });
-      setOrderMsg(`Đã undo · ${formatTime(scan.at)}`);
+      const reopenedIds: string[] = Array.isArray(data.reopenedScanIds)
+        ? data.reopenedScanIds.map((id: unknown) => String(id))
+        : [scan.id];
+      for (const id of reopenedIds) {
+        patchSelectedScan(id, {
+          ticketVerified: false,
+          orderSummary: null,
+          totalVnd: null,
+          orderId: null,
+          ticketItems: [],
+        });
+      }
+      if (typeof data.pointsBalance === "number") {
+        setSelected((prev) =>
+          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
+        );
+      }
+      const bits = [`Đã undo · ${formatTime(scan.at)}`];
+      if (data.pointsRefunded) bits.push(`hoàn ${data.pointsRefunded} điểm`);
+      if (data.pointsClawed) bits.push(`thu ${data.pointsClawed} điểm`);
+      setOrderMsg(bits.join(" · "));
       void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không undo được");
     } finally {
       setVerifyingScanId(null);
+    }
+  }
+
+  async function cancelMiaOrder(orderId: string) {
+    if (!selected || !isMiaOi || cancellingOrderId) return;
+    if (
+      !window.confirm(
+        "Huỷ đơn này? Điểm đã đổi sẽ được hoàn, điểm đã cộng từ đơn sẽ bị thu lại."
+      )
+    ) {
+      return;
+    }
+    setCancellingOrderId(orderId);
+    setError("");
+    try {
+      const res = await fetch(`/api/crm/miaoi/orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "CANCELLED" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không huỷ được đơn");
+      if (typeof data.pointsBalance === "number") {
+        setSelected((prev) =>
+          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
+        );
+      }
+      const bits = ["Đã huỷ đơn"];
+      if (data.pointsRefunded) bits.push(`hoàn ${data.pointsRefunded} điểm`);
+      if (data.pointsClawed) bits.push(`thu ${data.pointsClawed} điểm`);
+      setOrderMsg(bits.join(" · "));
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không huỷ được đơn");
+    } finally {
+      setCancellingOrderId(null);
     }
   }
 
@@ -1412,6 +1621,9 @@ export default function DeskAdministrationPage() {
 
   function setQty(item: CatalogItem, qty: number, useAlt = false) {
     const key = lineKey(item.id, useAlt);
+    if (qty <= 0) {
+      setExtraRedeemKey((prev) => (prev === key ? null : prev));
+    }
     setCart((prev) => {
       const next = { ...prev };
       if (qty <= 0) delete next[key];
@@ -1485,8 +1697,107 @@ export default function DeskAdministrationPage() {
     }
   }
 
+  function poolOrderLocked() {
+    if (!isPool || !selected) return false;
+    return (selected.todayScans || []).some(
+      (s) => !!s.ticketVerified || !!s.orderId
+    );
+  }
+
+  function miaOrderLocked() {
+    if (!isMiaOi) return false;
+    if (guestConfirmedBill) return true;
+    if (String(guestCart?.status || "") === "USED") return true;
+    return (selected?.todayOrders || []).some((o) => o.status !== "CANCELLED");
+  }
+
+  function miaCartOpen() {
+    if (!isMiaOi || !guestCart) return false;
+    const status = String(guestCart.status || "");
+    if (
+      status === "PENDING_APPROVAL" ||
+      status === "USED" ||
+      status === "REJECTED" ||
+      status === "CANCELLED" ||
+      status === "NO_SHOW"
+    ) {
+      return false;
+    }
+    return guestCart.items.some(
+      (it) =>
+        !it.id.startsWith("voucher-") && !it.id.startsWith("points-redeem-")
+    );
+  }
+
+  function extraRedeemSelection() {
+    if (!isMiaOi || !extraRedeemKey) return null;
+    if ((selected?.pointsBalance ?? 0) < 50) return null;
+    const line = cart[extraRedeemKey];
+    if (!line || line.qty < 1) return null;
+    const item = MIAOI_MENU.find((i) => i.id === line.itemId);
+    if (!item) return null;
+    const unit =
+      line.useAltPrice && item.priceAltVnd ? item.priceAltVnd : item.priceVnd;
+    if (unit <= 0 || unit > REDEEM_DRINK_MAX_VND) return null;
+    return {
+      itemId: line.itemId,
+      useAltPrice: !!line.useAltPrice,
+      unit,
+    };
+  }
+
+  async function confirmMiaCart(mode: "cart" | "added") {
+    if (!selected || !guestCart?.token || !miaCartOpen() || ordering) return;
+    const extras = mode === "added" ? cartLines : [];
+    const redeem = mode === "added" ? extraRedeemSelection() : null;
+    if (mode === "added" && extras.length === 0) {
+      setError("Chọn món gọi thêm, hoặc bấm xác nhận giỏ.");
+      return;
+    }
+    setOrdering(true);
+    setOrderMsg("");
+    setError("");
+    try {
+      const res = await fetch("/api/crm/miaoi/confirm-cart", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          zone: "MIA_OI",
+          token: guestCart.token,
+          extraItems: extras,
+          pointsRedeem: redeem
+            ? {
+                tier: 50,
+                itemId: redeem.itemId,
+                useAltPrice: redeem.useAltPrice,
+              }
+            : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không xác nhận được");
+      setCart({});
+      setExtraRedeemKey(null);
+      setGuestCart((prev) => (prev ? { ...prev, status: "USED" } : prev));
+      if (typeof data.pointsBalance === "number") {
+        setSelected((prev) =>
+          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
+        );
+      }
+      setOrderMsg(
+        `Đã xác nhận · ${formatVnd(data.order?.totalVnd || guestCart.totalVnd)}`
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không xác nhận được");
+    } finally {
+      setOrdering(false);
+    }
+  }
+
   async function saveOrder() {
     if (!selected || !hasCatalog || isPool || cartLines.length === 0) return;
+    if (miaOrderLocked()) return;
     setOrdering(true);
     setOrderMsg("");
     setError("");
@@ -1645,9 +1956,36 @@ export default function DeskAdministrationPage() {
   }
 
   // ── 3) Dashboard khu ─────────────────────────────────────
+  const poolLocked = poolOrderLocked();
   return (
     <main style={styles.page}>
-      <header style={styles.header}>
+      <style>{`
+        .desk-header > div:first-child {
+          flex: 1 1 auto;
+          min-width: 0;
+        }
+        .desk-actions {
+          flex: 0 0 auto;
+          max-width: 100%;
+        }
+        @media (max-width: 760px) {
+          .desk-header {
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+          .desk-actions {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr;
+            justify-content: stretch !important;
+          }
+          .desk-actions button {
+            width: 100%;
+            font-size: 13px;
+            padding: 0 10px;
+          }
+        }
+      `}</style>
+      <header className="desk-header" style={styles.header}>
         <div>
           <p style={styles.eyebrow}>adminAllplace · Quầy phân khu</p>
           <h1 style={styles.h1}>{title}</h1>
@@ -1659,7 +1997,7 @@ export default function DeskAdministrationPage() {
               ? " · bấm Xác nhận để mở QR cho khách"
               : ""}
             {isMiaOi
-              ? " · duyệt QR → quét QR xác nhận TT mới làm món"
+              ? " · duyệt QR → mở khách → Xác nhận (gọi thêm nếu cần) mới làm món"
               : ""}
             {isSpa ? " · bấm dòng để chọn spa" : ""}
             {isPool ? " · sau duyệt: Quét QR khách → Xác thực = check-in" : ""}
@@ -1672,7 +2010,16 @@ export default function DeskAdministrationPage() {
             {isAdmin ? " · admin" : ""}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div
+          className="desk-actions"
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            alignItems: "flex-start",
+          }}
+        >
           {zone &&
           zone !== "SAUNA" &&
           zone !== "SPA" &&
@@ -1680,36 +2027,45 @@ export default function DeskAdministrationPage() {
           zone !== "PICKLEBALL" ? (
             <button
               type="button"
-              style={{
-                ...styles.btn,
-                background: "#7c2d12",
-                height: 42,
-                padding: "0 16px",
-                fontSize: 14,
-              }}
+              style={{ ...styles.actionBtn, background: "#7c2d12" }}
               onClick={() => setResourceMapOpen(true)}
             >
               {zone === "VIP_RESORT" ? "Sơ đồ VIP" : "Sơ đồ bàn"}
             </button>
           ) : null}
-          <button
-            type="button"
+          <div
             style={{
-              ...styles.btn,
-              background: "#0f766e",
-              height: 42,
-              padding: "0 16px",
-              fontSize: 14,
-            }}
-            onClick={() => {
-              setScanError("");
-              setManualToken("");
-              setScanSession((n) => n + 1);
-              setScanOpen(true);
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              alignItems: "stretch",
             }}
           >
-            Quét QR khách
-          </button>
+            <button
+              type="button"
+              style={{ ...styles.actionBtn, background: "#0f766e" }}
+              onClick={() => {
+                setScanError("");
+                setManualToken("");
+                setScanSession((n) => n + 1);
+                setScanOpen(true);
+              }}
+            >
+              Quét QR khách
+            </button>
+            {isSpa || isLongNuong ? (
+              <button
+                type="button"
+                style={styles.actionGhost}
+                onClick={() => {
+                  void loadClaimHistory();
+                  setRedeemedOpen(true);
+                }}
+              >
+                Redeemed vouchers
+              </button>
+            ) : null}
+          </div>
           <button
             type="button"
             style={{
@@ -1725,13 +2081,7 @@ export default function DeskAdministrationPage() {
           </button>
           <button
             type="button"
-            style={{
-              ...styles.btn,
-              background: "#1d4ed8",
-              height: 42,
-              padding: "0 16px",
-              fontSize: 14,
-            }}
+            style={{ ...styles.actionBtn, background: "#1d4ed8" }}
             onClick={() => {
               setCreateGuestError("");
               setGuestName("");
@@ -1742,11 +2092,11 @@ export default function DeskAdministrationPage() {
               setCreateGuestOpen(true);
             }}
           >
-            + Member
+            Thêm Member
           </button>
           <button
             type="button"
-            style={styles.ghost}
+            style={styles.actionGhost}
             onClick={() => {
               try {
                 exportTodayBillsPdf();
@@ -1760,14 +2110,18 @@ export default function DeskAdministrationPage() {
             Xuất all PDF hôm nay
           </button>
           {isSystemAdminUser ? (
-            <button type="button" style={styles.ghost} onClick={backToPick}>
+            <button type="button" style={styles.actionGhost} onClick={backToPick}>
               Đổi khu
             </button>
           ) : null}
-          <button type="button" style={styles.ghost} onClick={() => void load()}>
+          <button type="button" style={styles.actionGhost} onClick={() => void load()}>
             Làm mới
           </button>
-          <button type="button" style={styles.ghost} onClick={() => void logout()}>
+          <button
+            type="button"
+            style={styles.actionGhost}
+            onClick={() => void logout()}
+          >
             Đăng xuất
           </button>
         </div>
@@ -1840,6 +2194,86 @@ export default function DeskAdministrationPage() {
         >
           {orderMsg}
         </p>
+      ) : null}
+      {redeemedOpen && (isSpa || isLongNuong) ? (
+        <div
+          style={styles.modalBackdrop}
+          onClick={() => setRedeemedOpen(false)}
+        >
+          <div
+            style={{ ...styles.modal, maxWidth: 640 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18 }}>Redeemed vouchers</h2>
+                <p style={{ ...styles.mute, margin: "4px 0 0" }}>
+                  Voucher quét riêng, không gắn với đơn dịch vụ.
+                </p>
+              </div>
+              <button
+                type="button"
+                style={styles.closeBtn}
+                onClick={() => setRedeemedOpen(false)}
+              >
+                Đóng
+              </button>
+            </div>
+            {voucherMsg ? (
+              <p
+                style={{
+                  margin: "0 0 10px",
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  background: "#ecfdf5",
+                  color: "#047857",
+                  fontWeight: 700,
+                  fontSize: 13,
+                }}
+              >
+                {voucherMsg}
+              </p>
+            ) : null}
+            {claimLogs.length === 0 ? (
+              <p style={{ ...styles.mute, margin: 0 }}>Chưa có voucher đã đổi.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#78716c" }}>
+                    <th style={{ padding: "6px 8px 6px 0", fontWeight: 700 }}>Customer</th>
+                    <th style={{ padding: "6px 8px", fontWeight: 700 }}>Phone</th>
+                    <th style={{ padding: "6px 8px", fontWeight: 700 }}>Date used</th>
+                    <th style={{ padding: "6px 0 6px 8px", fontWeight: 700 }}>Voucher</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {claimLogs.slice(0, 20).map((l) => (
+                    <tr key={l.id} style={{ borderTop: "1px solid #f5f5f4" }}>
+                      <td style={{ padding: "8px 8px 8px 0" }}>
+                        {l.customerName || "Khách"}
+                      </td>
+                      <td style={{ padding: "8px" }}>{l.phone || "—"}</td>
+                      <td style={{ padding: "8px" }}>
+                        {new Date(l.at).toLocaleString("vi-VN")}
+                      </td>
+                      <td style={{ padding: "8px 0 8px 8px", fontWeight: 700 }}>
+                        {l.offerTitle || "Voucher"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
       ) : null}
 
       {rejectTarget ? (
@@ -2004,7 +2438,7 @@ export default function DeskAdministrationPage() {
             >
               <button
                 type="button"
-                style={styles.ghost}
+                style={styles.closeBtn}
                 disabled={redeemBusy}
                 onClick={() => setRedeemOpen(false)}
               >
@@ -2036,12 +2470,13 @@ export default function DeskAdministrationPage() {
               style={{
                 display: "flex",
                 justifyContent: "space-between",
+                alignItems: "flex-start",
                 gap: 12,
                 marginBottom: 12,
               }}
             >
               <div>
-                <h2 style={{ margin: 0, fontSize: 20 }}>+ Member</h2>
+                <h2 style={{ margin: 0, fontSize: 20 }}>Thêm Member</h2>
                 <p style={{ ...styles.mute, marginTop: 4 }}>
                   Tạo tài khoản app (đăng nhập bằng SĐT) + hiện trên dashboard
                   khu.
@@ -2049,7 +2484,7 @@ export default function DeskAdministrationPage() {
               </div>
               <button
                 type="button"
-                style={styles.ghost}
+                style={styles.closeBtn}
                 disabled={createGuestBusy}
                 onClick={() => {
                   setCreateGuestOpen(false);
@@ -2215,7 +2650,7 @@ export default function DeskAdministrationPage() {
                 >
                   {createGuestBusy
                     ? "Đang tạo…"
-                    : "Tạo tài khoản + hiện dashboard"}
+                    : "Tạo tài khoản"}
                 </button>
               </div>
             )}
@@ -2232,10 +2667,11 @@ export default function DeskAdministrationPage() {
             style={{ ...styles.modal, maxWidth: 480 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div
+              <div
               style={{
                 display: "flex",
                 justifyContent: "space-between",
+                alignItems: "flex-start",
                 gap: 12,
                 marginBottom: 12,
               }}
@@ -2248,7 +2684,7 @@ export default function DeskAdministrationPage() {
               </div>
               <button
                 type="button"
-                style={styles.ghost}
+                style={styles.closeBtn}
                 disabled={scanBusy}
                 onClick={() => setScanOpen(false)}
               >
@@ -2277,7 +2713,7 @@ export default function DeskAdministrationPage() {
                 style={styles.input}
                 value={manualToken}
                 onChange={(e) => setManualToken(e.target.value)}
-                placeholder="oa_… / sc_… hoặc link /c/ /q/"
+                placeholder="oa_… / sc_… / vr_… hoặc link /c/ /q/ /v/"
                 disabled={scanBusy}
               />
               <button
@@ -2349,7 +2785,7 @@ export default function DeskAdministrationPage() {
               </h2>
               <button
                 type="button"
-                style={{ ...styles.ghost, fontWeight: 800 }}
+                style={styles.closeBtn}
                 onClick={() => setResourceMapOpen(false)}
               >
                 Đóng
@@ -2364,27 +2800,17 @@ export default function DeskAdministrationPage() {
         </div>
       ) : null}
 
-      <div style={styles.tableWrap}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            marginBottom: 8,
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>
-            Yêu cầu / duyệt mã
-          </h2>
-          <span style={{ fontSize: 13, color: "#64748b" }}>
+      <div style={styles.sheet}>
+        <div style={styles.sheetBar}>
+          <h2 style={styles.sheetTitle}>Yêu cầu / duyệt mã</h2>
+          <span style={styles.sheetCount}>
             {pendingApprovalCount} chờ duyệt · {deskTickets.length} dòng
             {zone === "LONG_NUONG"
               ? " · mở «Sơ đồ bàn» trên header khi cần"
               : ""}
           </span>
         </div>
+        <div style={styles.tableWrap}>
         <table style={styles.table}>
           <thead>
             <tr>
@@ -2489,9 +2915,12 @@ export default function DeskAdministrationPage() {
                           {t.billItems.slice(0, 6).map((i, idx) => (
                             <li key={`${t.key}-bi-${idx}`}>
                               {i.qty}× {i.nameVi}
-                              {i.priceVnd != null
-                                ? ` · ${formatVnd(i.priceVnd * i.qty)}`
-                                : ""}
+                              {typeof i.lineVnd === "number"
+                                ? ` · ${formatVnd(i.lineVnd)}`
+                                : i.priceVnd != null
+                                  ? ` · ${formatVnd(i.priceVnd * i.qty)}`
+                                  : ""}
+                              {i.pointsLabel ? ` · ${i.pointsLabel}` : ""}
                             </li>
                           ))}
                           {t.billItems.length > 6 ? (
@@ -2585,7 +3014,11 @@ export default function DeskAdministrationPage() {
                             disabled={approvingToken === cartTok}
                             onClick={(e) => void approveCart(cartTok, e)}
                           >
-                            {approvingToken === cartTok ? "…" : "Duyệt"}
+                            {approvingToken === cartTok
+                              ? "…"
+                              : isLongNuong
+                                ? "Đã gọi"
+                                : "Duyệt"}
                           </button>
                           <button
                             type="button"
@@ -2626,11 +3059,17 @@ export default function DeskAdministrationPage() {
                         <span
                           style={{
                             ...styles.badge,
-                            background: "#f1f5f9",
-                            color: "#64748b",
+                            background: (t.cart.adminNote || "").includes("huỷ")
+                              ? "#fee2e2"
+                              : "#f1f5f9",
+                            color: (t.cart.adminNote || "").includes("huỷ")
+                              ? "#b91c1c"
+                              : "#64748b",
                           }}
                         >
-                          Khách xoá
+                          {(t.cart.adminNote || "").includes("huỷ")
+                            ? "Đã huỷ"
+                            : "Khách xoá"}
                         </span>
                       ) : t.cart ? (
                         <span
@@ -2677,11 +3116,15 @@ export default function DeskAdministrationPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {selected ? (
         <div style={styles.modalBackdrop} onClick={() => setSelected(null)}>
-          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+          <div
+            style={{ ...styles.modal, width: "min(860px, 100%)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div
               style={{
                 display: "flex",
@@ -2712,12 +3155,13 @@ export default function DeskAdministrationPage() {
                   </p>
                 ) : null}
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 {(isMiaOi || isPool || isAdmin) && selected ? (
                   <button
                     type="button"
                     style={{
                       ...styles.btn,
+                      flex: "0 0 auto",
                       background: "#b45309",
                       height: 36,
                       padding: "0 12px",
@@ -2730,7 +3174,7 @@ export default function DeskAdministrationPage() {
                 ) : null}
                 <button
                   type="button"
-                  style={styles.ghost}
+                  style={styles.closeBtn}
                   onClick={() => setSelected(null)}
                 >
                   Đóng
@@ -2766,7 +3210,9 @@ export default function DeskAdministrationPage() {
                 >
                   {guestCart.status === "PENDING_APPROVAL"
                     ? "Yêu cầu chờ duyệt"
-                    : "Giỏ QR đã duyệt"}
+                    : guestConfirmedBill
+                      ? "Đơn đã xác thực"
+                      : "Giỏ QR đã duyệt"}
                   {guestCart.zoneName ? ` · ${guestCart.zoneName}` : ""}
                 </p>
                 <ul
@@ -2777,33 +3223,61 @@ export default function DeskAdministrationPage() {
                     color: "#334155",
                   }}
                 >
-                  {guestCart.items.map((it) => (
-                    <li key={`${it.id}-${it.nameVi}`}>
-                      {it.qty}× {it.nameVi}
-                      {it.priceVnd
-                        ? ` · ${formatVnd(it.priceVnd * it.qty)}`
-                        : ""}
+                  {(guestConfirmedBill
+                    ? foldPointsOntoItems(
+                        (guestConfirmedBill.ticketItems || []).map((it) => ({
+                          id: it.itemId,
+                          nameVi: it.nameVi,
+                          qty: it.qty,
+                          unitPriceVnd: it.unitPriceVnd,
+                          pointsDiscountVnd: it.pointsDiscountVnd,
+                          pointsRedeemTier: it.pointsRedeemTier,
+                        }))
+                      )
+                    : foldPointsOntoItems(
+                        guestCart.items.map((it) => ({
+                          id: it.id,
+                          nameVi: it.nameVi,
+                          qty: it.qty,
+                          unitPriceVnd: it.priceVnd,
+                        }))
+                      )
+                  ).map((it) => (
+                    <li key={it.key}>
+                      {it.qty}× {it.nameVi} · {formatVnd(it.netVnd)}
+                      {it.pointsLabel ? ` · ${it.pointsLabel}` : ""}
                     </li>
                   ))}
+                  {!guestConfirmedBill
+                    ? guestCart.items
+                        .filter((it) => it.id.startsWith("voucher-"))
+                        .map((it) => (
+                          <li key={it.id}>
+                            {it.qty}× {it.nameVi}
+                          </li>
+                        ))
+                    : null}
                 </ul>
-                <div
-                  style={{
-                    marginTop: 10,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                  }}
-                >
-                  {guestCart.totalVnd ? (
-                    <p style={{ margin: 0, fontWeight: 800, fontSize: 14 }}>
-                      Tổng {formatVnd(guestCart.totalVnd)}
-                    </p>
-                  ) : (
-                    <span />
-                  )}
-                  {guestCart.status === "PENDING_APPROVAL" && guestCart.token ? (
-                    <div style={{ display: "flex", gap: 8 }}>
+                {(guestConfirmedBill
+                  ? guestConfirmedBill.totalVnd || 0
+                  : guestCart.totalVnd) ? (
+                  <p
+                    style={{
+                      margin: "10px 0 0",
+                      fontWeight: 800,
+                      fontSize: 14,
+                    }}
+                  >
+                    Tổng{" "}
+                    {formatVnd(
+                      guestConfirmedBill
+                        ? guestConfirmedBill.totalVnd || 0
+                        : guestCart.totalVnd
+                    )}
+                  </p>
+                ) : null}
+                {guestCart.status === "PENDING_APPROVAL" && guestCart.token ? (
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                       <button
                         type="button"
                         style={{
@@ -2815,7 +3289,11 @@ export default function DeskAdministrationPage() {
                         disabled={approvingToken === guestCart.token}
                         onClick={() => void approveCart(guestCart.token)}
                       >
-                        {approvingToken === guestCart.token ? "…" : "Duyệt"}
+                        {approvingToken === guestCart.token
+                          ? "…"
+                          : isLongNuong
+                            ? "Đã gọi"
+                            : "Duyệt"}
                       </button>
                       <button
                         type="button"
@@ -2839,16 +3317,23 @@ export default function DeskAdministrationPage() {
                         Không
                       </button>
                     </div>
-                  ) : null}
-                </div>
+                ) : null}
               </div>
             ) : null}
 
-            {hasCatalog ? (
+            {miaOrderLocked() ? null : hasCatalog ? (
               <>
                 <p style={{ marginTop: 18, marginBottom: 8, fontWeight: 800 }}>
-                  {catalogTitle()}
+                  {isMiaOi && miaCartOpen()
+                    ? "Gọi thêm — tuỳ chọn"
+                    : catalogTitle()}
                 </p>
+                {isMiaOi && miaCartOpen() ? (
+                  <p style={{ margin: "0 0 8px", fontSize: 12, color: "#334155" }}>
+                    Khách không gọi thêm thì bấm xác nhận giỏ. Menu chỉ dùng khi
+                    muốn gọi thêm.
+                  </p>
+                ) : null}
                 <div
                   style={{
                     display: "flex",
@@ -2898,9 +3383,22 @@ export default function DeskAdministrationPage() {
 
                     return variants.map(({ useAlt, label }) => {
                       const q = qtyOf(item, useAlt);
+                      const rowKey = lineKey(item.id, useAlt);
+                      const unit =
+                        useAlt && item.priceAltVnd
+                          ? item.priceAltVnd
+                          : item.priceVnd;
+                      const canRedeemExtra =
+                        isMiaOi &&
+                        miaCartOpen() &&
+                        q > 0 &&
+                        unit > 0 &&
+                        unit <= REDEEM_DRINK_MAX_VND &&
+                        (selected?.pointsBalance ?? 0) >= 50;
+                      const redeemOn = canRedeemExtra && extraRedeemKey === rowKey;
                       return (
                         <div
-                          key={lineKey(item.id, useAlt)}
+                          key={rowKey}
                           style={styles.menuRow}
                         >
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -2922,6 +3420,30 @@ export default function DeskAdministrationPage() {
                               gap: 8,
                             }}
                           >
+                            {canRedeemExtra ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExtraRedeemKey(redeemOn ? null : rowKey)
+                                }
+                                style={{
+                                  height: 32,
+                                  padding: "0 8px",
+                                  borderRadius: 10,
+                                  border: redeemOn
+                                    ? "1px solid #f59e0b"
+                                    : "1px solid #e2e8f0",
+                                  background: redeemOn ? "#fffbeb" : "#fff",
+                                  color: "#b45309",
+                                  fontSize: 11,
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {redeemOn ? "✓ Đổi 50 điểm" : "Đổi 50 điểm"}
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               style={styles.qtyBtn}
@@ -2963,16 +3485,19 @@ export default function DeskAdministrationPage() {
                         : "#ecfdf5"
                       : "#f8fafc",
                     display: "flex",
+                    flexWrap: "nowrap",
                     justifyContent: "space-between",
                     alignItems: "center",
                     gap: 12,
                   }}
                 >
-                  <div>
-                    <div style={{ fontWeight: 800 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, whiteSpace: "nowrap" }}>
                       {cartLines.length
-                        ? `${cartLines.reduce((n, l) => n + l.qty, 0)} ${catalogUnit()} · ${formatVnd(cartTotal)}`
-                        : `Chưa chọn ${catalogUnit()}`}
+                        ? `${isMiaOi && miaCartOpen() ? "Gọi thêm " : ""}${cartLines.reduce((n, l) => n + l.qty, 0)} ${catalogUnit()} · ${formatVnd(Math.max(0, cartTotal - (extraRedeemSelection()?.unit || 0)))}${extraRedeemSelection() ? " · Đổi 50 điểm" : ""}`
+                        : isMiaOi && miaCartOpen()
+                          ? "Không gọi thêm"
+                          : `Chưa chọn ${catalogUnit()}`}
                     </div>
                     {orderMsg ? (
                       <div
@@ -2986,19 +3511,59 @@ export default function DeskAdministrationPage() {
                       </div>
                     ) : null}
                   </div>
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.btn,
-                      flex: "0 0 auto",
-                      background: accentColor(),
-                      opacity: cartLines.length && !ordering ? 1 : 0.45,
-                    }}
-                    disabled={!cartLines.length || ordering}
-                    onClick={() => void saveOrder()}
-                  >
-                    {ordering ? "Đang lưu…" : "Lưu đơn"}
-                  </button>
+                  {isMiaOi && miaCartOpen() ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "nowrap",
+                        flex: "0 0 auto",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.btn,
+                          flex: "0 0 auto",
+                          background: "#0f766e",
+                          whiteSpace: "nowrap",
+                          opacity: ordering ? 0.45 : 1,
+                        }}
+                        disabled={ordering}
+                        onClick={() => void confirmMiaCart("cart")}
+                      >
+                        {ordering ? "Đang lưu…" : "Xác nhận, không gọi thêm"}
+                      </button>
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.btn,
+                          flex: "0 0 auto",
+                          background: accentColor(),
+                          whiteSpace: "nowrap",
+                          opacity: cartLines.length && !ordering ? 1 : 0.45,
+                        }}
+                        disabled={!cartLines.length || ordering}
+                        onClick={() => void confirmMiaCart("added")}
+                      >
+                        {ordering ? "Đang lưu…" : "Xác nhận và gọi thêm"}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      style={{
+                        ...styles.btn,
+                        flex: "0 0 auto",
+                        background: accentColor(),
+                        opacity: cartLines.length && !ordering ? 1 : 0.45,
+                      }}
+                      disabled={!cartLines.length || ordering}
+                      onClick={() => void saveOrder()}
+                    >
+                      {ordering ? "Đang lưu…" : "Lưu đơn"}
+                    </button>
+                  )}
                 </div>
               </>
             ) : null}
@@ -3031,27 +3596,37 @@ export default function DeskAdministrationPage() {
                   promo: string | null;
                   total: number | null;
                   note: string | null;
+                  orderId: string | null;
                 };
                 const rows: HistRow[] = [];
+                const confirmedBills = confirmedPoolBills(selected.todayScans || []);
+                const usedCarts = (selected.carts || []).filter(
+                  (c) => c.status === "USED"
+                ).length;
                 for (const cart of selected.carts || []) {
-                  const promo =
-                    cart.promoLabel ||
-                    parseCartPromo(cart.items).label;
-                  const promoClean =
-                    promo && promo !== "—" ? promo : null;
-                  const menu = (cart.items || []).filter(
-                    (i) =>
-                      !String(i.id || "").startsWith("voucher-") &&
-                      !String(i.id || "").startsWith("points-redeem-")
+                  if (
+                    matchConfirmedBill(confirmedBills, cart, usedCarts)
+                  ) {
+                    continue;
+                  }
+                  const promo = parseCartPromo(cart.items);
+                  const views = foldPointsOntoItems(
+                    (cart.items || []).map((i) => ({
+                      id: i.id,
+                      nameVi: i.nameVi,
+                      qty: i.qty,
+                      unitPriceVnd: i.priceVnd,
+                    }))
                   );
-                  const detail =
-                    cart.billText && cart.billText !== "—"
-                      ? cart.billText
-                      : menu.length
-                        ? menu
-                            .map((i) => `${i.qty}× ${i.nameVi}`)
-                            .join(", ")
-                        : null;
+                  const detail = views.length
+                    ? views
+                        .map(
+                          (v) =>
+                            `${v.qty}× ${v.nameVi} · ${formatVnd(v.netVnd)}${v.pointsLabel ? ` · ${v.pointsLabel}` : ""}`
+                        )
+                        .join(", ")
+                    : null;
+                  const promoClean = promo.hasVoucher ? "Voucher" : null;
                   const st = cart.status || "—";
                   const statusColor =
                     st === "USED"
@@ -3067,7 +3642,7 @@ export default function DeskAdministrationPage() {
                     key: `cart-${cart.token}`,
                     at: cart.createdAt || selected.updatedAt,
                     title: "Yêu cầu QR",
-                    status: cartOrderLabel(st, zone, true),
+                    status: cartOrderLabel(st, zone, true, cart.adminNote),
                     statusColor,
                     detail,
                     promo: promoClean,
@@ -3076,6 +3651,7 @@ export default function DeskAdministrationPage() {
                       st === "REJECTED" && cart.adminNote
                         ? cart.adminNote
                         : null,
+                    orderId: null,
                   });
                 }
                 for (const o of selected.todayOrders || []) {
@@ -3084,11 +3660,13 @@ export default function DeskAdministrationPage() {
                     at: o.at,
                     title: "Đơn order",
                     status: o.status,
-                    statusColor: "#047857",
+                    statusColor:
+                      o.status === "CANCELLED" ? "#b91c1c" : "#047857",
                     detail: billFromItems(o.items, o.totalVnd),
                     promo: null,
                     total: o.totalVnd,
                     note: null,
+                    orderId: o.id,
                   });
                 }
                 rows.sort(
@@ -3109,7 +3687,6 @@ export default function DeskAdministrationPage() {
                         key={r.key}
                         style={{
                           padding: "12px 0",
-                          borderBottom: "1px solid #f1f5f9",
                         }}
                       >
                         <div
@@ -3181,15 +3758,42 @@ export default function DeskAdministrationPage() {
                               </p>
                             ) : null}
                           </div>
-                          <span
+                          <div
                             style={{
-                              fontFamily: "ui-monospace, monospace",
-                              fontWeight: 700,
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-end",
+                              gap: 8,
                               flexShrink: 0,
                             }}
                           >
-                            {formatTime(r.at)}
-                          </span>
+                            <span
+                              style={{
+                                fontFamily: "ui-monospace, monospace",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {formatTime(r.at)}
+                            </span>
+                            {isMiaOi &&
+                            r.orderId &&
+                            r.status !== "CANCELLED" ? (
+                              <button
+                                type="button"
+                                style={{
+                                  ...styles.ghost,
+                                  padding: "6px 10px",
+                                  fontSize: 12,
+                                }}
+                                disabled={cancellingOrderId === r.orderId}
+                                onClick={() => void cancelMiaOrder(r.orderId!)}
+                              >
+                                {cancellingOrderId === r.orderId
+                                  ? "…"
+                                  : "Huỷ đơn"}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       </li>
                     ))}
@@ -3200,15 +3804,26 @@ export default function DeskAdministrationPage() {
               <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
                 {selected.todayScans.map((s) => {
                   const verified = !!s.ticketVerified || !!s.orderSummary;
+                  const poolGroup =
+                    isPool && s.eventType === "SERVICE_USE"
+                      ? poolScanGroups.get(poolScanGroupKey(s)) || [s]
+                      : [s];
+                  if (
+                    isPool &&
+                    s.eventType === "SERVICE_USE" &&
+                    s.id !== poolGroup[0]?.id
+                  ) {
+                    return null;
+                  }
                   const totals = scanCartTotal(s.id);
                   const { sum, qty } = totals;
                   const busy = verifyingScanId === s.id;
+                  const cartLines = guestCartLines;
                   return (
                     <li
                       key={s.id}
                       style={{
                         padding: "12px 0",
-                        borderBottom: "1px solid #f1f5f9",
                       }}
                     >
                       <div
@@ -3230,6 +3845,9 @@ export default function DeskAdministrationPage() {
                             }}
                           >
                             {verified ? "Đã xác thực" : "Chưa xác thực"}
+                            {poolGroup.length > 1
+                              ? ` · gộp ${poolGroup.length} lần quét`
+                              : ""}
                           </span>
                           {s.orderSummary ? (
                             <p
@@ -3295,7 +3913,7 @@ export default function DeskAdministrationPage() {
                         </span>
                       </div>
 
-                      {isPool && !verified ? (
+                      {isPool && !verified && !poolLocked ? (
                         <div
                           style={{
                             marginTop: 10,
@@ -3313,8 +3931,34 @@ export default function DeskAdministrationPage() {
                               color: "#0c4a6e",
                             }}
                           >
-                            Chọn vé → Xác thực (giữ giờ vào {formatTime(s.at)})
+                            {cartLines.length
+                              ? `Giỏ đã duyệt · check-in (giữ giờ vào ${formatTime(s.at)})`
+                              : `Chọn vé → Xác thực (giữ giờ vào ${formatTime(s.at)})`}
                           </p>
+                          {cartLines.length ? (
+                            <p
+                              style={{
+                                margin: "0 0 8px",
+                                fontSize: 12,
+                                color: "#334155",
+                              }}
+                            >
+                              Khách không mua thêm thì bấm xác thực giỏ. Bảng
+                              dưới chỉ dùng khi muốn mua thêm.
+                            </p>
+                          ) : null}
+                          {cartLines.length ? (
+                            <p
+                              style={{
+                                margin: "0 0 8px",
+                                fontSize: 12,
+                                fontWeight: 800,
+                                color: "#64748b",
+                              }}
+                            >
+                              Mua thêm — tuỳ chọn
+                            </p>
+                          ) : null}
                           <div style={{ display: "grid", gap: 8 }}>
                             {POOL_MENU.map((item) => {
                               const q = scanQty(s.id, item.id);
@@ -3434,7 +4078,7 @@ export default function DeskAdministrationPage() {
                               <div style={{ fontWeight: 800, fontSize: 13 }}>
                                 {qty ? (
                                   <>
-                                    {qty} món · {formatVnd(sum)}
+                                    Mua thêm {qty} món · {formatVnd(sum)}
                                     {totals.accessoryDiscount > 0 ? (
                                       <span
                                         style={{
@@ -3462,23 +4106,46 @@ export default function DeskAdministrationPage() {
                                       </span>
                                     ) : null}
                                   </>
+                                ) : cartLines.length ? (
+                                  "Không mua thêm"
                                 ) : (
                                   "Chưa chọn vé"
                                 )}
                               </div>
-                              <button
-                                type="button"
-                                style={{
-                                  ...styles.btn,
-                                  flex: "0 0 auto",
-                                  background: "#0c4a6e",
-                                  opacity: qty && !busy ? 1 : 0.45,
-                                }}
-                                disabled={!qty || busy}
-                                onClick={() => void verifyPoolScan(s)}
-                              >
-                                {busy ? "Đang lưu…" : "Xác thực"}
-                              </button>
+                              <div style={{ display: "flex", gap: 8 }}>
+                                {cartLines.length ? (
+                                  <button
+                                    type="button"
+                                    style={{
+                                      ...styles.btn,
+                                      flex: "0 0 auto",
+                                      background: "#0f766e",
+                                      opacity: busy ? 0.45 : 1,
+                                    }}
+                                    disabled={busy}
+                                    onClick={() => void verifyPoolScan(s, "cart")}
+                                  >
+                                    {busy ? "Đang lưu…" : "Xác thực, không mua thêm"}
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  style={{
+                                    ...styles.btn,
+                                    flex: "0 0 auto",
+                                    background: "#0c4a6e",
+                                    opacity: qty && !busy ? 1 : 0.45,
+                                  }}
+                                  disabled={!qty || busy}
+                                  onClick={() => void verifyPoolScan(s, "added")}
+                                >
+                                  {busy
+                                    ? "Đang lưu…"
+                                    : cartLines.length
+                                      ? "Xác thực và mua thêm"
+                                      : "Xác thực"}
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3491,8 +4158,8 @@ export default function DeskAdministrationPage() {
               <p style={styles.mute}>Chưa có lần quét nào hôm nay.</p>
             )}
 
-            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-              {selected.pendingAdmin ? (
+            {selected.pendingAdmin ? (
+              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
                 <button
                   type="button"
                   style={styles.btn}
@@ -3501,16 +4168,8 @@ export default function DeskAdministrationPage() {
                 >
                   {saving ? "Đang lưu…" : "Đã xem"}
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  style={styles.ghost}
-                  onClick={() => setSelected(null)}
-                >
-                  Đóng
-                </button>
-              )}
-            </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -3580,6 +4239,46 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     cursor: "pointer",
   },
+  closeBtn: {
+    border: "1px solid #cbd5e1",
+    borderRadius: 12,
+    height: 36,
+    padding: "0 12px",
+    background: "#fff",
+    color: "#0f172a",
+    fontWeight: 800,
+    fontSize: 13,
+    lineHeight: 1,
+    cursor: "pointer",
+    flex: "0 0 auto",
+    alignSelf: "center",
+    whiteSpace: "nowrap",
+  },
+  actionBtn: {
+    border: 0,
+    borderRadius: 12,
+    padding: "0 14px",
+    height: 42,
+    background: "#1e3a5f",
+    color: "#fff",
+    fontWeight: 800,
+    fontSize: 14,
+    cursor: "pointer",
+    flex: "0 0 auto",
+    whiteSpace: "nowrap",
+  },
+  actionGhost: {
+    border: "1px solid #cbd5e1",
+    borderRadius: 12,
+    padding: "0 14px",
+    height: 42,
+    background: "#fff",
+    fontWeight: 700,
+    fontSize: 14,
+    cursor: "pointer",
+    flex: "0 0 auto",
+    whiteSpace: "nowrap",
+  },
   zoneBtn: {
     display: "flex",
     flexDirection: "column",
@@ -3593,13 +4292,45 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: "center",
   },
   err: { color: "#dc2626", fontSize: 14, maxWidth: 980, margin: "0 auto 12px" },
-  tableWrap: {
+  sheet: {
     maxWidth: 1180,
     margin: "0 auto",
     background: "#fff",
     borderRadius: 18,
-    overflow: "auto",
     boxShadow: "0 10px 30px rgba(15,23,42,.06)",
+  },
+  sheetBar: {
+    position: "sticky",
+    top: 0,
+    zIndex: 6,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    padding: "14px 16px",
+    background: "#fff",
+    borderBottom: "1px solid #f1f5f9",
+    borderRadius: "18px 18px 0 0",
+  },
+  sheetTitle: {
+    margin: 0,
+    flex: "1 1 auto",
+    minWidth: 0,
+    fontSize: 16,
+    fontWeight: 800,
+    lineHeight: 1.3,
+  },
+  sheetCount: {
+    flex: "0 1 auto",
+    maxWidth: "48%",
+    fontSize: 13,
+    lineHeight: 1.35,
+    color: "#64748b",
+    textAlign: "right",
+  },
+  tableWrap: {
+    overflow: "auto",
+    borderRadius: "0 0 18px 18px",
   },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 15 },
   th: {

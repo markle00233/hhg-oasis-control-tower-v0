@@ -743,6 +743,7 @@ model AppCustomer {
   collectedOffers  AppCollectedOffer[]
   pointLedger      AppPointLedger[]
   offerClaimLogs   AppOfferClaimLog[]
+  voucherRedemptions AppVoucherRedemption[]
 
   @@index([status])
   @@index([createdAt])
@@ -813,6 +814,30 @@ model AppOfferClaimLog {
   @@index([customerId, createdAt])
   @@index([createdAt])
   @@map("app_offer_claim_logs")
+}
+
+/// One-time QR for a Spa / Lòng Nướng voucher. Staff scan confirms it.
+model AppVoucherRedemption {
+  id            String    @id @default(cuid())
+  /// Opaque QR token (vr_…)
+  token         String    @unique
+  customerId    String
+  customer      AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  offerId       String
+  offerTitle    String
+  /// SPA | LONG_NUONG
+  zoneCode      String
+  /// OPEN | SCANNED
+  status        String    @default("OPEN")
+  claimLogId    String?
+  scannedAt     DateTime?
+  scannedByName String?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+
+  @@index([customerId, offerId, status])
+  @@index([expiresAt])
+  @@map("app_voucher_redemptions")
 }
 
 /// Multi-select service basket encoded in one QR (opaque token → all items).

@@ -134,6 +134,21 @@ export async function POST(req: NextRequest) {
         data: { status: CART_STATUS.OPEN, adminNote: null },
       });
 
+      if (cart.zoneCode.toUpperCase() === "LONG_NUONG") {
+        const { parseCartTableRef } = await import("@/lib/long-nuong-activate");
+        const ref = parseCartTableRef(cart.items);
+        if (ref.bookingId) {
+          await prisma.appBooking
+            .updateMany({
+              where: { id: ref.bookingId, status: "PENDING" },
+              data: { status: "CONFIRMED" },
+            })
+            .catch((err) =>
+              console.error("[approve-cart long-nuong booking]", err)
+            );
+        }
+      }
+
       // Gói tháng: duyệt → OPEN QR; gắn VIP khi NV quét (resolve-qr).
 
       const pts = await awardCheckInPoints({
@@ -174,23 +189,15 @@ export async function POST(req: NextRequest) {
         console.error("[approve-cart release table]", err)
       );
     }
-    // Hoàn điểm nếu khách đã đổi điểm khi tạo QR
+    let pointsBalance: number | null = null;
     try {
-      const items = Array.isArray(cart.items) ? cart.items : [];
-      for (const row of items) {
-        if (!row || typeof row !== "object") continue;
-        const id = String((row as { id?: string }).id || "");
-        if (!id.startsWith("points-redeem-")) continue;
-        const cost = Math.round(Number(id.replace("points-redeem-", "")) || 0);
-        if (cost !== 50 && cost !== 100) continue;
-        const { refundRedeemPoints } = await import("@/lib/points-refund");
-        await refundRedeemPoints({
-          customerId: cart.customerId,
-          cost,
-          refId: cart.id,
-          note: `Hoàn ${cost} điểm · quầy từ chối`,
-        });
-      }
+      const { settlePointsOnCancel } = await import("@/lib/points-refund");
+      const settled = await settlePointsOnCancel({
+        customerId: cart.customerId,
+        refIds: [cart.id],
+        note: "Hoàn điểm · quầy từ chối",
+      });
+      pointsBalance = settled.balance;
     } catch (err) {
       console.error("[approve-cart refund points]", err);
     }
@@ -225,6 +232,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       cart: serialize(updated),
       customer: cart.customer,
+      pointsBalance,
     });
   } catch (e) {
     console.error("[desk/approve-cart]", e);

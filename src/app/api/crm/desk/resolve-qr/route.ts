@@ -9,8 +9,8 @@ import {
   pickPrimaryOlympicPackage,
 } from "@/lib/olympic-membership";
 import { activatePickleballCourt } from "@/lib/pickleball-activate";
-import { confirmMiaOiCartPayment } from "@/lib/miaoi-confirm-cart";
 import { prisma } from "@/lib/prisma";
+import { redeemVoucherScan, voucherTokenFromScan } from "@/lib/voucher-redeem";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +34,71 @@ export async function POST(req: NextRequest) {
 
     const aliases = deskZoneAliases(zone);
     const now = new Date();
+
+    if (voucherTokenFromScan(raw)) {
+      try {
+        const redeemed = await redeemVoucherScan({
+          raw,
+          deskZone: zone,
+          staffUserId: gate.user.id,
+          staffName: gate.user.displayName || gate.user.username,
+        });
+        if (!redeemed) {
+          return NextResponse.json(
+            { error: "QR voucher không hợp lệ." },
+            { status: 404 }
+          );
+        }
+        const v = redeemed.voucher;
+        return NextResponse.json({
+          ok: true,
+          mode: "VOUCHER",
+          already: redeemed.already,
+          voucher: v
+            ? {
+                token: v.token,
+                offerId: v.offerId,
+                offerTitle: v.offerTitle,
+                zoneCode: v.zoneCode,
+                status: "SCANNED",
+                scannedAt: v.scannedAt,
+                scannedByName: v.scannedByName,
+              }
+            : null,
+          log: redeemed.log
+            ? {
+                id: redeemed.log.id,
+                at: redeemed.log.createdAt,
+                claimedByName: redeemed.log.claimedByName,
+                offerTitle: redeemed.log.offerTitle,
+                note: redeemed.log.note,
+              }
+            : null,
+          customer: {
+            id: redeemed.customer.id,
+            customerCode: redeemed.customer.customerCode,
+            fullName: redeemed.customer.fullName,
+            phone: redeemed.customer.phone,
+            shortId:
+              redeemed.customer.shortId || redeemed.customer.phoneLast4,
+            segment: redeemed.customer.segment,
+          },
+        });
+      } catch (e) {
+        const status =
+          e && typeof e === "object" && "status" in e
+            ? Number((e as { status: number }).status) || 500
+            : 500;
+        if (status >= 500) console.error("[resolve-qr voucher]", e);
+        return NextResponse.json(
+          {
+            error:
+              e instanceof Error ? e.message : "Không xác nhận được voucher",
+          },
+          { status }
+        );
+      }
+    }
 
     // Service-cart QR (multi-select): /q/sc_… carries all chosen items
     const cartToken = raw.includes("/q/")
@@ -108,29 +173,6 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      /** Mía Ơi: quét QR OPEN = xác nhận thanh toán → làm món (cart USED + order). */
-      let miaPaid: { paid?: boolean; already?: boolean; orderId?: string } | null =
-        null;
-      if (zone === "MIA_OI" && cart.status === "OPEN") {
-        let confirmData: Awaited<ReturnType<typeof confirmMiaOiCartPayment>> | null =
-          null;
-        try {
-          confirmData = await confirmMiaOiCartPayment({
-            token: cart.token,
-            staffUserId: gate.user.id,
-          });
-        } catch (err) {
-          console.error("[resolve-qr miaoi confirm]", err);
-        }
-        if (confirmData && confirmData.ok) {
-          miaPaid = {
-            paid: true,
-            already: Boolean(confirmData.already),
-            orderId: confirmData.order?.id,
-          };
-        }
-      }
-
       /** Hồ Olympic — gói tháng: quét QR OPEN = xác nhận nâng cấp → VIP + theme. */
       let membership: {
         planLabel: string;
@@ -203,7 +245,6 @@ export async function POST(req: NextRequest) {
           status:
             tableActivation?.activated ||
             courtActivation?.activated ||
-            miaPaid?.paid ||
             membership
               ? "USED"
               : cart.status,
@@ -225,7 +266,7 @@ export async function POST(req: NextRequest) {
               sessionId: courtActivation.sessionId,
             }
           : null,
-        payment: miaPaid,
+        payment: null,
         membership,
         customer: {
           id: cart.customer.id,

@@ -23,9 +23,20 @@ export async function POST(req: NextRequest) {
     const gate = await requireDeskZone(zone);
     if ("error" in gate) return gate.error;
 
+    const extraItems = Array.isArray(body.extraItems) ? body.extraItems : [];
+    const pointsRedeem =
+      body.pointsRedeem && typeof body.pointsRedeem === "object"
+        ? (body.pointsRedeem as {
+            tier?: number;
+            itemId?: string;
+            useAltPrice?: boolean;
+          })
+        : null;
     const result = await confirmMiaOiCartPayment({
       token,
       staffUserId: gate.user.id,
+      extraItems,
+      pointsRedeem,
     });
     if (!result.ok) {
       return NextResponse.json(

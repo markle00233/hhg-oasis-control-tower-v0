@@ -13,7 +13,15 @@ const TONE: Record<
   mute: { bg: "#f1f5f9", fg: "#475569" },
 };
 
-export function ServiceCard({ card }: { card: ServiceCardViewModel }) {
+export function ServiceCard({
+  card,
+  cancelling,
+  onCancel,
+}: {
+  card: ServiceCardViewModel;
+  cancelling?: boolean;
+  onCancel?: (card: ServiceCardViewModel) => void;
+}) {
   const tone = TONE[card.statusTone || "mute"];
   const clickable = card.href && card.href !== "/activity";
 
@@ -93,12 +101,26 @@ export function ServiceCard({ card }: { card: ServiceCardViewModel }) {
       ) : (
         <div className="flex gap-3 p-4">{body}</div>
       )}
+      {card.canCancel && onCancel ? (
+        <div className="flex justify-end border-t border-oasis-line/60 px-4 py-3">
+          <button
+            type="button"
+            disabled={cancelling}
+            onClick={() => onCancel(card)}
+            className="h-9 rounded-xl border border-oasis-line bg-white px-3 text-[13px] font-extrabold text-oasis-ink disabled:opacity-40"
+          >
+            {cancelling ? "Đang huỷ…" : "Huỷ đơn"}
+          </button>
+        </div>
+      ) : null}
       {card.showQrHint ? (
         <Link
           href={
             card.type === "TICKET" && card.referenceId
-              ? `/q/${card.referenceId}`
-              : "/qr"
+              ? `/q/${encodeURIComponent(card.referenceId)}`
+              : card.qrToken
+                ? `/q/${encodeURIComponent(card.qrToken)}`
+                : "/qr"
           }
           className="flex items-center justify-between border-t border-oasis-line/60 px-4 py-3 text-xs font-semibold text-oasis-mute"
         >

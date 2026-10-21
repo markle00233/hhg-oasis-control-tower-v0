@@ -8,7 +8,13 @@ type CartView = {
   token: string;
   zoneCode: string;
   zoneName: string | null;
-  items: { id: string; nameVi: string; qty: number; priceVnd: number }[];
+  items: {
+    id: string;
+    nameVi: string;
+    qty: number;
+    priceVnd: number;
+    note?: string;
+  }[];
   totalVnd: number;
   status: string;
   customer: {
@@ -18,6 +24,13 @@ type CartView = {
   };
 };
 
+function isNameOnlyRequest(cart: CartView) {
+  return (cart.items || []).some((item) => {
+    const note = String(item.note || "");
+    return item.id === "ln-request" || note.includes("noQr:1");
+  });
+}
+
 export default function ServiceCartQrPage({
   params,
 }: {
@@ -26,6 +39,7 @@ export default function ServiceCartQrPage({
   const { token } = use(params);
   const [cart, setCart] = useState<CartView | null>(null);
   const [error, setError] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +58,36 @@ export default function ServiceCartQrPage({
       cancelled = true;
     };
   }, [token]);
+
+  const nameOnly = cart ? isNameOnlyRequest(cart) : false;
+  const scannable =
+    !nameOnly &&
+    (cart?.status === "OPEN" || cart?.status === "PENDING_APPROVAL");
+
+  useEffect(() => {
+    if (!cart || !scannable) {
+      setQrDataUrl("");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const QRCode = (await import("qrcode")).default;
+        const payload = `${window.location.origin}/q/${encodeURIComponent(token)}`;
+        const url = await QRCode.toDataURL(payload, {
+          width: 280,
+          margin: 2,
+          color: { dark: "#0b1220", light: "#ffffff" },
+        });
+        if (!cancelled) setQrDataUrl(url);
+      } catch {
+        if (!cancelled) setQrDataUrl("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cart, scannable, token]);
 
   return (
     <Shell showNav={false}>
@@ -71,6 +115,30 @@ export default function ServiceCartQrPage({
                 {cart.customer.shortId ? ` · ID ${cart.customer.shortId}` : ""}
               </p>
             </div>
+            {nameOnly ? (
+              <p className="rounded-[28px] bg-white px-5 py-4 text-center text-sm leading-relaxed text-oasis-ink shadow-soft">
+                Quầy sẽ gọi để xác nhận. Khi đến, nói tên hoặc số điện thoại.
+              </p>
+            ) : null}
+            {scannable ? (
+              <div className="flex flex-col items-center rounded-[28px] bg-white p-4 shadow-soft">
+                {qrDataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={qrDataUrl}
+                    alt="QR dịch vụ"
+                    className="h-[240px] w-[240px]"
+                  />
+                ) : (
+                  <div className="grid h-[240px] w-[240px] place-items-center text-sm text-oasis-mute">
+                    Đang tạo QR…
+                  </div>
+                )}
+                <p className="mt-3 text-center text-xs font-semibold text-oasis-mute">
+                  Đưa mã này cho nhân viên quét.
+                </p>
+              </div>
+            ) : null}
             <ul className="space-y-2 rounded-[24px] bg-white/90 p-4 shadow-soft">
               {(cart.items || []).map((i, idx) => (
                 <li
@@ -99,7 +167,9 @@ export default function ServiceCartQrPage({
               ) : null}
             </ul>
             <p className="text-center text-xs text-oasis-mute">
-              Nhân viên quầy đối chiếu danh sách này khi nhận khách.
+              {nameOnly
+                ? "Không cần đưa QR. Nói tên hoặc số điện thoại khi đến."
+                : "Nhân viên quầy đối chiếu danh sách này khi nhận khách."}
             </p>
             <Link
               href="/account"

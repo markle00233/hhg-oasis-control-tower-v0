@@ -61,6 +61,31 @@ export default function AccountPage() {
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [voucherQrBusy, setVoucherQrBusy] = useState<string | null>(null);
+  const [voucherQrError, setVoucherQrError] = useState("");
+
+  async function openVoucherQr(offerId: string) {
+    setVoucherQrBusy(offerId);
+    setVoucherQrError("");
+    try {
+      const res = await fetch("/api/me/voucher-qr", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ offerIds: [offerId] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không tạo được QR voucher");
+      const token = data.passes?.[0]?.token;
+      if (!token) throw new Error("Không tạo được QR voucher");
+      router.push(`/v/${encodeURIComponent(token)}`);
+    } catch (e) {
+      setVoucherQrError(
+        e instanceof Error ? e.message : "Không tạo được QR voucher"
+      );
+    } finally {
+      setVoucherQrBusy(null);
+    }
+  }
 
   async function loadCarts(cancelled: () => boolean) {
     const cartRes = await fetch("/api/me/cart", { cache: "no-store" });
@@ -191,6 +216,38 @@ export default function AccountPage() {
     }));
   }, [cards]);
 
+  async function cancelOrder(card: ServiceCardViewModel) {
+    if (deleting) return;
+    if (
+      !window.confirm(
+        "Huỷ đơn này? Điểm đã đổi sẽ được hoàn, điểm đã cộng từ đơn sẽ bị thu lại."
+      )
+    ) {
+      return;
+    }
+    setDeleting(card.id);
+    setError("");
+    try {
+      const res = await fetch("/api/me/orders", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderId: card.referenceId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không huỷ được đơn");
+      setCards((prev) => prev.filter((c) => c.id !== card.id));
+      if (typeof data.pointsBalance === "number") {
+        setCustomer((prev) =>
+          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không huỷ được đơn");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   async function deleteCart(token: string) {
     if (deleting) return;
     if (!window.confirm("Xoá vé này? Quầy sẽ thấy trạng thái Xóa.")) return;
@@ -205,6 +262,11 @@ export default function AccountPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không xoá được");
       setCarts((prev) => prev.filter((c) => c.token !== token));
+      if (typeof data.pointsBalance === "number") {
+        setCustomer((prev) =>
+          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Xoá thất bại");
     } finally {
@@ -318,10 +380,11 @@ export default function AccountPage() {
               }}
             >
               {vouchers.map((v) => {
-                const href =
-                  v.href.includes("?")
-                    ? `${v.href}&voucher=${encodeURIComponent(v.id)}`
-                    : `${v.href}?voucher=${encodeURIComponent(v.id)}`;
+                const zone = String(v.zoneCode || "").toUpperCase();
+                const separateQr = zone === "SPA" || zone === "LONG_NUONG";
+                const href = v.href.includes("?")
+                  ? `${v.href}&voucher=${encodeURIComponent(v.id)}`
+                  : `${v.href}?voucher=${encodeURIComponent(v.id)}`;
                 const deal =
                   v.discountType === "amount" && v.discountVnd
                     ? `−${new Intl.NumberFormat("vi-VN").format(v.discountVnd)}đ`
@@ -409,15 +472,35 @@ export default function AccountPage() {
                           ? hasQty
                             ? `Hết lượt (0/${v.qtyTotal})`
                             : "Không dùng được"
-                          : v.validUntilLabel
-                            ? `Đến ${v.validUntilLabel} · dùng tại ${v.zoneLabel} →`
-                            : `Chạm để dùng tại ${v.zoneLabel} →`}
+                          : separateQr
+                            ? v.validUntilLabel
+                              ? `Đến ${v.validUntilLabel}`
+                              : v.zoneLabel
+                            : v.validUntilLabel
+                              ? `Đến ${v.validUntilLabel} · dùng tại ${v.zoneLabel} →`
+                              : `Chạm để dùng tại ${v.zoneLabel} →`}
                     </p>
                   </>
                 );
                 return exhausted ? (
                   <div key={v.id} className={cardClass} style={cardStyle}>
                     {body}
+                  </div>
+                ) : separateQr ? (
+                  <div key={v.id} className={cardClass} style={cardStyle}>
+                    {body}
+                    <button
+                      type="button"
+                      disabled={voucherQrBusy === v.id}
+                      onClick={() => void openVoucherQr(v.id)}
+                      className={`mt-3 flex h-10 w-full items-center justify-center rounded-2xl text-xs font-bold ${
+                        vipCard
+                          ? "bg-[#d4af37] text-black"
+                          : "bg-oasis-deep text-oasis-sand"
+                      } disabled:opacity-50`}
+                    >
+                      {voucherQrBusy === v.id ? "…" : "Hiện QR voucher"}
+                    </button>
                   </div>
                 ) : (
                   <Link
@@ -431,6 +514,11 @@ export default function AccountPage() {
                 );
               })}
             </div>
+            {voucherQrError ? (
+              <p className="text-sm font-semibold text-oasis-coral">
+                {voucherQrError}
+              </p>
+            ) : null}
           </section>
         ) : null}
 
@@ -477,7 +565,13 @@ export default function AccountPage() {
               </h2>
               <div className="space-y-3">
                 {g.items.map((card) => (
-                  <WalletCard key={card.id} card={card} qrDataUrl={qrDataUrl} />
+                  <WalletCard
+                    key={card.id}
+                    card={card}
+                    qrDataUrl={qrDataUrl}
+                    cancelling={deleting === card.id}
+                    onCancel={() => void cancelOrder(card)}
+                  />
                 ))}
               </div>
             </section>
@@ -595,9 +689,13 @@ function CartTicketCard({
 function WalletCard({
   card,
   qrDataUrl,
+  cancelling,
+  onCancel,
 }: {
   card: ServiceCardViewModel;
   qrDataUrl: string;
+  cancelling?: boolean;
+  onCancel?: () => void;
 }) {
   const href =
     card.type === "BOOKING" && card.referenceId
@@ -606,26 +704,37 @@ function WalletCard({
         ? card.href
         : "/activity";
   return (
-    <Link
-      href={href}
-      className="flex gap-3 rounded-[22px] bg-white/90 p-3 shadow-soft"
-    >
-      <IdentityQrThumb
-        dataUrl={card.showQrHint ? qrDataUrl : ""}
-        size={72}
-        className="rounded-2xl"
-        asDiv
-      />
-      <div className="min-w-0 flex-1 py-0.5">
-        <p className="text-sm font-bold text-oasis-ink">{card.title}</p>
-        <p className="mt-0.5 text-xs text-oasis-mute">{card.subtitle}</p>
-        {card.statusLabel ? (
-          <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-oasis-moss">
-            {card.statusLabel}
-          </p>
-        ) : null}
-      </div>
-    </Link>
+    <div className="rounded-[22px] bg-white/90 shadow-soft">
+      <Link href={href} className="flex gap-3 p-3">
+        <IdentityQrThumb
+          dataUrl={card.showQrHint ? qrDataUrl : ""}
+          size={72}
+          className="rounded-2xl"
+          asDiv
+        />
+        <div className="min-w-0 flex-1 py-0.5">
+          <p className="text-sm font-bold text-oasis-ink">{card.title}</p>
+          <p className="mt-0.5 text-xs text-oasis-mute">{card.subtitle}</p>
+          {card.statusLabel ? (
+            <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-oasis-moss">
+              {card.statusLabel}
+            </p>
+          ) : null}
+        </div>
+      </Link>
+      {card.canCancel && onCancel ? (
+        <div className="flex justify-end border-t border-oasis-line/60 px-3 py-2">
+          <button
+            type="button"
+            disabled={cancelling}
+            onClick={onCancel}
+            className="h-9 rounded-xl border border-oasis-line bg-white px-3 text-[13px] font-extrabold text-oasis-ink disabled:opacity-40"
+          >
+            {cancelling ? "Đang huỷ…" : "Huỷ đơn"}
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

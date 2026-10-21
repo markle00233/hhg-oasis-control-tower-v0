@@ -22,7 +22,13 @@ export function parseCartTableRef(items: unknown): CartTableRef {
     const id = String(item.id || "");
     const note = String(item.note || "");
     const nameVi = String(item.nameVi || "");
-    if (!id.startsWith("table-") && !note.includes("resourceId:")) continue;
+    if (
+      !id.startsWith("table-") &&
+      !note.includes("resourceId:") &&
+      !note.includes("bookingId:")
+    ) {
+      continue;
+    }
 
     const resourceId =
       (typeof item.resourceId === "string" && item.resourceId) ||
@@ -135,8 +141,6 @@ export async function activateLongNuongTable(opts: {
 /** Free reserved table when request rejected / cancelled. */
 export async function releaseLongNuongTableHold(items: unknown) {
   const ref = parseCartTableRef(items);
-  if (!ref.resourceId) return;
-
   if (ref.bookingId) {
     await prisma.appBooking.updateMany({
       where: {
@@ -148,6 +152,7 @@ export async function releaseLongNuongTableHold(items: unknown) {
       data: { status: "CANCELLED" },
     });
   }
+  if (!ref.resourceId) return;
 
   const active = await prisma.appResourceSession.findFirst({
     where: { resourceId: ref.resourceId, status: "OCCUPIED" },

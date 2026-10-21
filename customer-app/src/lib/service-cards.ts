@@ -19,6 +19,8 @@ export type ServiceCardViewModel = {
   accent: string;
   href: string;
   showQrHint: boolean;
+  /** Service-cart token so "Hiện QR" opens a scannable /q/{token}, not the identity QR. */
+  qrToken?: string | null;
   remainingLabel: string | null;
   referenceId: string;
   bucket: "active" | "upcoming" | "history";
@@ -28,6 +30,8 @@ export type ServiceCardViewModel = {
   /** Voucher / đổi điểm */
   promoLabel?: string | null;
   totalLabel?: string | null;
+  /** Khách được huỷ đơn Mía Ơi / Olympic đã xác nhận trong hôm nay. */
+  canCancel?: boolean;
 };
 
 const ZONE_ACCENT: Record<string, string> = {
@@ -44,6 +48,15 @@ const ZONE_ACCENT: Record<string, string> = {
 
 function accentFor(zone: string) {
   return ZONE_ACCENT[zone] || "#0b1220";
+}
+
+function vnDayKey(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 function pad(n: number) {
@@ -70,7 +83,11 @@ function dateLabel(d: Date) {
   });
 }
 
-function bookingStatusLabel(status: string): string {
+function bookingStatusLabel(status: string, zone?: string): string {
+  if (zone === "LONG_NUONG") {
+    if (status === "PENDING") return "Chờ gọi xác nhận";
+    if (status === "CONFIRMED") return "Đã gọi xác nhận";
+  }
   switch (status) {
     case "PENDING":
       return "Chờ xác nhận";
@@ -157,6 +174,58 @@ function cartStatusTone(status: string): "ok" | "warn" | "bad" | "mute" {
   if (status === "REJECTED" || status === "CANCELLED" || status === "NO_SHOW")
     return "bad";
   return "mute";
+}
+
+function sameBillZone(a: string, b: string) {
+  const norm = (z: string) => {
+    const u = z.toUpperCase();
+    if (u === "OLYMPIC" || u === "OLYMPIC_POOL") return "OLYMPIC_POOL";
+    if (u === "RESORT" || u === "RESORT_POOL") return "RESORT_POOL";
+    return u;
+  };
+  return norm(a) === norm(b);
+}
+
+/** USED cart already represented by the desk order created from it. */
+function usedCartCoveredByOrder(
+  cart: { id: string; zoneCode: string; createdAt: Date; status: string },
+  carts: { id: string; zoneCode: string; status: string; createdAt: Date }[],
+  orders: { createdAt: Date; service: { serviceCode: string } | null }[]
+) {
+  const zoneOrders = orders.filter(
+    (o) =>
+      o.service?.serviceCode &&
+      sameBillZone(o.service.serviceCode, cart.zoneCode) &&
+      o.createdAt.getTime() >= cart.createdAt.getTime() - 60_000 &&
+      o.createdAt.getTime() - cart.createdAt.getTime() < 12 * 60 * 60 * 1000
+  );
+  const zoneCarts = carts.filter(
+    (c) => c.status === "USED" && sameBillZone(c.zoneCode, cart.zoneCode)
+  );
+  return zoneOrders.length === 1 && zoneCarts.length === 1;
+}
+
+function bookingIdsInCartItems(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  const ids: string[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const note = String((item as { note?: unknown }).note || "");
+    const match = note.match(/bookingId:([A-Za-z0-9_-]+)/);
+    if (match) ids.push(match[1]);
+  }
+  return ids;
+}
+
+function cartTokenForBooking(
+  bookingId: string,
+  carts: { token: string; status: string; items: unknown }[]
+) {
+  for (const cart of carts) {
+    if (cart.status !== "PENDING_APPROVAL" && cart.status !== "OPEN") continue;
+    if (bookingIdsInCartItems(cart.items).includes(bookingId)) return cart.token;
+  }
+  return null;
 }
 
 function cartBucket(status: string): "active" | "upcoming" | "history" {
@@ -283,7 +352,11 @@ async function collectCards(
     endAt: { gte: new Date(now.getTime() - 2 * 60 * 60 * 1000) },
   };
 
-  const [bookings, sessions, openOrders, carts, recentUses] = await Promise.all([
+  const sinceHistory = new Date(
+    now.getTime() - (opts.historyLimit > 0 ? 14 : 2) * 24 * 60 * 60 * 1000
+  );
+  const [bookings, sessions, openOrders, carts, recentUses, payLinks] =
+    await Promise.all([
     prisma.appBooking.findMany({
       where:
         opts.historyLimit > 0
@@ -394,6 +467,16 @@ async function collectCards(
           },
         })
       : Promise.resolve([]),
+    prisma.appServiceEvent.findMany({
+      where: {
+        customerId,
+        createdAt: { gte: sinceHistory },
+        eventType: { in: ["SERVICE_USE", "MIA_OI_ORDER"] },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 40,
+      select: { metadata: true },
+    }),
   ]);
 
   const cards: ServiceCardViewModel[] = [];
@@ -431,6 +514,16 @@ async function collectCards(
     });
   }
 
+  const cartTokenByBookingId = new Map<string, string>();
+  for (const cart of carts) {
+    if (cart.status !== "PENDING_APPROVAL" && cart.status !== "OPEN") continue;
+    for (const bookingId of bookingIdsInCartItems(cart.items)) {
+      if (!cartTokenByBookingId.has(bookingId)) {
+        cartTokenByBookingId.set(bookingId, cart.token);
+      }
+    }
+  }
+
   for (const b of bookings) {
     if (bookingIdsWithSession.has(b.id) && b.status === "IN_SERVICE") continue;
     const zone = b.service.serviceCode;
@@ -443,13 +536,15 @@ async function collectCards(
       zoneCode: zone,
       zoneName: b.service.serviceName,
       title: b.service.serviceName,
-      subtitle: resourceName || b.bookingCode,
+      subtitle:
+        resourceName ||
+        (zone === "LONG_NUONG" ? `${b.partySize} khách` : b.bookingCode),
       dateLabel: dateLabel(b.startAt),
       timeLabel: `${hm(b.startAt)} – ${hm(b.endAt)}`,
       resourceName,
       partySize: b.partySize,
       status: b.status,
-      statusLabel: bookingStatusLabel(b.status),
+      statusLabel: bookingStatusLabel(b.status, zone),
       statusTone: (["CANCELLED", "NO_SHOW"].includes(b.status)
         ? "bad"
         : ["COMPLETED"].includes(b.status)
@@ -459,7 +554,14 @@ async function collectCards(
             : "ok") as "ok" | "warn" | "bad" | "mute",
       accent: accentFor(zone),
       href: `/activity/booking/${b.id}`,
-      showQrHint: ["PENDING", "CONFIRMED"].includes(b.status),
+      showQrHint:
+        zone === "LONG_NUONG"
+          ? false
+          : ["PENDING", "CONFIRMED"].includes(b.status),
+      qrToken:
+        zone === "LONG_NUONG"
+          ? null
+          : cartTokenByBookingId.get(b.id) || null,
       remainingLabel:
         bucket === "active" ? remainingBetween(b.endAt, now) : null,
       referenceId: b.id,
@@ -514,11 +616,51 @@ async function collectCards(
       detailLines,
       promoLabel: promoParts.length ? promoParts.join(" · ") : null,
       totalLabel: formatVnd(o.totalVnd),
+      canCancel:
+        o.status !== "CANCELLED" &&
+        ["MIA_OI", "OLYMPIC_POOL", "OLYMPIC"].includes(zone) &&
+        vnDayKey(o.createdAt) === vnDayKey(now),
     });
   }
 
+  const shownOrderIds = new Set(openOrders.map((o) => o.id));
+  const paidCartTokens = new Set<string>();
+  for (const e of payLinks) {
+    const meta =
+      e.metadata && typeof e.metadata === "object"
+        ? (e.metadata as Record<string, unknown>)
+        : {};
+    const token = typeof meta.cartToken === "string" ? meta.cartToken : "";
+    const orderId = typeof meta.orderId === "string" ? meta.orderId : "";
+    const cancelledOrderId =
+      typeof meta.cancelledOrderId === "string" ? meta.cancelledOrderId : "";
+    if (
+      token &&
+      ((orderId && shownOrderIds.has(orderId)) ||
+        (cancelledOrderId && shownOrderIds.has(cancelledOrderId)))
+    ) {
+      paidCartTokens.add(token);
+    }
+  }
+
   for (const cart of carts) {
+    if (
+      (cart.status === "USED" || cart.status === "CANCELLED") &&
+      paidCartTokens.has(cart.token)
+    ) {
+      continue;
+    }
+    if (
+      cart.status === "USED" &&
+      !paidCartTokens.has(cart.token) &&
+      usedCartCoveredByOrder(cart, carts, openOrders)
+    ) {
+      continue;
+    }
     const zone = cart.zoneCode;
+    if (zone === "LONG_NUONG" && bookingIdsInCartItems(cart.items).length) {
+      continue;
+    }
     const promo = parseCartPromoLines(cart.items);
     const bill =
       promo.itemLines.join(", ") || formatVnd(cart.totalVnd);
@@ -643,13 +785,33 @@ export async function getBookingCardDetail(customerId: string, bookingId: string
     endAt: b.endAt.toISOString(),
     partySize: b.partySize,
     status: b.status,
-    statusLabel: bookingStatusLabel(b.status),
+    statusLabel: bookingStatusLabel(b.status, b.service.serviceCode),
     notes: b.notes,
     source: b.source,
     createdAt: b.createdAt.toISOString(),
     bucket,
     remainingLabel:
       bucket === "active" ? remainingBetween(b.endAt, now) : null,
-    showQrHint: ["PENDING", "CONFIRMED"].includes(b.status),
+    showQrHint:
+      b.service.serviceCode === "LONG_NUONG"
+        ? false
+        : ["PENDING", "CONFIRMED"].includes(b.status),
+    qrToken:
+      b.service.serviceCode === "LONG_NUONG"
+        ? null
+        : await cartTokenForBookingId(customerId, b.id),
   };
+}
+
+async function cartTokenForBookingId(customerId: string, bookingId: string) {
+  const carts = await prisma.appServiceCart.findMany({
+    where: {
+      customerId,
+      status: { in: ["PENDING_APPROVAL", "OPEN"] },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: { token: true, status: true, items: true },
+  });
+  return cartTokenForBooking(bookingId, carts);
 }

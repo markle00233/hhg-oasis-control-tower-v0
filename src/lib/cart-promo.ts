@@ -22,7 +22,7 @@ export function parseCartPromo(items: unknown): {
   const hasPointsRedeem = pointsTier != null;
   const parts: string[] = [];
   if (hasVoucher) parts.push("Voucher");
-  if (hasPointsRedeem) parts.push(`Đổi ${pointsTier}đ`);
+  if (hasPointsRedeem) parts.push(`Đổi ${pointsTier} điểm`);
   return {
     hasVoucher,
     hasPointsRedeem,

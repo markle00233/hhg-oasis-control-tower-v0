@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
 import { OrderQrSuccess } from "@/components/OrderQrSuccess";
+import { isValidPhone } from "@/lib/phone";
 import {
   LONG_NUONG_CLOSE_MIN,
   LONG_NUONG_OPEN_MIN,
@@ -15,6 +16,9 @@ import {
   validateArrival,
   type TableVisualStatus,
 } from "@/lib/long-nuong";
+
+/** Tạm ẩn sơ đồ 30 bàn. Bật lại khi chọn bàn trở lại. */
+const SHOW_TABLE_BOARD = false;
 
 type Table = {
   id: string;
@@ -30,11 +34,16 @@ export default function LongNuongBookPage() {
   const dates = useMemo(() => buildDateOptions(14), []);
   const todayKey = useMemo(() => localDayKey(), []);
 
-  const [step, setStep] = useState<"board" | "confirm" | "success">("board");
+  const [step, setStep] = useState<"board" | "confirm" | "success">(
+    SHOW_TABLE_BOARD ? "board" : "confirm"
+  );
   const [tables, setTables] = useState<Table[]>([]);
   const [tableId, setTableId] = useState("");
   const [dateKey, setDateKey] = useState(todayKey);
   const [arriveHm, setArriveHm] = useState("");
+  const [guestName, setGuestName] = useState("");
+  const [guestPhone, setGuestPhone] = useState("");
+  const [partySize, setPartySize] = useState(2);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -43,6 +52,9 @@ export default function LongNuongBookPage() {
     tableName: string;
     bookingCode: string;
     arriveLabel: string;
+    partySize: number;
+    guestName: string;
+    guestPhone: string;
     cartToken: string;
     cartStatus: string;
     payload: string | null;
@@ -54,11 +66,16 @@ export default function LongNuongBookPage() {
   const loadKey = step === "board" ? todayKey : dateKey;
 
   const validated = useMemo(() => {
-    if (!selected || !arriveHm) return null;
-    return validateArrival(dateKey, arriveHm, selected.bookings || []);
+    if (!arriveHm) return null;
+    if (SHOW_TABLE_BOARD && !selected) return null;
+    return validateArrival(dateKey, arriveHm, selected?.bookings || []);
   }, [selected, arriveHm, dateKey]);
 
   const rangeOk = validated?.ok === true;
+  const nameOk = guestName.trim().length >= 2;
+  const phoneOk = isValidPhone(guestPhone);
+  const guestsOk = partySize >= 1 && partySize <= 20;
+  const canSend = rangeOk && nameOk && phoneOk && guestsOk;
   const dateMeta = dates.find((d) => d.key === dateKey);
 
   const loadTables = useCallback(async () => {
@@ -87,6 +104,8 @@ export default function LongNuongBookPage() {
       }
       if (!cancelled) {
         setPointsBalance(Number(data.customer?.pointsBalance) || 0);
+        setGuestName(String(data.customer?.fullName || ""));
+        setGuestPhone(String(data.customer?.phone || ""));
         setReady(true);
       }
     })();
@@ -96,7 +115,7 @@ export default function LongNuongBookPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !SHOW_TABLE_BOARD) return;
     void loadTables();
     const t = setInterval(() => void loadTables(), 5000);
     return () => clearInterval(t);
@@ -108,9 +127,6 @@ export default function LongNuongBookPage() {
   }, [dateKey, tableId]);
 
   function openTable(t: Table) {
-    if (t.status === "occupied" && dateKey === todayKey) {
-      // vẫn cho mở để đặt khung giờ khác / ngày khác
-    }
     setTableId(t.id);
     setDateKey(todayKey);
     setArriveHm("");
@@ -127,7 +143,8 @@ export default function LongNuongBookPage() {
   }
 
   async function bookNow() {
-    if (!tableId || !rangeOk || !validated || !validated.ok || busy) return;
+    if (!canSend || !validated || !validated.ok || busy) return;
+    if (SHOW_TABLE_BOARD && !tableId) return;
     setBusy(true);
     setError("");
     try {
@@ -136,14 +153,16 @@ export default function LongNuongBookPage() {
         headers: { "content-type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({
-          resourceId: tableId,
+          resourceId: SHOW_TABLE_BOARD ? tableId : "",
           startAt: validated.startAt,
           endAt: validated.endAt,
-          partySize: 4,
+          partySize,
+          guestFullName: guestName.trim(),
+          guestPhone: guestPhone.trim(),
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Đặt bàn thất bại");
+      if (!res.ok) throw new Error(data.error || "Gửi yêu cầu thất bại");
       const start = new Date(data.booking?.startAt || validated.startAt);
       const arriveLabel = start.toLocaleString("vi-VN", {
         day: "2-digit",
@@ -154,20 +173,23 @@ export default function LongNuongBookPage() {
         hour12: false,
       });
       setSuccess({
-        tableName: data.booking?.tableName || selected?.name || "Bàn",
+        tableName: data.booking?.tableName || selected?.name || "",
         bookingCode: data.booking?.bookingCode || "",
         arriveLabel,
+        partySize: Number(data.booking?.partySize) || partySize,
+        guestName: guestName.trim(),
+        guestPhone: guestPhone.trim(),
         cartToken: data.cart?.token || "",
         cartStatus: data.cart?.status || "PENDING_APPROVAL",
-        payload: data.cart?.payload || null,
+        payload: data.payload || data.cart?.payload || null,
         customerName: data.customer?.fullName,
         customerCode: data.customer?.customerCode,
       });
       setStep("success");
-      await loadTables();
+      if (SHOW_TABLE_BOARD) await loadTables();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Đặt bàn thất bại");
-      await loadTables();
+      setError(e instanceof Error ? e.message : "Gửi yêu cầu thất bại");
+      if (SHOW_TABLE_BOARD) await loadTables();
     } finally {
       setBusy(false);
     }
@@ -181,7 +203,7 @@ export default function LongNuongBookPage() {
     );
   }
 
-  if (step === "success" && success) {
+  if (step === "success" && success && SHOW_TABLE_BOARD && success.payload) {
     return (
       <Shell showNav={false}>
         <OrderQrSuccess
@@ -208,6 +230,37 @@ export default function LongNuongBookPage() {
     );
   }
 
+  if (step === "success" && success) {
+    return (
+      <Shell showNav={false}>
+        <div className="-mx-5 -mt-2 min-h-[100dvh] bg-[#f7f7f5] px-5 pb-16 pt-8 text-[#0b1220]">
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#9a3412]">
+            Lòng nướng
+          </p>
+          <h1 className="mt-2 font-display text-3xl font-black">
+            Đã gửi yêu cầu
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-slate-600">
+            Quầy sẽ gọi để hỏi lại và xác nhận. Khi đến, nói tên hoặc số điện
+            thoại.
+          </p>
+          <div className="mt-6 space-y-2 rounded-3xl bg-white p-4 shadow-sm">
+            <Row label="Tên" value={success.guestName} />
+            <Row label="Số điện thoại" value={success.guestPhone} />
+            <Row label="Giờ đến" value={success.arriveLabel} />
+            <Row label="Số khách" value={String(success.partySize)} />
+          </div>
+          <Link
+            href="/home"
+            className="mt-8 flex h-14 items-center justify-center rounded-full bg-[#9a3412] text-base font-bold tracking-wide text-white"
+          >
+            Về trang chủ
+          </Link>
+        </div>
+      </Shell>
+    );
+  }
+
   return (
     <Shell showNav={false}>
       <div className="-mx-5 -mt-2 min-h-[100dvh] bg-[#1c0f0a] text-white">
@@ -220,7 +273,7 @@ export default function LongNuongBookPage() {
           }}
         >
           <div className="flex items-center justify-between">
-            {step === "board" ? (
+            {step === "board" || !SHOW_TABLE_BOARD ? (
               <Link
                 href="/home"
                 className="grid h-10 w-10 place-items-center rounded-full bg-white/15 text-lg"
@@ -247,7 +300,7 @@ export default function LongNuongBookPage() {
             {pointsBalance} điểm
           </p>
           <p className="mt-2 text-center text-xs font-bold uppercase tracking-[0.35em] text-orange-300/90">
-            Tables
+            {SHOW_TABLE_BOARD ? "Tables" : "Đặt bàn"}
           </p>
           <h1 className="mt-2 text-center font-display text-4xl font-black tracking-wide">
             LÒNG NƯỚNG
@@ -263,7 +316,7 @@ export default function LongNuongBookPage() {
 
         <div className="-mt-4">
           <div className="rounded-t-[36px] bg-[#f7f7f5] px-5 pb-28 pt-6 text-[#0b1220]">
-            {step === "board" ? (
+            {step === "board" && SHOW_TABLE_BOARD ? (
               <>
                 <div className="flex items-end justify-between">
                   <div>
@@ -313,12 +366,37 @@ export default function LongNuongBookPage() {
             ) : (
               <>
                 <h2 className="text-lg font-bold">
-                  {selected?.name || "Bàn"} — giờ đến
+                  {selected ? `${selected.name} — giờ đến` : "Đặt bàn"}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Chọn ngày & tự điền giờ đến để kiểm tra còn chỗ, rồi gửi QR
-                  xác nhận (không chọn đồ ăn).
+                  {SHOW_TABLE_BOARD
+                    ? "Chọn ngày & tự điền giờ đến để kiểm tra còn chỗ, rồi gửi QR xác nhận (không chọn đồ ăn)."
+                    : "Điền tên, số điện thoại, giờ đến và số khách. Quầy sẽ gọi xác nhận. Khi đến, nói tên hoặc số điện thoại."}
                 </p>
+
+                {SHOW_TABLE_BOARD ? null : (
+                  <>
+                    <label className="mt-6 block text-sm font-bold text-slate-700">
+                      Họ tên
+                      <input
+                        value={guestName}
+                        onChange={(e) => setGuestName(e.target.value)}
+                        autoComplete="name"
+                        className="mt-2 h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-semibold text-[#0b1220] outline-none"
+                      />
+                    </label>
+                    <label className="mt-4 block text-sm font-bold text-slate-700">
+                      Số điện thoại
+                      <input
+                        value={guestPhone}
+                        onChange={(e) => setGuestPhone(e.target.value)}
+                        inputMode="tel"
+                        autoComplete="tel"
+                        className="mt-2 h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-semibold text-[#0b1220] outline-none"
+                      />
+                    </label>
+                  </>
+                )}
 
                 <h3 className="mt-6 text-sm font-bold text-slate-700">
                   Ngày tháng năm
@@ -354,55 +432,113 @@ export default function LongNuongBookPage() {
                   </p>
                 ) : null}
 
-                <h3 className="mt-6 text-sm font-bold text-slate-700">
-                  Giờ đến (khách tự điền)
-                </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  Mở cửa {minutesToHm(LONG_NUONG_OPEN_MIN)}–
-                  {minutesToHm(LONG_NUONG_CLOSE_MIN)}
-                </p>
-                <input
-                  type="time"
-                  step={300}
-                  min={minutesToHm(LONG_NUONG_OPEN_MIN)}
-                  max={minutesToHm(LONG_NUONG_CLOSE_MIN)}
-                  value={arriveHm}
-                  onChange={(e) => setArriveHm(e.target.value)}
-                  className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg font-bold text-[#0b1220] outline-none"
-                />
+                {SHOW_TABLE_BOARD ? (
+                  <>
+                    <h3 className="mt-6 text-sm font-bold text-slate-700">
+                      Giờ đến (khách tự điền)
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Mở cửa {minutesToHm(LONG_NUONG_OPEN_MIN)}–
+                      {minutesToHm(LONG_NUONG_CLOSE_MIN)}
+                    </p>
+                    <input
+                      type="time"
+                      step={300}
+                      min={minutesToHm(LONG_NUONG_OPEN_MIN)}
+                      max={minutesToHm(LONG_NUONG_CLOSE_MIN)}
+                      value={arriveHm}
+                      onChange={(e) => setArriveHm(e.target.value)}
+                      className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg font-bold text-[#0b1220] outline-none"
+                    />
+                  </>
+                ) : (
+                  <div className="mt-6 grid grid-cols-2 items-end gap-3">
+                    <div>
+                      <p className="text-sm font-bold leading-5 text-slate-700">
+                        Số khách
+                      </p>
+                      <div className="mt-2 flex h-14 items-center justify-between rounded-2xl border border-slate-200 bg-white px-2">
+                        <button
+                          type="button"
+                          aria-label="Giảm số khách"
+                          onClick={() =>
+                            setPartySize((n) => Math.max(1, n - 1))
+                          }
+                          className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-lg font-bold"
+                        >
+                          −
+                        </button>
+                        <span className="text-lg font-black">{partySize}</span>
+                        <button
+                          type="button"
+                          aria-label="Tăng số khách"
+                          onClick={() =>
+                            setPartySize((n) => Math.min(20, n + 1))
+                          }
+                          className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-lg font-bold"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    <label className="block min-w-0">
+                      <span className="block text-sm font-bold leading-5 text-slate-700">
+                        Giờ đến
+                      </span>
+                      <input
+                        type="time"
+                        step={300}
+                        min={minutesToHm(LONG_NUONG_OPEN_MIN)}
+                        max={minutesToHm(LONG_NUONG_CLOSE_MIN)}
+                        value={arriveHm}
+                        onChange={(e) => setArriveHm(e.target.value)}
+                        className="mt-2 h-14 w-full rounded-2xl border border-slate-200 bg-white px-3 text-base font-bold text-[#0b1220] outline-none"
+                      />
+                    </label>
+                  </div>
+                )}
+                {SHOW_TABLE_BOARD ? null : (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Mở cửa {minutesToHm(LONG_NUONG_OPEN_MIN)}–
+                    {minutesToHm(LONG_NUONG_CLOSE_MIN)}
+                  </p>
+                )}
 
                 {validated && !validated.ok ? (
                   <p className="mt-3 text-sm font-semibold text-red-600">
                     {validated.error}
                   </p>
                 ) : null}
-                {rangeOk ? (
+
+                {SHOW_TABLE_BOARD && rangeOk ? (
                   <p className="mt-3 text-sm font-semibold text-emerald-700">
                     Khung giờ còn trống — có thể gửi QR xác nhận.
                   </p>
                 ) : null}
 
-                {(selected?.bookings?.length || 0) > 0 ? (
-                  <div className="mt-5">
-                    <h3 className="text-sm font-bold text-slate-700">
-                      Lịch bàn ngày này
-                    </h3>
-                    <div className="mt-2 space-y-1.5 rounded-2xl bg-white p-2 shadow-sm">
-                      {selected!.bookings.map((b) => (
-                        <div
-                          key={b.id}
-                          className="rounded-xl bg-[#fecaca] px-3 py-2 text-sm font-semibold text-[#7f1d1d]"
-                        >
-                          {fmtRange(b.startAt, b.endAt)} · đã đặt
-                        </div>
-                      ))}
+                {SHOW_TABLE_BOARD ? (
+                  (selected?.bookings?.length || 0) > 0 ? (
+                    <div className="mt-5">
+                      <h3 className="text-sm font-bold text-slate-700">
+                        Lịch bàn ngày này
+                      </h3>
+                      <div className="mt-2 space-y-1.5 rounded-2xl bg-white p-2 shadow-sm">
+                        {selected!.bookings.map((b) => (
+                          <div
+                            key={b.id}
+                            className="rounded-xl bg-[#fecaca] px-3 py-2 text-sm font-semibold text-[#7f1d1d]"
+                          >
+                            {fmtRange(b.startAt, b.endAt)} · đã đặt
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <p className="mt-5 text-sm text-slate-500">
-                    Ngày này chưa có lịch đặt trên bàn này.
-                  </p>
-                )}
+                  ) : (
+                    <p className="mt-5 text-sm text-slate-500">
+                      Ngày này chưa có lịch đặt trên bàn này.
+                    </p>
+                  )
+                ) : null}
 
                 {error ? (
                   <p className="mt-4 text-sm font-semibold text-red-600">
@@ -412,11 +548,15 @@ export default function LongNuongBookPage() {
 
                 <button
                   type="button"
-                  disabled={!rangeOk || busy}
+                  disabled={(SHOW_TABLE_BOARD ? !rangeOk : !canSend) || busy}
                   onClick={() => void bookNow()}
                   className="mt-6 flex h-14 w-full items-center justify-center rounded-full bg-[#9a3412] text-base font-bold tracking-wide text-white disabled:opacity-40"
                 >
-                  {busy ? "Đang gửi…" : "GỬI QR XÁC NHẬN"}
+                  {busy
+                    ? "Đang gửi…"
+                    : SHOW_TABLE_BOARD
+                      ? "GỬI QR XÁC NHẬN"
+                      : "GỬI YÊU CẦU"}
                 </button>
               </>
             )}
@@ -424,6 +564,15 @@ export default function LongNuongBookPage() {
         </div>
       </div>
     </Shell>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-slate-100 py-2 last:border-0">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="text-right text-sm font-bold">{value}</span>
+    </div>
   );
 }
 

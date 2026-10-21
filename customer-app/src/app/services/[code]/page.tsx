@@ -13,7 +13,6 @@ import { PointsBalanceBar } from "@/components/PointsBalanceBar";
 import { PointsRedeemControl } from "@/components/PointsRedeemControl";
 import {
   applyOffersDiscount,
-  getOfferById,
   HOME_SERVICES,
   type HomeOffer,
 } from "@/lib/home-services";
@@ -53,12 +52,12 @@ const META: Record<string, { title: string; body: string; accent: string }> = {
   },
   SPA: {
     title: "Oasis Spa",
-    body: "Chọn dịch vụ / gói (Giờ Vàng · Date · Family) · áp voucher hoặc đổi điểm · tạo QR mang quầy.",
+    body: "Chọn dịch vụ / gói (Giờ Vàng · Date · Family) · chỉnh số lượng · tạo QR mang quầy.",
     accent: "#9f1239",
   },
   LONG_NUONG: {
     title: "Lòng Nướng Chí Phèo",
-    body: "Đặt bàn theo ngày/giờ trên app · quầy kích hoạt bàn bằng QR.",
+    body: "Chọn set · chỉnh số lượng · tạo QR mang quầy.",
     accent: "#9a3412",
   },
 };
@@ -224,7 +223,9 @@ function PackageCard({
             />
           ) : null}
           {showQty ? (
-            <div className="ml-auto flex items-center gap-2">
+            <div
+              className={`flex items-center gap-2 ${onOpenVoucher ? "ml-auto" : ""}`}
+            >
               <span className="text-xs font-semibold text-oasis-mute">
                 Số lượng
               </span>
@@ -277,8 +278,8 @@ export default function ServiceInfoPage({
     if (code === "RESORT_POOL") {
       router.replace("/services/GYM");
     }
-    if (code === "CHI_PHEO" || code === "LONG_NUONG") {
-      router.replace("/book/long-nuong");
+    if (code === "CHI_PHEO") {
+      router.replace("/services/LONG_NUONG");
     }
   }, [code, router]);
 
@@ -315,8 +316,19 @@ export default function ServiceInfoPage({
   const [membershipExpiresLabel, setMembershipExpiresLabel] = useState<
     string | null
   >(null);
+  const [profile, setProfile] = useState<{
+    fullName: string;
+    phone: string;
+  } | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftPhone, setDraftPhone] = useState("");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState("");
+
+  const orderQtyOnly = code === "SPA" || code === "LONG_NUONG";
 
   useEffect(() => {
+    if (orderQtyOnly) return;
     let cancelled = false;
     (async () => {
       const me = await fetch("/api/auth/me", { cache: "no-store" });
@@ -326,6 +338,11 @@ export default function ServiceInfoPage({
           setPointsBalance(Number(md.customer?.pointsBalance) || 0);
           setMembershipLocked(!!md.customer?.membershipLocked || !!md.customer?.vip);
           setMembershipExpiresLabel(md.customer?.vipExpiresLabel || null);
+          const fullName = String(md.customer?.fullName || "").trim();
+          const phone = String(md.customer?.phone || "").trim();
+          setDraftName(fullName);
+          setDraftPhone(phone);
+          if (fullName && phone) setProfile({ fullName, phone });
         }
       }
       const res = await fetch("/api/me/offers", { cache: "no-store" });
@@ -348,22 +365,14 @@ export default function ServiceInfoPage({
           ? new URLSearchParams(window.location.search).get("voucher")
           : null;
       if (fromUrl) {
-        const hit =
-          zoneOffers.find((o: HomeOffer) => o.id === fromUrl) ||
-          getOfferById(fromUrl);
-        if (
-          hit &&
-          (hit.zoneCode === code ||
-            zoneOffers.some((z: HomeOffer) => z.id === hit.id))
-        ) {
-          setAppliedOffers([hit]);
-        }
+        const hit = zoneOffers.find((o: HomeOffer) => o.id === fromUrl);
+        if (hit) setAppliedOffers([hit]);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, orderQtyOnly]);
 
   const allCatalog = useMemo(() => {
     if (code === "OLYMPIC_POOL")
@@ -526,11 +535,66 @@ export default function ServiceInfoPage({
     pointsDiscount,
   ]);
 
+  const profileReady = !!(profile?.fullName && profile?.phone);
+  const profileSaved =
+    profileReady &&
+    draftName.trim() === profile?.fullName &&
+    draftPhone.trim() === profile?.phone;
+  const selectedMonthly = selectedPkgs.some(({ pkg }) =>
+    /^oly-\d+m$/i.test(pkg.id)
+  );
+
+  async function saveProfile(): Promise<{ fullName: string; phone: string } | null> {
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const res = await fetch("/api/me/profile", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fullName: draftName.trim(),
+          phone: draftPhone.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không lưu được hồ sơ");
+      const next = {
+        fullName: String(data.customer?.fullName || draftName).trim(),
+        phone: String(data.customer?.phone || draftPhone).trim(),
+      };
+      setProfile(next);
+      setDraftName(next.fullName);
+      setDraftPhone(next.phone);
+      return next;
+    } catch (e) {
+      setProfileError(e instanceof Error ? e.message : "Lưu hồ sơ thất bại");
+      return null;
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
   async function createCartQr() {
     if (count < 1 || creating) return;
     setCreating(true);
     setCreateError("");
     try {
+      let guestFullName = draftName.trim() || profile?.fullName || "";
+      let guestPhone = draftPhone.trim() || profile?.phone || "";
+      if (selectedMonthly) {
+        if (guestFullName.length < 2 || guestPhone.length < 9) {
+          const message =
+            "Nhập họ tên và số điện thoại dưới gói tháng trước khi gửi.";
+          setProfileError(message);
+          throw new Error(message);
+        }
+        if (!profileSaved) {
+          const saved = await saveProfile();
+          if (!saved) return;
+          guestFullName = saved.fullName;
+          guestPhone = saved.phone;
+        }
+      }
       const items = [
         ...selectedAmenities.map((a) => ({
           id: a.id,
@@ -566,6 +630,9 @@ export default function ServiceInfoPage({
           offerIds: appliedOffers.map((o) => o.id),
           discountVnd: accessoryAutoDiscount + priced.discountVnd,
           pointsRedeemTier: redeemTier,
+          ...(selectedMonthly
+            ? { guestFullName, guestPhone }
+            : {}),
         }),
       });
       const data = await res.json();
@@ -671,7 +738,7 @@ export default function ServiceInfoPage({
           ) : null}
         </div>
 
-        <PointsBalanceBar points={pointsBalance} />
+        {orderQtyOnly ? null : <PointsBalanceBar points={pointsBalance} />}
 
         {code === "OLYMPIC_POOL" ? (
           <>
@@ -722,6 +789,47 @@ export default function ServiceInfoPage({
                 />
               ))}
             </section>
+            {!membershipLocked ? (
+              <div className="space-y-2 rounded-[22px] bg-white p-4 shadow-soft">
+                <p className="text-sm font-semibold text-oasis-ink">
+                  Nhập họ tên + SĐT trước khi Upgrade
+                </p>
+                <p className="text-xs text-oasis-mute">
+                  Quầy cần thấy đúng tên, ID và số điện thoại trên yêu cầu duyệt.
+                </p>
+                <input
+                  type="text"
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  placeholder="Họ và tên"
+                  className="h-11 w-full rounded-2xl border border-oasis-ink/10 bg-white px-3 text-sm outline-none focus:border-oasis-moss"
+                />
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={draftPhone}
+                  onChange={(e) => setDraftPhone(e.target.value)}
+                  placeholder="Số điện thoại"
+                  className="h-11 w-full rounded-2xl border border-oasis-ink/10 bg-white px-3 text-sm outline-none focus:border-oasis-moss"
+                />
+                <button
+                  type="button"
+                  disabled={
+                    profileBusy ||
+                    profileSaved ||
+                    !draftName.trim() ||
+                    !draftPhone.trim()
+                  }
+                  onClick={() => void saveProfile()}
+                  className="h-11 w-full rounded-2xl bg-oasis-moss text-sm font-bold text-white disabled:opacity-50"
+                >
+                  {profileBusy ? "…" : profileSaved ? "Đã lưu hồ sơ" : "Lưu hồ sơ"}
+                </button>
+                {profileError ? (
+                  <p className="text-sm font-semibold text-oasis-coral">{profileError}</p>
+                ) : null}
+              </div>
+            ) : null}
             <section className="space-y-3">
               <h2 className="font-display text-xl font-semibold text-oasis-ink">
                 Phụ kiện
@@ -762,7 +870,7 @@ export default function ServiceInfoPage({
                 selected={!!selected[p.id]}
                 qty={selected[p.id] || 1}
                 showQty
-                {...voucherField}
+                {...(code === "LONG_NUONG" ? {} : voucherField)}
                 onToggle={() => setSelected((s) => toggleId(s, p.id))}
                 onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
               />
@@ -803,7 +911,6 @@ export default function ServiceInfoPage({
                   selected={!!selected[p.id]}
                   qty={selected[p.id] || 1}
                   showQty={p.priceVnd > 0 && p.category !== "the"}
-                  {...voucherField}
                   onToggle={() => setSelected((s) => toggleId(s, p.id))}
                   onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
                 />

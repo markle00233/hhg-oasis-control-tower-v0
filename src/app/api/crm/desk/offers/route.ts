@@ -48,7 +48,10 @@ export async function GET(req: NextRequest) {
 
     const aliases = zone ? deskZoneAliases(zone) : undefined;
     const logs = await prisma.appOfferClaimLog.findMany({
-      where: aliases ? { zoneCode: { in: aliases } } : undefined,
+      where: {
+        ...(aliases ? { zoneCode: { in: aliases } } : {}),
+        note: { startsWith: "Quét QR voucher" },
+      },
       orderBy: { createdAt: "desc" },
       take: 80,
       include: {

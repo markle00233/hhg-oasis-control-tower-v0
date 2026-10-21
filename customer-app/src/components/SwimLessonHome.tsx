@@ -66,7 +66,7 @@ export function SwimLessonHome() {
           <Link
             key={p.id}
             href="/swim"
-            className="flex w-[72%] max-w-[260px] shrink-0 flex-col rounded-[22px] bg-[#e0f2fe] p-4 shadow-soft"
+            className="flex w-[72%] max-w-[260px] shrink-0 flex-col rounded-[22px] bg-white p-4"
             style={{ scrollSnapAlign: "center" }}
           >
             <p className="text-[10px] font-bold uppercase tracking-wide text-[#0369a1]">
