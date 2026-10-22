@@ -4,20 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-function safeSessionSet(key: string, value: string) {
-  try {
-    sessionStorage.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export default function GatePage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -39,34 +28,6 @@ export default function GatePage() {
       cancelled = true;
     };
   }, [router]);
-
-  async function createAccount() {
-    setBusy(true);
-    setError("");
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      const res = await fetch("/api/auth/bootstrap", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Tạo tài khoản thất bại");
-      if (data.created && data.temporaryPassword && data.customer?.customerCode) {
-        const ok = safeSessionSet(
-          "oasis_new_account",
-          JSON.stringify({
-            customerCode: data.customer.customerCode,
-            username: data.customer.username || data.customer.customerCode,
-            temporaryPassword: data.temporaryPassword,
-          })
-        );
-        router.replace(ok ? "/welcome" : "/home");
-        return;
-      }
-      router.replace("/home");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Tạo tài khoản thất bại");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   if (checking) {
     return (
@@ -92,24 +53,17 @@ export default function GatePage() {
           </h1>
           <p className="mt-3 text-base text-oasis-mute">
             Tạo tài khoản để đặt sân, gọi món, giữ QR dịch vụ trên trang cá nhân.
+            Đăng nhập bằng họ tên + số điện thoại.
           </p>
         </div>
 
-        {error ? (
-          <p className="rounded-2xl bg-white/80 p-3 text-sm text-oasis-coral shadow-soft">
-            {error}
-          </p>
-        ) : null}
-
         <div className="space-y-3">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void createAccount()}
-            className="flex h-14 w-full items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand disabled:opacity-60"
+          <Link
+            href="/login?mode=signup"
+            className="flex h-14 w-full items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand"
           >
-            {busy ? "Đang tạo…" : "Tạo tài khoản mới"}
-          </button>
+            Tạo tài khoản mới
+          </Link>
           <Link
             href="/login"
             className="flex h-14 w-full items-center justify-center rounded-2xl border border-oasis-deep/20 bg-white/80 text-base font-bold text-oasis-deep"
@@ -119,7 +73,7 @@ export default function GatePage() {
         </div>
 
         <p className="text-center text-xs text-oasis-mute">
-          Sau khi tạo sẽ hiện mã khách + mật khẩu tạm — hãy lưu lại.
+          Đăng nhập: họ tên · mật khẩu là số điện thoại.
         </p>
       </div>
     </main>

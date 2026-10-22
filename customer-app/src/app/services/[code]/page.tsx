@@ -34,11 +34,16 @@ import {
   isSwimTicketId,
   REDEEM_DRINK_MAX_VND,
 } from "@/lib/points-redeem";
+import {
+  formatMembershipPayLabel,
+  sameDayMembershipDiscountVnd,
+  sameDayMembershipPriceVnd,
+} from "@/lib/same-day-membership";
 
 const META: Record<string, { title: string; body: string; accent: string }> = {
   OLYMPIC_POOL: {
     title: "Hồ Olympic",
-    body: "Vé lẻ · Gói tháng (+ voucher HHG) · Phụ kiện (từ 02 món −10%). Tích điểm: 10K trước giảm = 5 điểm.",
+    body: "Vé lẻ · Gói tháng (+ voucher HHG, −10% nếu đăng ký cùng ngày với đơn bơi) · Phụ kiện (từ 02 món −10%). Tích điểm: 10K trước giảm = 1 điểm.",
     accent: "#1e3a8a",
   },
   GYM: {
@@ -134,6 +139,7 @@ function PackageCard({
   canRedeem50,
   canRedeem100,
   onRedeemChange,
+  sameDaySaleVnd,
 }: {
   p: ServicePackage;
   selected: boolean;
@@ -150,6 +156,7 @@ function PackageCard({
   canRedeem50?: boolean;
   canRedeem100?: boolean;
   onRedeemChange?: (tier: 50 | 100 | null) => void;
+  sameDaySaleVnd?: number | null;
 }) {
   return (
     <div
@@ -189,8 +196,17 @@ function PackageCard({
                   <p className="text-xs text-oasis-mute">{p.nameEn}</p>
                 ) : null}
               </div>
-              <p className="shrink-0 font-mono text-lg font-bold text-oasis-moss">
-                {formatPkgPriceShort(p)}
+              <p className="shrink-0 text-right font-mono text-lg font-bold text-oasis-moss">
+                {sameDaySaleVnd != null && sameDaySaleVnd < p.priceVnd ? (
+                  <>
+                    <span className="mr-1 text-sm font-medium text-oasis-mute line-through">
+                      {formatPkgPriceShort(p)}
+                    </span>
+                    {formatMembershipPayLabel(sameDaySaleVnd)}
+                  </>
+                ) : (
+                  formatPkgPriceShort(p)
+                )}
               </p>
             </div>
             {p.durationMin ? (
@@ -317,6 +333,7 @@ export default function ServiceInfoPage({
   const [membershipExpiresLabel, setMembershipExpiresLabel] = useState<
     string | null
   >(null);
+  const [sameDayMembership, setSameDayMembership] = useState(false);
   const [profile, setProfile] = useState<{
     fullName: string;
     phone: string;
@@ -339,6 +356,7 @@ export default function ServiceInfoPage({
           setPointsBalance(Number(md.customer?.pointsBalance) || 0);
           setMembershipLocked(!!md.customer?.membershipLocked || !!md.customer?.vip);
           setMembershipExpiresLabel(md.customer?.vipExpiresLabel || null);
+          setSameDayMembership(!!md.customer?.sameDayMembershipDiscount);
           const fullName = String(md.customer?.fullName || "").trim();
           const phone = String(md.customer?.phone || "").trim();
           setDraftName(fullName);
@@ -428,6 +446,19 @@ export default function ServiceInfoPage({
       ? Math.round(accessorySubtotal * 0.1)
       : 0;
 
+  const membershipSubtotal = useMemo(() => {
+    let s = 0;
+    for (const { pkg, qty } of selectedPkgs) {
+      if (/^oly-\d+m$/i.test(pkg.id)) s += pkg.priceVnd * qty;
+    }
+    return s;
+  }, [selectedPkgs]);
+
+  const membershipAutoDiscount =
+    code === "OLYMPIC_POOL" && sameDayMembership
+      ? sameDayMembershipDiscountVnd(membershipSubtotal)
+      : 0;
+
   const subtotalVnd = useMemo(() => {
     let s = 0;
     for (const { pkg, qty } of selectedPkgs) {
@@ -436,7 +467,10 @@ export default function ServiceInfoPage({
     return s;
   }, [selectedPkgs]);
 
-  const afterAccessoryVnd = Math.max(0, subtotalVnd - accessoryAutoDiscount);
+  const afterAccessoryVnd = Math.max(
+    0,
+    subtotalVnd - accessoryAutoDiscount - membershipAutoDiscount
+  );
 
   const priced = useMemo(
     () => applyOffersDiscount(afterAccessoryVnd, appliedOffers),
@@ -469,7 +503,10 @@ export default function ServiceInfoPage({
   const pointsDiscount = redeemPreview?.ok ? redeemPreview.discountVnd : 0;
   const totalVnd = Math.max(0, priced.totalVnd - pointsDiscount);
   const totalDiscountVnd =
-    accessoryAutoDiscount + priced.discountVnd + pointsDiscount;
+    accessoryAutoDiscount +
+    membershipAutoDiscount +
+    priced.discountVnd +
+    pointsDiscount;
 
   const voucherField = {
     appliedOffers,
@@ -504,6 +541,11 @@ export default function ServiceInfoPage({
         `Phụ kiện −10% (−${new Intl.NumberFormat("vi-VN").format(accessoryAutoDiscount)}đ)`
       );
     }
+    if (membershipAutoDiscount > 0) {
+      lines.push(
+        `Gói tháng −10% cùng ngày đơn bơi (−${new Intl.NumberFormat("vi-VN").format(membershipAutoDiscount)}đ)`
+      );
+    }
     for (const line of priced.lines) {
       if (line.discountVnd > 0) {
         lines.push(
@@ -532,6 +574,7 @@ export default function ServiceInfoPage({
     subtotalVnd,
     priced.lines,
     accessoryAutoDiscount,
+    membershipAutoDiscount,
     redeemTier,
     pointsDiscount,
   ]);
@@ -772,7 +815,7 @@ export default function ServiceInfoPage({
                         ? ` đến ${membershipExpiresLabel}`
                         : ""
                     }. Hết hạn mới chọn gói mới.`
-                  : "1 gói / lần · hết hạn về khách thường mới chọn tiếp. Kèm voucher HHG (LN, Mía Ơi, Spa…)."}
+                  : "1 gói / lần · hết hạn về khách thường mới chọn tiếp. Kèm voucher HHG (LN, Mía Ơi, Spa…). Đã bơi hôm nay rồi đăng ký gói → −10%."}
               </p>
               {OLYMPIC_MONTHLY.map((p) => (
                 <PackageCard
@@ -782,6 +825,11 @@ export default function ServiceInfoPage({
                   qty={selected[p.id] || 1}
                   showQty={false}
                   disabled={membershipLocked}
+                  sameDaySaleVnd={
+                    sameDayMembership
+                      ? sameDayMembershipPriceVnd(p.priceVnd)
+                      : null
+                  }
                   {...voucherField}
                   onToggle={() => {
                     if (membershipLocked) return;

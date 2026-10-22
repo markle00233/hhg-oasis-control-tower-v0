@@ -4,7 +4,7 @@ import { CancelOrderError, cancelCustomerOrder } from "@/lib/cancel-order";
 
 export const dynamic = "force-dynamic";
 
-/** Customer cancels a confirmed Mía Ơi / Olympic order from today. */
+/** Customer cancels a pending Mía Ơi / Olympic order from today (not after staff confirm). */
 export async function DELETE(req: NextRequest) {
   try {
     const customer = await getSessionCustomer();

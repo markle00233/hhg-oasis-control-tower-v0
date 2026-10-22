@@ -14,7 +14,11 @@ import {
   formatSpaPrice,
   type SpaMenuItem,
 } from "@/lib/spa-menu";
-import { POOL_MENU, formatPoolPrice } from "@/lib/olympic-pool-menu";
+import {
+  POOL_CATEGORIES,
+  POOL_MENU,
+  formatPoolPrice,
+} from "@/lib/olympic-pool-menu";
 import { computePoolPricing } from "@/lib/pool-pricing";
 import { printPoolBill } from "@/lib/pool-bill-print";
 import { printDayBillsPdf, type DayBill } from "@/lib/day-bills-print";
@@ -38,10 +42,22 @@ import {
   type CheckInUi,
 } from "@/lib/cart-status";
 import { parseCartPromo } from "@/lib/cart-promo";
+import { pointsFromSubtotal } from "@/lib/points";
+import {
+  deskOrderStatusLabel,
+  isFinalizedOrderStatus,
+} from "@/lib/order-status";
 import {
   REDEEM_DRINK_MAX_VND,
   foldPointsOntoItems,
 } from "@/lib/bill-points";
+import {
+  DESK_REDEEM_DRINK_STEP,
+  DESK_REDEEM_SWIM_STEP,
+  applyDeskRedeemUnits,
+  eligibleDeskRedeemQty,
+} from "@/lib/desk-point-redeem";
+import { deskVoucherCut } from "@/lib/hhg-vouchers";
 
 type CatalogItem = MiaOiMenuItem | SpaMenuItem;
 
@@ -74,7 +90,12 @@ type DayOrder = {
   at: string;
   status: string;
   totalVnd: number;
-  items: { nameVi: string; qty: number; unitPriceVnd: number }[];
+  items: {
+    itemId?: string;
+    nameVi: string;
+    qty: number;
+    unitPriceVnd: number;
+  }[];
 };
 
 type GuestCartPreview = {
@@ -128,6 +149,8 @@ type DeskTicket = {
   key: string;
   arrival: Arrival;
   cart: GuestCartPreview | null;
+  scan: Scan | null;
+  orderId: string | null;
   scanAt: string | null;
   orderStatus: "pending" | "ordered";
   orderLabel: string;
@@ -147,7 +170,38 @@ type DeskTicket = {
   promoLabel: string;
   hasVoucher: boolean;
   hasPointsRedeem: boolean;
+  /** Điểm cộng từ đơn này (10.000đ trước giảm = 1 điểm) */
+  pointsEarned: number;
 };
+
+function pointsEarnedFromLines(
+  items: {
+    id?: string;
+    qty: number;
+    priceVnd?: number;
+    unitPriceVnd?: number;
+    pointsDiscountVnd?: number;
+  }[]
+) {
+  const subtotal = items.reduce((s, i) => {
+    const id = String(i.id || "");
+    if (
+      id.startsWith("voucher-") ||
+      id.startsWith("points-redeem-") ||
+      id.startsWith("disc-")
+    ) {
+      return s;
+    }
+    const unit = Math.max(0, Number(i.unitPriceVnd ?? i.priceVnd) || 0);
+    const qty = Math.max(0, Number(i.qty) || 0);
+    const disc = Math.min(
+      unit * qty,
+      Math.max(0, Number(i.pointsDiscountVnd) || 0)
+    );
+    return s + unit * qty - disc;
+  }, 0);
+  return pointsFromSubtotal(subtotal);
+}
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("vi-VN", {
@@ -180,7 +234,7 @@ function cartOrderLabel(
     if (status === "OPEN") return "Đã gọi xác nhận";
   }
   if (status === "USED") {
-    return z === "MIA_OI" ? "Đã TT · làm món" : "Đã dùng";
+    return z === "MIA_OI" ? "Đã TT · hoàn tất" : "Đã dùng";
   }
   if (status === "OPEN") {
     if (z === "MIA_OI") return "Đã duyệt · chờ TT";
@@ -195,22 +249,69 @@ function cartOrderLabel(
   return status || "—";
 }
 
-function poolScanGroupKey(row: Scan) {
-  if (row.eventType !== "SERVICE_USE") return `scan:${row.id}`;
-  if (row.orderId) return `order:${row.orderId}`;
-  if (!row.ticketVerified && !row.orderSummary) return "unverified";
-  return `scan:${row.id}`;
+function scanLooksFinalized(s: Scan) {
+  return !!(
+    s.ticketVerified ||
+    s.orderId ||
+    s.orderSummary ||
+    s.operationalStatus === "ACKNOWLEDGED" ||
+    s.eventType === "MIA_OI_ORDER" ||
+    s.eventType === "SPA_ORDER" ||
+    s.eventType === "POOL_ORDER" ||
+    (s.ticketItems && s.ticketItems.length > 0 && (s.totalVnd || 0) > 0)
+  );
 }
 
-/** One confirmed check-in per order, even if several scans were merged. */
+function visitFinalizedLabel(zoneCode: string | null, withCatalog: boolean) {
+  if (withCatalog) return "Đã order";
+  if ((zoneCode || "") === "OLYMPIC_POOL") return "Đã xác thực";
+  return "Đã check-in";
+}
+
+function poolTicketLocked(t: DeskTicket) {
+  return (
+    t.orderStatus === "ordered" ||
+    !!t.orderId ||
+    !!t.scan && scanLooksFinalized(t.scan)
+  );
+}
+
+function scanForOrderId(scans: Scan[], orderId: string) {
+  return scans.find((s) => s.orderId === orderId) || null;
+}
+
+/** One confirmed visit per order, even if several scans were merged. */
 function confirmedPoolBills(scans: Scan[]): Scan[] {
   const byOrder = new Map<string, Scan>();
   for (const s of scans) {
-    if (!s.ticketVerified || !s.orderId || !s.ticketItems?.length) continue;
+    if (!s.orderId || !scanLooksFinalized(s)) continue;
     const prev = byOrder.get(s.orderId);
     if (!prev || (!prev.cartToken && s.cartToken)) byOrder.set(s.orderId, s);
   }
   return [...byOrder.values()];
+}
+
+function claimOrderForCart(
+  orders: DayOrder[],
+  cart: GuestCartPreview,
+  seen: Set<string>
+): DayOrder | null {
+  const t = cart.createdAt ? new Date(cart.createdAt).getTime() : NaN;
+  let best: DayOrder | null = null;
+  let bestDt = Infinity;
+  for (const o of orders) {
+    if (o.status === "CANCELLED" || seen.has(o.id)) continue;
+    if (cart.totalVnd != null && o.totalVnd !== cart.totalVnd) continue;
+    const dt = Number.isFinite(t)
+      ? Math.abs(new Date(o.at).getTime() - t)
+      : 0;
+    if (dt > 15 * 60 * 1000) continue;
+    if (dt < bestDt) {
+      best = o;
+      bestDt = dt;
+    }
+  }
+  return best;
 }
 
 function matchConfirmedBill(
@@ -268,157 +369,250 @@ function buildDeskTickets(
       : a.openCart
         ? [a.openCart]
         : [];
+    const seenOrders = new Set<string>();
+    const seenScanIds = new Set<string>();
+    const usedCartCount = carts.filter((c) => c.status === "USED").length;
+    const confirmedBills = confirmedPoolBills(a.todayScans || []);
+    const doneLabel = visitFinalizedLabel(zoneCode, withCatalog);
 
-    if (carts.length) {
-      const usedCartCount = carts.filter((c) => c.status === "USED").length;
-      const confirmedBills = confirmedPoolBills(a.todayScans || []);
-      for (const cart of carts) {
-        const ui = checkInUiFromCart({
-          status: cart.status || "OPEN",
-          expiresAt: cart.expiresAt,
-          zoneCode: cart.zoneCode || zoneCode || undefined,
-        });
-        const need = cart.status === "PENDING_APPROVAL";
-        const confirmed = matchConfirmedBill(
-          confirmedBills,
-          cart,
-          usedCartCount
-        );
-        const billItems = confirmed
-          ? billItemsFromPoints(
-              (confirmed.ticketItems || []).map((i) => ({
-                id: i.itemId,
-                nameVi: i.nameVi,
-                qty: i.qty,
-                unitPriceVnd: i.unitPriceVnd,
-                pointsDiscountVnd: i.pointsDiscountVnd,
-                pointsRedeemTier: i.pointsRedeemTier,
-              }))
-            )
-          : billItemsFromPoints(
-              (cart.items || []).map((i) => ({
-                id: i.id,
-                nameVi: i.nameVi,
-                qty: i.qty,
-                unitPriceVnd: i.priceVnd,
-              }))
-            );
-        const promo = parseCartPromo(cart.items);
-        const promoLabel =
-          cart.promoLabel && cart.promoLabel !== "—"
-            ? cart.promoLabel
-            : promo.label;
-        tickets.push({
-          key: `cart-${cart.token}`,
-          arrival: a,
-          cart,
-          scanAt: cart.createdAt || a.lastVisitAt,
-          orderStatus:
-            cart.status === "USED" || ui === "yes" ? "ordered" : "pending",
-          orderLabel: cartOrderLabel(
-            cart.status,
-            zoneCode,
-            withCatalog,
-            cart.adminNote
-          ),
-          billText:
-            (confirmed ? confirmed.orderSummary : cart.billText) ||
-            billItems.map((i) => `${i.qty}× ${i.nameVi}`).join(", ") ||
-            "—",
-          billTotal: confirmed ? confirmed.totalVnd ?? cart.totalVnd : cart.totalVnd,
-          billItems,
-          pendingAdmin: need,
-          needsApproval: need,
-          checkInUi: ui,
-          promoLabel,
-          hasVoucher: promo.hasVoucher || !!cart.hasVoucher,
-          hasPointsRedeem:
-            promo.hasPointsRedeem || !!cart.hasPointsRedeem,
-        });
+    for (const cart of carts) {
+      const ui = checkInUiFromCart({
+        status: cart.status || "OPEN",
+        expiresAt: cart.expiresAt,
+        zoneCode: cart.zoneCode || zoneCode || undefined,
+      });
+      const need = cart.status === "PENDING_APPROVAL";
+      const confirmed = matchConfirmedBill(
+        confirmedBills,
+        cart,
+        usedCartCount
+      );
+      if (confirmed?.orderId) seenOrders.add(confirmed.orderId);
+      if (confirmed) seenScanIds.add(confirmed.id);
+      const claimed =
+        !confirmed && cart.status === "USED"
+          ? claimOrderForCart(a.todayOrders || [], cart, seenOrders)
+          : null;
+      if (claimed) {
+        seenOrders.add(claimed.id);
+        for (const sc of a.todayScans || []) {
+          if (sc.orderId === claimed.id) seenScanIds.add(sc.id);
+        }
       }
-      continue;
+      if (confirmed?.orderId) {
+        for (const sc of a.todayScans || []) {
+          if (sc.orderId === confirmed.orderId) seenScanIds.add(sc.id);
+        }
+      }
+      const sourceItems = confirmed
+        ? (confirmed.ticketItems || []).map((i) => ({
+            id: i.itemId,
+            nameVi: i.nameVi,
+            qty: i.qty,
+            unitPriceVnd: i.unitPriceVnd,
+            pointsDiscountVnd: i.pointsDiscountVnd,
+            pointsRedeemTier: i.pointsRedeemTier,
+          }))
+        : claimed
+          ? claimed.items.map((i) => ({
+              nameVi: i.nameVi,
+              qty: i.qty,
+              unitPriceVnd: i.unitPriceVnd,
+            }))
+          : (cart.items || []).map((i) => ({
+              id: i.id,
+              nameVi: i.nameVi,
+              qty: i.qty,
+              unitPriceVnd: i.priceVnd,
+            }));
+      const billItems = billItemsFromPoints(sourceItems);
+      const promo = parseCartPromo(cart.items);
+      const promoLabel =
+        cart.promoLabel && cart.promoLabel !== "—"
+          ? cart.promoLabel
+          : promo.label;
+      const ordered =
+        cart.status === "USED" || ui === "yes" || !!confirmed || !!claimed;
+      tickets.push({
+        key: `cart-${cart.token}`,
+        arrival: a,
+        cart,
+        scan: confirmed,
+        orderId: confirmed?.orderId ?? claimed?.id ?? null,
+        scanAt: cart.createdAt || a.lastVisitAt,
+        orderStatus: ordered ? "ordered" : "pending",
+        orderLabel: cartOrderLabel(
+          cart.status,
+          zoneCode,
+          withCatalog,
+          cart.adminNote
+        ),
+        billText:
+          (confirmed
+            ? confirmed.orderSummary
+            : claimed
+              ? billFromItems(claimed.items, claimed.totalVnd)
+              : cart.billText) ||
+          billItems.map((i) => `${i.qty}× ${i.nameVi}`).join(", ") ||
+          "—",
+        billTotal: confirmed
+          ? confirmed.totalVnd ?? cart.totalVnd
+          : claimed
+            ? claimed.totalVnd
+            : cart.totalVnd,
+        billItems,
+        pendingAdmin: need,
+        needsApproval: need,
+        checkInUi: ui,
+        promoLabel,
+        hasVoucher: promo.hasVoucher || !!cart.hasVoucher,
+        hasPointsRedeem: promo.hasPointsRedeem || !!cart.hasPointsRedeem,
+        pointsEarned: pointsEarnedFromLines(sourceItems),
+      });
     }
 
-    // Legacy: chỉ có scan / order, chưa có cart
-    if (!withCatalog) {
-      const verified = (a.todayScans || []).some((s) => s.ticketVerified);
+    for (const bill of confirmedBills) {
+      if (bill.orderId && seenOrders.has(bill.orderId)) continue;
+      if (seenScanIds.has(bill.id)) continue;
+      if (bill.orderId) seenOrders.add(bill.orderId);
+      seenScanIds.add(bill.id);
+      const lines = (bill.ticketItems || []).map((i) => ({
+        id: i.itemId,
+        nameVi: i.nameVi,
+        qty: i.qty,
+        unitPriceVnd: i.unitPriceVnd,
+        pointsDiscountVnd: i.pointsDiscountVnd,
+      }));
       tickets.push({
-        key: `guest-${a.id}`,
+        key: `bill-${bill.orderId || bill.id}`,
         arrival: a,
         cart: null,
-        scanAt: a.lastVisitAt,
-        orderStatus: verified ? "ordered" : "pending",
-        orderLabel: verified ? "Đã check-in" : "Chờ check-in",
-        billText: a.cartBillText || "—",
-        billTotal: null,
-        billItems: [],
-        pendingAdmin: a.pendingAdmin,
+        scan: bill,
+        orderId: bill.orderId ?? null,
+        scanAt: bill.at,
+        orderStatus: "ordered",
+        orderLabel: doneLabel,
+        billText:
+          bill.orderSummary || billFromItems(lines, bill.totalVnd) || "—",
+        billTotal: bill.totalVnd ?? null,
+        billItems: billItemsFromPoints(lines),
+        pendingAdmin: false,
         needsApproval: false,
-        checkInUi: verified ? "yes" : "pending",
+        checkInUi: "yes",
         promoLabel: "—",
         hasVoucher: false,
         hasPointsRedeem: false,
+        pointsEarned: pointsEarnedFromLines(lines),
       });
-      continue;
     }
 
-    const scans = (a.todayScans || [])
-      .filter(
-        (s) => s.eventType === "SERVICE_USE" && s.serviceCode === zoneCode
-      )
-      .slice()
-      .sort((x, y) => new Date(x.at).getTime() - new Date(y.at).getTime());
-    const orders = (a.todayOrders || [])
-      .filter((o) => o.status !== "CANCELLED")
-      .slice()
-      .sort((x, y) => new Date(x.at).getTime() - new Date(y.at).getTime());
-    const slots = Math.max(scans.length, orders.length);
-    for (let i = 0; i < slots; i++) {
-      const scan = scans[i];
-      const order = orders[i];
-      if (order) {
-        tickets.push({
-          key: `order-${order.id}`,
-          arrival: a,
-          cart: null,
-          scanAt: scan?.at || order.at,
-          orderStatus: "ordered",
-          orderLabel: "Đã order",
-          billText: billFromItems(order.items, order.totalVnd),
-          billTotal: order.totalVnd,
-          billItems: billItemsFromPoints(
-            order.items.map((it) => ({
-              nameVi: it.nameVi,
-              qty: it.qty,
-              unitPriceVnd: it.unitPriceVnd,
-            }))
-          ),
-          pendingAdmin: false,
-          needsApproval: false,
-          checkInUi: "yes",
-          promoLabel: "—",
-          hasVoucher: false,
-          hasPointsRedeem: false,
-        });
-      } else if (scan) {
-        tickets.push({
-          key: `scan-${scan.id}`,
-          arrival: a,
-          cart: null,
-          scanAt: scan.at,
-          orderStatus: "pending",
-          orderLabel: "Chưa có order",
-          billText: "—",
-          billTotal: null,
-          billItems: [],
-          pendingAdmin: a.pendingAdmin,
-          needsApproval: false,
-          checkInUi: scan.ticketVerified ? "yes" : "pending",
-          promoLabel: "—",
-          hasVoucher: false,
-          hasPointsRedeem: false,
-        });
-      }
+    for (const order of a.todayOrders || []) {
+      if (order.status === "CANCELLED") continue;
+      if (seenOrders.has(order.id)) continue;
+      seenOrders.add(order.id);
+      const scan = scanForOrderId(a.todayScans || [], order.id);
+      if (scan) seenScanIds.add(scan.id);
+      tickets.push({
+        key: `order-${order.id}`,
+        arrival: a,
+        cart: null,
+        scan,
+        orderId: order.id,
+        scanAt: order.at,
+        orderStatus: "ordered",
+        orderLabel: doneLabel,
+        billText: billFromItems(order.items, order.totalVnd),
+        billTotal: order.totalVnd,
+        billItems: billItemsFromPoints(
+          order.items.map((it) => ({
+            nameVi: it.nameVi,
+            qty: it.qty,
+            unitPriceVnd: it.unitPriceVnd,
+          }))
+        ),
+        pendingAdmin: false,
+        needsApproval: false,
+        checkInUi: "yes",
+        promoLabel: "—",
+        hasVoucher: false,
+        hasPointsRedeem: false,
+        pointsEarned: pointsEarnedFromLines(
+          (scan?.ticketItems?.length
+            ? scan.ticketItems
+            : order.items
+          ).map((it) => ({
+            qty: it.qty,
+            unitPriceVnd: it.unitPriceVnd,
+            pointsDiscountVnd:
+              "pointsDiscountVnd" in it
+                ? Number(it.pointsDiscountVnd) || 0
+                : 0,
+          }))
+        ),
+      });
+    }
+
+    for (const scan of a.todayScans || []) {
+      if (seenScanIds.has(scan.id)) continue;
+      if (scan.orderId && seenOrders.has(scan.orderId)) continue;
+      if (!scanLooksFinalized(scan)) continue;
+      seenScanIds.add(scan.id);
+      if (scan.orderId) seenOrders.add(scan.orderId);
+      const lines = (scan.ticketItems || []).map((i) => ({
+        id: i.itemId,
+        nameVi: i.nameVi,
+        qty: i.qty,
+        unitPriceVnd: i.unitPriceVnd,
+        pointsDiscountVnd: i.pointsDiscountVnd,
+      }));
+      tickets.push({
+        key: `done-scan-${scan.id}`,
+        arrival: a,
+        cart: null,
+        scan,
+        orderId: scan.orderId ?? null,
+        scanAt: scan.at,
+        orderStatus: "ordered",
+        orderLabel: doneLabel,
+        billText:
+          scan.orderSummary || billFromItems(lines, scan.totalVnd) || "—",
+        billTotal: scan.totalVnd ?? null,
+        billItems: billItemsFromPoints(lines),
+        pendingAdmin: false,
+        needsApproval: false,
+        checkInUi: "yes",
+        promoLabel: "—",
+        hasVoucher: false,
+        hasPointsRedeem: false,
+        pointsEarned: pointsEarnedFromLines(lines),
+      });
+    }
+
+    for (const scan of a.todayScans || []) {
+      if (seenScanIds.has(scan.id)) continue;
+      if (scan.eventType !== "SERVICE_USE") continue;
+      if (scanLooksFinalized(scan)) continue;
+      seenScanIds.add(scan.id);
+      tickets.push({
+        key: `scan-${scan.id}`,
+        arrival: a,
+        cart: null,
+        scan,
+        orderId: null,
+        scanAt: scan.at,
+        orderStatus: "pending",
+        orderLabel: withCatalog ? "Chưa có order" : "Chưa xác thực",
+        billText: "—",
+        billTotal: null,
+        billItems: [],
+        pendingAdmin: true,
+        needsApproval: false,
+        checkInUi: "pending",
+        promoLabel: "—",
+        hasVoucher: false,
+        hasPointsRedeem: false,
+        pointsEarned: 0,
+      });
     }
   }
 
@@ -445,10 +639,27 @@ export default function DeskAdministrationPage() {
   const [arrivals, setArrivals] = useState<Arrival[]>([]);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Arrival | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [selectedTicketKey, setSelectedTicketKey] = useState<string | null>(
+    null
+  );
   const [category, setCategory] = useState(MIAOI_CATEGORIES[0]?.id || "mia");
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [extraRedeemKey, setExtraRedeemKey] = useState<string | null>(null);
+  const [deskRedeemUnits, setDeskRedeemUnits] = useState(0);
+  const [deskWallet, setDeskWallet] = useState<
+    {
+      offerId: string;
+      title: string;
+      subtitle: string;
+      discountType: string;
+      discountVnd?: number;
+      discountPercent?: number;
+      exhausted: boolean;
+      canClaim: boolean;
+    }[]
+  >([]);
+  const [deskVoucherOfferId, setDeskVoucherOfferId] = useState("");
+  const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
   /** Hồ Olympic: giỏ vé theo từng lần quét */
   const [scanCarts, setScanCarts] = useState<
     Record<string, Record<string, number>>
@@ -467,19 +678,20 @@ export default function DeskAdministrationPage() {
   const [createGuestOpen, setCreateGuestOpen] = useState(false);
   const [guestName, setGuestName] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
-  const [guestSegment, setGuestSegment] = useState<"WALK_IN" | "MEMBER">(
-    "MEMBER"
-  );
+  const [guestSearch, setGuestSearch] = useState("");
+  const [guestHits, setGuestHits] = useState<
+    {
+      id: string;
+      customerCode: string;
+      fullName: string;
+      phone: string;
+      shortId: string;
+      segmentLabel: string;
+    }[]
+  >([]);
+  const [guestSearchBusy, setGuestSearchBusy] = useState(false);
   const [createGuestBusy, setCreateGuestBusy] = useState(false);
   const [createGuestError, setCreateGuestError] = useState("");
-  const [guestReissuePassword, setGuestReissuePassword] = useState(false);
-  const [guestAccountInfo, setGuestAccountInfo] = useState<{
-    loginHint: string;
-    temporaryPassword: string | null;
-    customerCode: string;
-    phone: string;
-    created: boolean;
-  } | null>(null);
   const [guestCart, setGuestCart] = useState<GuestCartPreview | null>(null);
   const [approvingToken, setApprovingToken] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<{
@@ -499,10 +711,6 @@ export default function DeskAdministrationPage() {
   const [redeemItemId, setRedeemItemId] = useState("");
   const [redeemBusy, setRedeemBusy] = useState(false);
   const [redeemMsg, setRedeemMsg] = useState("");
-  /** Giảm tay theo lần quét hồ */
-  const [scanManualDiscount, setScanManualDiscount] = useState<
-    Record<string, number>
-  >({});
   const [claimLogs, setClaimLogs] = useState<
     {
       id: string;
@@ -539,23 +747,34 @@ export default function DeskAdministrationPage() {
     [arrivals, zone, hasCatalog]
   );
 
-  const poolScanGroups = useMemo(() => {
-    const groups = new Map<string, Scan[]>();
-    if (!isPool || !selected) return groups;
-    for (const row of selected.todayScans || []) {
-      if (row.eventType !== "SERVICE_USE") continue;
-      const key = poolScanGroupKey(row);
-      const list = groups.get(key);
-      if (list) list.push(row);
-      else groups.set(key, [row]);
-    }
-    for (const list of groups.values()) {
-      list.sort(
-        (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+  const guestTickets = useMemo(() => {
+    if (!selected) return [];
+    return deskTickets.filter((t) => t.arrival.id === selected.id);
+  }, [deskTickets, selected]);
+
+  const focusedTicket = useMemo(() => {
+    if (!guestTickets.length) return null;
+    if (selectedTicketKey) {
+      const hit = guestTickets.find((t) => t.key === selectedTicketKey);
+      if (hit) return hit;
+      if (selectedTicketKey.startsWith("scan-")) {
+        const sid = selectedTicketKey.slice("scan-".length);
+        const byScan = guestTickets.find((t) => t.scan?.id === sid);
+        if (byScan) return byScan;
+      }
+      const rest = selectedTicketKey.replace(
+        /^(pool-bill-|bill-|order-|done-scan-)/,
+        ""
       );
+      const byOrder = guestTickets.find(
+        (t) => t.orderId === rest || t.scan?.id === rest
+      );
+      if (byOrder) return byOrder;
     }
-    return groups;
-  }, [isPool, selected]);
+    return (
+      guestTickets.find((t) => t.orderStatus === "pending") || guestTickets[0]
+    );
+  }, [guestTickets, selectedTicketKey]);
 
   const guestCartLines = useMemo(
     () => approvedCartPoolLines(),
@@ -631,6 +850,35 @@ export default function DeskAdministrationPage() {
       setError(e instanceof Error ? e.message : "Load failed");
     }
   }, [zone]);
+
+  useEffect(() => {
+    if (!createGuestOpen || !zone) return;
+    const q = guestSearch.trim();
+    if (q.length < 2) {
+      setGuestHits([]);
+      setGuestSearchBusy(false);
+      return;
+    }
+    setGuestSearchBusy(true);
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/crm/desk/search-customers?zone=${encodeURIComponent(zone)}&q=${encodeURIComponent(q)}`,
+            { cache: "no-store" }
+          );
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Không tìm được khách");
+          setGuestHits(Array.isArray(data.customers) ? data.customers : []);
+        } catch {
+          setGuestHits([]);
+        } finally {
+          setGuestSearchBusy(false);
+        }
+      })();
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [createGuestOpen, guestSearch, zone]);
 
   // Resume session if already logged in for a zone (admin only can re-pick)
   useEffect(() => {
@@ -738,6 +986,7 @@ export default function DeskAdministrationPage() {
     setError("");
     setArrivals([]);
     setSelected(null);
+    setSelectedTicketKey(null);
     setCart({});
     setScanCarts({});
     setOrderMsg("");
@@ -751,6 +1000,7 @@ export default function DeskAdministrationPage() {
     setLoginError("");
     setArrivals([]);
     setSelected(null);
+    setSelectedTicketKey(null);
   }
 
   async function login(e: React.FormEvent) {
@@ -797,10 +1047,19 @@ export default function DeskAdministrationPage() {
     backToPick();
   }
 
-  function openCustomer(a: Arrival, cart?: GuestCartPreview | null) {
+  function openCustomer(
+    a: Arrival,
+    cart?: GuestCartPreview | null,
+    ticketKey?: string | null
+  ) {
     setSelected(a);
+    setSelectedTicketKey(ticketKey ?? null);
     setCart({});
     setExtraRedeemKey(null);
+    setDeskRedeemUnits(0);
+    setDeskVoucherOfferId("");
+    setVoucherPickerOpen(false);
+    void loadDeskWallet(a.id);
     setScanCarts({});
     setOrderMsg("");
     setGuestCart(null);
@@ -812,12 +1071,18 @@ export default function DeskAdministrationPage() {
           "goi-duong"
         : MIAOI_CATEGORIES[0]?.id || "mia"
     );
-    const pick =
-      cart ||
-      a.carts?.find((c) => c.status === "PENDING_APPROVAL") ||
-      a.openCart ||
-      a.carts?.[0] ||
-      null;
+    let pick: GuestCartPreview | null = cart || null;
+    if (!pick && ticketKey?.startsWith("cart-")) {
+      const token = ticketKey.slice("cart-".length);
+      pick = a.carts?.find((c) => c.token === token) || null;
+    }
+    if (!pick && !ticketKey) {
+      pick =
+        a.carts?.find((c) => c.status === "PENDING_APPROVAL") ||
+        a.openCart ||
+        a.carts?.[0] ||
+        null;
+    }
     if (pick) applyGuestCart(pick);
   }
 
@@ -839,8 +1104,6 @@ export default function DeskAdministrationPage() {
           zone,
           fullName,
           phone,
-          segment: guestSegment,
-          reissuePassword: guestReissuePassword,
         }),
       });
       const data = await res.json();
@@ -865,44 +1128,57 @@ export default function DeskAdministrationPage() {
       const segment =
         cust.segment === "VIP" || fromList?.segment === "VIP"
           ? "VIP"
-          : cust.segment === "MEMBER" || fromList?.segment === "MEMBER"
-            ? "MEMBER"
-            : "WALK_IN";
-      const arrival: Arrival =
-        fromList || {
-          id: cust.id,
-          customerCode: cust.customerCode,
-          fullName: cust.fullName,
-          phone: cust.phone,
-          shortId: cust.shortId,
-          segment,
-          segmentLabel:
-            cust.segmentLabel ||
-            (segment === "MEMBER" ? "Member" : "Khách lẻ"),
-          updatedAt: new Date().toISOString(),
-          lastVisitAt: new Date().toISOString(),
-          pendingAdmin: false,
-          checkedIn: true,
-          todayScans: [],
-          todayOrders: [],
-          todayPackageVnd: 0,
-          todayScanCount: 0,
-          todayOrderCount: 0,
-        };
-      setGuestAccountInfo({
-        loginHint: String(data.loginHint || ""),
-        temporaryPassword: data.temporaryPassword
-          ? String(data.temporaryPassword)
-          : null,
-        customerCode: cust.customerCode,
-        phone: cust.phone || phone,
-        created: !!data.created,
-      });
+          : "WALK_IN";
+      const scanEventId = String(data.scanEventId || "");
+      const fallbackScan: Scan | null = scanEventId
+        ? {
+            id: scanEventId,
+            at: new Date().toISOString(),
+            eventType: "SERVICE_USE",
+            operationalStatus: "NEW",
+            serviceCode: zone,
+            serviceName: zoneName || zone,
+            orderSummary: null,
+            ticketVerified: false,
+          }
+        : null;
+      const arrival: Arrival = fromList
+        ? {
+            ...fromList,
+            todayScans:
+              fallbackScan &&
+              !fromList.todayScans.some((s) => s.id === fallbackScan.id)
+                ? [fallbackScan, ...fromList.todayScans]
+                : fromList.todayScans,
+          }
+        : {
+            id: cust.id,
+            customerCode: cust.customerCode,
+            fullName: cust.fullName,
+            phone: cust.phone,
+            shortId: cust.shortId,
+            segment,
+            segmentLabel:
+              cust.segmentLabel || (segment === "VIP" ? "VIP" : "Khách lẻ"),
+            updatedAt: new Date().toISOString(),
+            lastVisitAt: new Date().toISOString(),
+            pendingAdmin: true,
+            checkedIn: false,
+            todayScans: fallbackScan ? [fallbackScan] : [],
+            todayOrders: [],
+            todayPackageVnd: 0,
+            todayScanCount: fallbackScan ? 1 : 0,
+            todayOrderCount: 0,
+          };
+      openCustomer(
+        arrival,
+        null,
+        scanEventId ? `scan-${scanEventId}` : null
+      );
       setGuestName("");
       setGuestPhone("");
-      setGuestReissuePassword(false);
-      openCustomer(arrival);
-      setOrderMsg(data.message || "Đã lưu khách + tài khoản app.");
+      setCreateGuestOpen(false);
+      setOrderMsg(data.message || "Đã mở đơn. Chọn món / vé rồi xác thực.");
     } catch (e) {
       setCreateGuestError(
         e instanceof Error ? e.message : "Không tạo được khách"
@@ -969,13 +1245,6 @@ export default function DeskAdministrationPage() {
       }
       if (Object.keys(next).length) setCart(next);
     }
-    setOrderMsg(
-      `Đã tải giỏ QR khách${
-        cartPayload.totalVnd
-          ? ` · ${formatVnd(Number(cartPayload.totalVnd))}`
-          : ""
-      }`
-    );
   }
 
   const resolveGuestQr = useCallback(
@@ -1062,12 +1331,12 @@ export default function DeskAdministrationPage() {
         if (data.payment?.paid) {
           setOrderMsg(
             data.payment.already
-              ? `Đã xác nhận thanh toán trước · được làm món${
+              ? `Đã xác nhận thanh toán trước${
                   data.cart?.totalVnd
                     ? ` · ${formatVnd(Number(data.cart.totalVnd))}`
                     : ""
                 }`
-              : `Đã xác nhận thanh toán — được làm món${
+              : `Đã xác nhận thanh toán${
                   data.cart?.totalVnd
                     ? ` · ${formatVnd(Number(data.cart.totalVnd))}`
                     : ""
@@ -1149,13 +1418,20 @@ export default function DeskAdministrationPage() {
     });
   }
 
+  function guestHasSameDayOlympicOrder() {
+    return (selected?.todayOrders || []).some((o) => {
+      const st = String(o.status || "").toUpperCase();
+      return st !== "CANCELLED" && st !== "PENDING" && st !== "SUBMITTED";
+    });
+  }
+
   function scanCartTotal(scanId: string) {
     const row = scanCarts[scanId] || {};
     const lines = Object.entries(row)
       .filter(([, q]) => q > 0)
       .map(([itemId, qty]) => ({ itemId, qty }));
     const priced = computePoolPricing(lines, {
-      manualDiscountVnd: scanManualDiscount[scanId] || 0,
+      sameDayMembership: guestHasSameDayOlympicOrder(),
     });
     const qty = priced.lines.reduce((s, l) => s + l.qty, 0);
     return {
@@ -1163,7 +1439,7 @@ export default function DeskAdministrationPage() {
       qty,
       subtotal: priced.subtotalVnd,
       accessoryDiscount: priced.accessoryDiscountVnd,
-      manualDiscount: priced.manualDiscountVnd,
+      membershipDiscount: priced.membershipDiscountVnd,
     };
   }
 
@@ -1228,8 +1504,8 @@ export default function DeskAdministrationPage() {
 
   async function verifyPoolScan(scan: Scan, mode: "cart" | "added" = "added") {
     if (!selected || !isPool) return;
-    if (poolOrderLocked()) {
-      setError("Đơn đã xác thực. Không mua thêm.");
+    if (scan.ticketVerified || scan.orderId) {
+      setError("Đơn này đã xác thực. Bấm Tạo đơn để thêm đơn mới.");
       return;
     }
     const row = scanCarts[scan.id] || {};
@@ -1258,11 +1534,16 @@ export default function DeskAdministrationPage() {
           customerId: selected.id,
           scanEventId: scan.id,
           items,
-          manualDiscountVnd: scanManualDiscount[scan.id] || 0,
+          pointsRedeemUnits: deskRedeemUnits,
+          voucherOfferId: deskVoucherOfferId || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không xác thực được");
+      setDeskRedeemUnits(0);
+      setDeskVoucherOfferId("");
+      setVoucherPickerOpen(false);
+      void loadDeskWallet(selected.id);
       const ticketItems: ScanTicketItem[] = (data.order?.items || []).map(
         (i: {
           nameVi: string;
@@ -1278,11 +1559,6 @@ export default function DeskAdministrationPage() {
         ? data.closedScanIds.map((id: unknown) => String(id))
         : [scan.id];
       setScanCarts((prev) => {
-        const next = { ...prev };
-        for (const id of closedIds) delete next[id];
-        return next;
-      });
-      setScanManualDiscount((prev) => {
         const next = { ...prev };
         for (const id of closedIds) delete next[id];
         return next;
@@ -1325,6 +1601,9 @@ export default function DeskAdministrationPage() {
       setOrderMsg(
         `Đã xác thực · vào lúc ${formatTime(scan.at)} · ${formatVnd(data.order?.totalVnd || 0)}${memNote}`
       );
+      if (data.order?.id) {
+        setSelectedTicketKey(`bill-${data.order.id}`);
+      }
       void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không xác thực được");
@@ -1413,6 +1692,38 @@ export default function DeskAdministrationPage() {
       setClaimLogs(Array.isArray(data.logs) ? data.logs : []);
     } catch {
       /* ignore */
+    }
+  }
+
+  async function loadDeskWallet(customerId: string) {
+    if (!zone || !customerId) {
+      setDeskWallet([]);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/crm/desk/offers?customerId=${encodeURIComponent(customerId)}&zone=${encodeURIComponent(zone)}`
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setDeskWallet([]);
+        return;
+      }
+      const rows = Array.isArray(data.wallet) ? data.wallet : [];
+      setDeskWallet(
+        rows.filter(
+          (w: {
+            exhausted?: boolean;
+            canClaim?: boolean;
+            discountType?: string;
+          }) =>
+            !w.exhausted &&
+            w.canClaim !== false &&
+            (w.discountType === "percent" || w.discountType === "amount")
+        )
+      );
+    } catch {
+      setDeskWallet([]);
     }
   }
 
@@ -1566,6 +1877,43 @@ export default function DeskAdministrationPage() {
     }
   }
 
+  function sendPoolTicketBill(t: DeskTicket) {
+    if (t.scan && (t.scan.ticketItems?.length || t.scan.orderSummary)) {
+      sendPoolBill(t.scan);
+      return;
+    }
+    if (!selected) return;
+    const items: ScanTicketItem[] = (t.billItems || [])
+      .filter((i) => i.nameVi && i.qty > 0)
+      .map((i) => ({
+        nameVi: i.nameVi,
+        qty: i.qty,
+        unitPriceVnd:
+          i.lineVnd != null && i.qty
+            ? Math.round(i.lineVnd / i.qty)
+            : i.priceVnd || 0,
+      }));
+    if (!items.length) {
+      setError("Chưa có vé để in bill.");
+      return;
+    }
+    const at = t.scanAt || t.scan?.at || new Date().toISOString();
+    try {
+      printPoolBill({
+        customerName: selected.fullName || "Khách",
+        phone: selected.phone,
+        shortId: selected.shortId,
+        entryAt: at,
+        totalVnd: t.billTotal || t.scan?.totalVnd || 0,
+        items,
+        orderId: t.orderId || t.scan?.orderId,
+      });
+      setOrderMsg(`Đã gửi in bill · ${formatTime(at)}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không mở được máy in");
+    }
+  }
+
   function setQty(item: CatalogItem, qty: number, useAlt = false) {
     const key = lineKey(item.id, useAlt);
     if (qty <= 0) {
@@ -1620,42 +1968,17 @@ export default function DeskAdministrationPage() {
     return "#1e3a5f";
   }
 
-  async function markSeen() {
-    if (!selected || !zone) return;
-    setSaving(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/crm/desk/${selected.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          confirm: true,
-          segment: selected.segment,
-          zone,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Save failed");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function poolOrderLocked() {
-    if (!isPool || !selected) return false;
-    return (selected.todayScans || []).some(
-      (s) => !!s.ticketVerified || !!s.orderId
-    );
+  function viewingFinalizedTicket() {
+    const t = focusedTicket;
+    if (!t) return false;
+    const st = String(t.cart?.status || "");
+    if (st === "OPEN" || st === "PENDING_APPROVAL") return false;
+    return poolTicketLocked(t);
   }
 
   function miaOrderLocked() {
-    if (!isMiaOi) return false;
-    if (guestConfirmedBill) return true;
-    if (String(guestCart?.status || "") === "USED") return true;
-    return (selected?.todayOrders || []).some((o) => o.status !== "CANCELLED");
+    if (!hasCatalog) return false;
+    return viewingFinalizedTicket();
   }
 
   function miaCartOpen() {
@@ -1676,6 +1999,63 @@ export default function DeskAdministrationPage() {
     );
   }
 
+  function deskRedeemKind(): "drink" | "ticket" | null {
+    if (isMiaOi) return "drink";
+    if (isPool) return "ticket";
+    return null;
+  }
+
+  function deskRedeemEligibleItems(): { itemId: string; qty: number; unitPriceVnd: number }[] {
+    const kind = deskRedeemKind();
+    if (!kind) return [];
+    if (kind === "drink") {
+      return cartLines
+        .map((l) => {
+          const item = MIAOI_MENU.find((i) => i.id === l.itemId);
+          if (!item) return null;
+          const unit =
+            l.useAltPrice && item.priceAltVnd ? item.priceAltVnd : item.priceVnd;
+          return { itemId: l.itemId, qty: l.qty, unitPriceVnd: unit };
+        })
+        .filter((x): x is { itemId: string; qty: number; unitPriceVnd: number } => !!x);
+    }
+    const scanId = focusedTicket?.scan?.id;
+    const added = scanId
+      ? Object.entries(scanCarts[scanId] || {})
+          .filter(([, q]) => q > 0)
+          .map(([itemId, qty]) => ({ itemId, qty }))
+      : [];
+    const merged = mergePoolLines(guestCartLines, added);
+    return merged.map((l) => {
+      const item = getPoolItemById(l.itemId);
+      return {
+        itemId: l.itemId,
+        qty: l.qty,
+        unitPriceVnd: item?.priceVnd || 0,
+      };
+    });
+  }
+
+  function deskRedeemMaxUnits() {
+    const kind = deskRedeemKind();
+    if (!kind || !selected) return 0;
+    const step =
+      kind === "ticket" ? DESK_REDEEM_SWIM_STEP : DESK_REDEEM_DRINK_STEP;
+    const byItems = eligibleDeskRedeemQty(deskRedeemEligibleItems(), kind);
+    const byPoints = Math.floor((selected.pointsBalance ?? 0) / step);
+    return Math.max(0, Math.min(byItems, byPoints));
+  }
+
+  function deskRedeemPreview() {
+    const kind = deskRedeemKind();
+    if (!kind) {
+      return { units: 0, cost: 0, discountVnd: 0 };
+    }
+    const max = deskRedeemMaxUnits();
+    const units = Math.min(deskRedeemUnits, max);
+    return applyDeskRedeemUnits(deskRedeemEligibleItems(), units, kind);
+  }
+
   function extraRedeemSelection() {
     if (!isMiaOi || !extraRedeemKey) return null;
     if ((selected?.pointsBalance ?? 0) < 50) return null;
@@ -1691,6 +2071,104 @@ export default function DeskAdministrationPage() {
       useAltPrice: !!line.useAltPrice,
       unit,
     };
+  }
+
+  function selectedDeskVoucher() {
+    return deskWallet.find((v) => v.offerId === deskVoucherOfferId) || null;
+  }
+
+  function deskVoucherPreviewCut(baseVnd: number) {
+    const v = selectedDeskVoucher();
+    if (!v) return 0;
+    return deskVoucherCut(baseVnd, v);
+  }
+
+  function deskCatalogPayable() {
+    const pointsOff = isMiaOi
+      ? deskRedeemPreview().discountVnd
+      : extraRedeemSelection()?.unit || 0;
+    const afterPoints = Math.max(0, cartTotal - pointsOff);
+    const voucherOff = isMiaOi ? deskVoucherPreviewCut(afterPoints) : 0;
+    return Math.max(0, afterPoints - voucherOff);
+  }
+
+  function renderDeskVoucherButton(disabled?: boolean) {
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          setVoucherPickerOpen(true);
+        }}
+        style={{
+          ...styles.btn,
+          flex: "0 0 auto",
+          background: deskVoucherOfferId ? "#5b21b6" : "#6d28d9",
+          whiteSpace: "nowrap",
+          opacity: disabled ? 0.45 : 1,
+        }}
+      >
+        Dùng voucher
+      </button>
+    );
+  }
+
+  function renderDeskRedeemControl(disabled?: boolean) {
+    const kind = deskRedeemKind();
+    if (!kind) return null;
+    const step =
+      kind === "ticket" ? DESK_REDEEM_SWIM_STEP : DESK_REDEEM_DRINK_STEP;
+    const max = deskRedeemMaxUnits();
+    const units = Math.min(deskRedeemUnits, max);
+    const cost = units * step;
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flex: "0 0 auto",
+        }}
+      >
+        <button
+          type="button"
+          style={{
+            ...styles.qtyBtn,
+            opacity: units > 0 && !disabled ? 1 : 0.35,
+          }}
+          disabled={!units || disabled}
+          onClick={(e) => {
+            e.stopPropagation();
+            setDeskRedeemUnits((u) => Math.max(0, u - 1));
+          }}
+        >
+          −
+        </button>
+        <div style={{ textAlign: "center", minWidth: 108 }}>
+          <div style={{ fontWeight: 800, fontSize: 12, color: "#b45309" }}>
+            Sử dụng điểm
+          </div>
+          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+            {cost} điểm
+          </div>
+        </div>
+        <button
+          type="button"
+          style={{
+            ...styles.qtyBtn,
+            opacity: units < max && !disabled ? 1 : 0.35,
+          }}
+          disabled={units >= max || disabled}
+          onClick={(e) => {
+            e.stopPropagation();
+            setDeskRedeemUnits((u) => Math.min(max, u + 1));
+          }}
+        >
+          +
+        </button>
+      </div>
+    );
   }
 
   async function confirmMiaCart(mode: "cart" | "added") {
@@ -1719,12 +2197,18 @@ export default function DeskAdministrationPage() {
                 useAltPrice: redeem.useAltPrice,
               }
             : null,
+          pointsRedeemUnits: deskRedeemUnits,
+          voucherOfferId: deskVoucherOfferId || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không xác nhận được");
       setCart({});
       setExtraRedeemKey(null);
+      setDeskRedeemUnits(0);
+      setDeskVoucherOfferId("");
+      setVoucherPickerOpen(false);
+      void loadDeskWallet(selected.id);
       setGuestCart((prev) => (prev ? { ...prev, status: "USED" } : prev));
       if (typeof data.pointsBalance === "number") {
         setSelected((prev) =>
@@ -1755,14 +2239,25 @@ export default function DeskAdministrationPage() {
         body: JSON.stringify({
           customerId: selected.id,
           items: cartLines,
+          scanEventId:
+            focusedTicket?.orderStatus === "pending" && focusedTicket.scan?.id
+              ? focusedTicket.scan.id
+              : undefined,
+          pointsRedeemUnits: deskRedeemUnits,
+          voucherOfferId: deskVoucherOfferId || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không lưu được đơn");
       setCart({});
+      setDeskRedeemUnits(0);
+      setDeskVoucherOfferId("");
+      setVoucherPickerOpen(false);
+      void loadDeskWallet(selected.id);
       setOrderMsg(
         `Đã lưu · ${formatVnd(data.order?.totalVnd || cartTotal)} · order thêm = hàng mới trên bảng`
       );
+      if (data.order?.id) setSelectedTicketKey(`order-${data.order.id}`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được đơn");
@@ -1903,7 +2398,6 @@ export default function DeskAdministrationPage() {
   }
 
   // ── 3) Dashboard khu ─────────────────────────────────────
-  const poolLocked = poolOrderLocked();
   return (
     <main style={styles.page}>
       <style>{`
@@ -1944,10 +2438,10 @@ export default function DeskAdministrationPage() {
               ? " · bấm Xác nhận để mở QR cho khách"
               : ""}
             {isMiaOi
-              ? " · duyệt QR → mở khách → Xác nhận (gọi thêm nếu cần) mới làm món"
+              ? " · duyệt QR → mở khách → Xác nhận, không gọi thêm / Xác nhận và gọi thêm"
               : ""}
             {isSpa ? " · bấm dòng để chọn spa" : ""}
-            {isPool ? " · sau duyệt: Quét QR khách → Xác thực = check-in" : ""}
+            {isPool ? " · sau duyệt: Quét QR → Xác thực, không mua thêm / Xác thực và mua thêm" : ""}
             {zone === "PICKLEBALL"
               ? " · duyệt đặt sân online · ghi khách tại quầy trên lịch · Kết thúc = reset sân"
               : ""}
@@ -2015,18 +2509,21 @@ export default function DeskAdministrationPage() {
           </div>
           <button
             type="button"
-            style={{ ...styles.actionBtn, background: "#1d4ed8" }}
+            style={{
+              ...styles.actionBtn,
+              background: "#1d4ed8",
+              color: "#fff",
+            }}
             onClick={() => {
               setCreateGuestError("");
               setGuestName("");
               setGuestPhone("");
-              setGuestSegment("MEMBER");
-              setGuestReissuePassword(false);
-              setGuestAccountInfo(null);
+              setGuestSearch("");
+              setGuestHits([]);
               setCreateGuestOpen(true);
             }}
           >
-            Thêm Member
+            Tạo đơn
           </button>
           <button
             type="button"
@@ -2358,10 +2855,10 @@ export default function DeskAdministrationPage() {
               }}
             >
               <div>
-                <h2 style={{ margin: 0, fontSize: 20 }}>Thêm Member</h2>
+                <h2 style={{ margin: 0, fontSize: 20 }}>Tạo đơn</h2>
                 <p style={{ ...styles.mute, marginTop: 4 }}>
-                  Tạo tài khoản app (đăng nhập bằng SĐT) + hiện trên dashboard
-                  khu.
+                  Khách lẻ tại quầy. Đăng nhập app: SĐT + mật khẩu là số điện
+                  thoại. VIP chỉ khi khách đăng ký gói.
                 </p>
               </div>
               <button
@@ -2370,172 +2867,144 @@ export default function DeskAdministrationPage() {
                 disabled={createGuestBusy}
                 onClick={() => {
                   setCreateGuestOpen(false);
-                  setGuestAccountInfo(null);
                 }}
               >
                 Đóng
               </button>
             </div>
-            {guestAccountInfo ? (
-              <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <label
+                style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}
+              >
+                Tìm khách đã có tài khoản
+                <input
+                  style={{ ...styles.input, marginTop: 6 }}
+                  value={guestSearch}
+                  onChange={(e) => setGuestSearch(e.target.value)}
+                  placeholder="Tên hoặc số điện thoại"
+                  disabled={createGuestBusy}
+                  autoFocus
+                />
+              </label>
+              {guestSearch.trim().length >= 2 ? (
                 <div
                   style={{
-                    padding: 14,
-                    borderRadius: 14,
-                    background: "#ecfdf5",
-                    border: "1px solid #a7f3d0",
+                    maxHeight: 180,
+                    overflowY: "auto",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 12,
+                    background: "#fff",
                   }}
                 >
-                  <p style={{ margin: 0, fontWeight: 800, color: "#047857" }}>
-                    {guestAccountInfo.created
-                      ? "Đã tạo tài khoản My Oasis"
-                      : "Đã mở khách trên dashboard"}
-                  </p>
-                  <p style={{ ...styles.mute, marginTop: 8 }}>
-                    Mã khách: <strong>{guestAccountInfo.customerCode}</strong>
-                    <br />
-                    Đăng nhập app: <strong>{guestAccountInfo.phone}</strong>
-                  </p>
-                  {guestAccountInfo.temporaryPassword ? (
-                    <p
-                      style={{
-                        margin: "10px 0 0",
-                        padding: 10,
-                        borderRadius: 10,
-                        background: "#fff",
-                        fontFamily: "ui-monospace, monospace",
-                        fontWeight: 800,
-                        fontSize: 15,
-                      }}
-                    >
-                      Mật khẩu tạm: {guestAccountInfo.temporaryPassword}
+                  {guestSearchBusy ? (
+                    <p style={{ ...styles.mute, margin: 0, padding: 10 }}>
+                      Đang tìm…
                     </p>
-                  ) : null}
-                  <p style={{ ...styles.mute, marginTop: 8, fontSize: 12 }}>
-                    {guestAccountInfo.loginHint}
-                  </p>
+                  ) : guestHits.length ? (
+                    guestHits.map((hit) => (
+                      <button
+                        key={hit.id}
+                        type="button"
+                        disabled={createGuestBusy}
+                        onClick={() => {
+                          setGuestName(hit.fullName || "");
+                          setGuestPhone(hit.phone || "");
+                          setGuestSearch("");
+                          setGuestHits([]);
+                        }}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          border: 0,
+                          borderBottom: "1px solid #f1f5f9",
+                          background: "transparent",
+                          padding: "10px 12px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span style={{ fontWeight: 800, fontSize: 14 }}>
+                          {hit.fullName || hit.customerCode}
+                        </span>
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 11,
+                            fontWeight: 800,
+                            color:
+                              hit.segmentLabel === "VIP"
+                                ? "#1d4ed8"
+                                : "#64748b",
+                          }}
+                        >
+                          {hit.segmentLabel}
+                        </span>
+                        <span
+                          style={{
+                            display: "block",
+                            marginTop: 2,
+                            fontSize: 12,
+                            color: "#64748b",
+                          }}
+                        >
+                          {hit.phone || "—"}
+                          {hit.shortId ? ` · ID ${hit.shortId}` : ""}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <p style={{ ...styles.mute, margin: 0, padding: 10 }}>
+                      Không thấy khách. Nhập họ tên + SĐT bên dưới để tạo mới.
+                    </p>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  style={{ ...styles.btn, background: "#1d4ed8" }}
-                  onClick={() => {
-                    setGuestAccountInfo(null);
-                    setCreateGuestOpen(false);
-                  }}
-                >
-                  Đã ghi — đóng
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                <label
-                  style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}
-                >
-                  Họ tên
-                  <input
-                    style={{ ...styles.input, marginTop: 6 }}
-                    value={guestName}
-                    onChange={(e) => setGuestName(e.target.value)}
-                    placeholder="Nguyễn Văn A"
-                    disabled={createGuestBusy}
-                    autoFocus
-                  />
-                </label>
-                <label
-                  style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}
-                >
-                  Số điện thoại
-                  <input
-                    style={{ ...styles.input, marginTop: 6 }}
-                    value={guestPhone}
-                    onChange={(e) => setGuestPhone(e.target.value)}
-                    placeholder="09xxxxxxxx"
-                    inputMode="tel"
-                    disabled={createGuestBusy}
-                  />
-                </label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    type="button"
-                    disabled={createGuestBusy}
-                    onClick={() => setGuestSegment("MEMBER")}
-                    style={{
-                      ...styles.ghost,
-                      flex: 1,
-                      background:
-                        guestSegment === "MEMBER" ? "#dbeafe" : "#fff",
-                      borderColor:
-                        guestSegment === "MEMBER" ? "#2563eb" : "#cbd5e1",
-                      fontWeight: 800,
-                    }}
-                  >
-                    Member
-                  </button>
-                  <button
-                    type="button"
-                    disabled={createGuestBusy}
-                    onClick={() => setGuestSegment("WALK_IN")}
-                    style={{
-                      ...styles.ghost,
-                      flex: 1,
-                      background:
-                        guestSegment === "WALK_IN" ? "#ffedd5" : "#fff",
-                      borderColor:
-                        guestSegment === "WALK_IN" ? "#ea580c" : "#cbd5e1",
-                      fontWeight: 800,
-                    }}
-                  >
-                    Khách lẻ
-                  </button>
-                </div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 8,
-                    fontSize: 12,
-                    color: "#475569",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={guestReissuePassword}
-                    onChange={(e) =>
-                      setGuestReissuePassword(e.target.checked)
-                    }
-                    disabled={createGuestBusy}
-                    style={{ marginTop: 2 }}
-                  />
-                  <span>
-                    Nếu SĐT đã có tài khoản: cấp lại mật khẩu tạm = số điện
-                    thoại
-                  </span>
-                </label>
-                {createGuestError ? (
-                  <p style={styles.err}>{createGuestError}</p>
-                ) : null}
-                <button
-                  type="button"
-                  style={{
-                    ...styles.btn,
-                    background: "#1d4ed8",
-                    opacity:
-                      guestName.trim() && guestPhone.trim() && !createGuestBusy
-                        ? 1
-                        : 0.45,
-                  }}
-                  disabled={
-                    !guestName.trim() || !guestPhone.trim() || createGuestBusy
-                  }
-                  onClick={() => void submitCreateGuest()}
-                >
-                  {createGuestBusy
-                    ? "Đang tạo…"
-                    : "Tạo tài khoản"}
-                </button>
-              </div>
-            )}
+              ) : null}
+              <label
+                style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}
+              >
+                Họ tên
+                <input
+                  style={{ ...styles.input, marginTop: 6 }}
+                  value={guestName}
+                  onChange={(e) => setGuestName(e.target.value)}
+                  placeholder="Nguyễn Văn A"
+                  disabled={createGuestBusy}
+                />
+              </label>
+              <label
+                style={{ fontSize: 13, fontWeight: 700, color: "#475569" }}
+              >
+                Số điện thoại
+                <input
+                  style={{ ...styles.input, marginTop: 6 }}
+                  value={guestPhone}
+                  onChange={(e) => setGuestPhone(e.target.value)}
+                  placeholder="09xxxxxxxx"
+                  inputMode="tel"
+                  disabled={createGuestBusy}
+                />
+              </label>
+              {createGuestError ? (
+                <p style={styles.err}>{createGuestError}</p>
+              ) : null}
+              <button
+                type="button"
+                style={{
+                  ...styles.btn,
+                  background: "#1d4ed8",
+                  opacity:
+                    guestName.trim() && guestPhone.trim() && !createGuestBusy
+                      ? 1
+                      : 0.45,
+                }}
+                disabled={
+                  !guestName.trim() || !guestPhone.trim() || createGuestBusy
+                }
+                onClick={() => void submitCreateGuest()}
+              >
+                {createGuestBusy ? "Đang tạo…" : "Tạo đơn"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -2740,7 +3209,7 @@ export default function DeskAdministrationPage() {
                               : "transparent",
                       cursor: "pointer",
                     }}
-                    onClick={() => openCustomer(a, t.cart)}
+                    onClick={() => openCustomer(a, t.cart, t.key)}
                   >
                     <td style={{ ...styles.td, fontWeight: 700 }}>
                       {a.fullName || "—"}
@@ -2827,36 +3296,44 @@ export default function DeskAdministrationPage() {
                       ) : null}
                     </td>
                     <td style={styles.td}>
-                      {t.hasVoucher || t.hasPointsRedeem ? (
-                        <span
-                          style={{
-                            ...styles.badge,
-                            background: t.hasPointsRedeem
-                              ? "#fef3c7"
-                              : "#ecfdf5",
-                            color: t.hasPointsRedeem ? "#b45309" : "#047857",
-                            whiteSpace: "normal",
-                            maxWidth: 140,
-                          }}
-                        >
-                          {t.promoLabel && t.promoLabel !== "—"
-                            ? t.promoLabel
-                            : t.hasPointsRedeem
-                              ? "Đổi điểm"
-                              : "Voucher"}
-                        </span>
-                      ) : typeof a.pointsBalance === "number" &&
-                        a.pointsBalance > 0 ? (
-                        <span
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 700,
-                            color: "#64748b",
-                          }}
-                          title="Số điểm trong ví (chưa áp trên QR này)"
-                        >
-                          {a.pointsBalance} điểm
-                        </span>
+                      {t.pointsEarned > 0 ||
+                      t.hasVoucher ||
+                      t.hasPointsRedeem ? (
+                        <div style={{ display: "grid", gap: 4 }}>
+                          {t.pointsEarned > 0 ? (
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 800,
+                                color: "#0f766e",
+                              }}
+                              title="Điểm cộng từ đơn này (10.000đ trước giảm = 1 điểm)"
+                            >
+                              +{t.pointsEarned} điểm
+                            </span>
+                          ) : null}
+                          {t.hasVoucher || t.hasPointsRedeem ? (
+                            <span
+                              style={{
+                                ...styles.badge,
+                                background: t.hasPointsRedeem
+                                  ? "#fef3c7"
+                                  : "#ecfdf5",
+                                color: t.hasPointsRedeem
+                                  ? "#b45309"
+                                  : "#047857",
+                                whiteSpace: "normal",
+                                maxWidth: 140,
+                              }}
+                            >
+                              {t.promoLabel && t.promoLabel !== "—"
+                                ? t.promoLabel
+                                : t.hasPointsRedeem
+                                  ? "Đổi điểm"
+                                  : "Voucher"}
+                            </span>
+                          ) : null}
+                        </div>
                       ) : (
                         <span style={{ color: "#94a3b8", fontSize: 12 }}>—</span>
                       )}
@@ -3001,11 +3478,141 @@ export default function DeskAdministrationPage() {
       </div>
 
       {selected ? (
-        <div style={styles.modalBackdrop} onClick={() => setSelected(null)}>
+        <>
+        <div
+          style={styles.modalBackdrop}
+          onClick={() => {
+            setSelected(null);
+            setSelectedTicketKey(null);
+            setVoucherPickerOpen(false);
+          }}
+        >
           <div
-            style={{ ...styles.modal, width: "min(860px, 100%)" }}
+            style={{
+              ...styles.modal,
+              width: "min(860px, 100%)",
+              position: "relative",
+            }}
             onClick={(e) => e.stopPropagation()}
           >
+            {voucherPickerOpen ? (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  zIndex: 8,
+                  background: "rgba(15,23,42,.4)",
+                  display: "grid",
+                  placeItems: "center",
+                  padding: 16,
+                  borderRadius: 20,
+                }}
+                onClick={() => setVoucherPickerOpen(false)}
+              >
+                <div
+                  style={{
+                    width: "min(380px, 100%)",
+                    maxHeight: "80%",
+                    overflow: "auto",
+                    background: "#fff",
+                    borderRadius: 16,
+                    padding: 18,
+                    boxShadow: "0 16px 40px rgba(15,23,42,.2)",
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <h2 style={{ margin: 0, fontSize: 20 }}>Dùng voucher</h2>
+                    <button
+                      type="button"
+                      style={styles.closeBtn}
+                      onClick={() => setVoucherPickerOpen(false)}
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                  <p style={{ ...styles.mute, margin: "0 0 12px" }}>
+                    Chọn voucher khách muốn dùng cho đơn này.
+                  </p>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.menuRow,
+                      width: "100%",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      marginBottom: 8,
+                      background: !deskVoucherOfferId ? "#f5f3ff" : "#fff",
+                    }}
+                    onClick={() => {
+                      setDeskVoucherOfferId("");
+                      setVoucherPickerOpen(false);
+                    }}
+                  >
+                    <span style={{ fontWeight: 800, fontSize: 14 }}>
+                      Không dùng
+                    </span>
+                  </button>
+                  {deskWallet.length === 0 ? (
+                    <p style={{ ...styles.mute, margin: 0 }}>
+                      Khách chưa có voucher dùng tại khu này.
+                    </p>
+                  ) : (
+                    deskWallet.map((v) => (
+                      <button
+                        key={v.offerId}
+                        type="button"
+                        style={{
+                          ...styles.menuRow,
+                          width: "100%",
+                          textAlign: "left",
+                          cursor: "pointer",
+                          marginBottom: 8,
+                          background:
+                            deskVoucherOfferId === v.offerId
+                              ? "#f5f3ff"
+                              : "#fff",
+                        }}
+                        onClick={() => {
+                          setDeskVoucherOfferId(v.offerId);
+                          setVoucherPickerOpen(false);
+                        }}
+                      >
+                        <span>
+                          <span
+                            style={{
+                              display: "block",
+                              fontWeight: 800,
+                              fontSize: 14,
+                            }}
+                          >
+                            {v.title}
+                          </span>
+                          <span
+                            style={{
+                              display: "block",
+                              fontSize: 12,
+                              color: "#64748b",
+                              marginTop: 2,
+                            }}
+                          >
+                            {v.subtitle}
+                          </span>
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
             <div
               style={{
                 display: "flex",
@@ -3037,26 +3644,13 @@ export default function DeskAdministrationPage() {
                 ) : null}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                {(isMiaOi || isPool || isAdmin) && selected ? (
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.btn,
-                      flex: "0 0 auto",
-                      background: "#b45309",
-                      height: 36,
-                      padding: "0 12px",
-                      fontSize: 13,
-                    }}
-                    onClick={() => void openRedeem(isPool ? 100 : 50)}
-                  >
-                    Đổi điểm
-                  </button>
-                ) : null}
                 <button
                   type="button"
                   style={styles.closeBtn}
-                  onClick={() => setSelected(null)}
+                  onClick={() => {
+                    setSelected(null);
+                    setSelectedTicketKey(null);
+                  }}
                 >
                   Đóng
                 </button>
@@ -3375,7 +3969,17 @@ export default function DeskAdministrationPage() {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 800, whiteSpace: "nowrap" }}>
                       {cartLines.length
-                        ? `${isMiaOi && miaCartOpen() ? "Gọi thêm " : ""}${cartLines.reduce((n, l) => n + l.qty, 0)} ${catalogUnit()} · ${formatVnd(Math.max(0, cartTotal - (extraRedeemSelection()?.unit || 0)))}${extraRedeemSelection() ? " · Đổi 50 điểm" : ""}`
+                        ? `${isMiaOi && miaCartOpen() ? "Gọi thêm " : ""}${cartLines.reduce((n, l) => n + l.qty, 0)} ${catalogUnit()} · ${formatVnd(deskCatalogPayable())}${
+                            isMiaOi && deskRedeemPreview().cost
+                              ? ` · −${deskRedeemPreview().cost} điểm`
+                              : extraRedeemSelection()
+                                ? " · Đổi 50 điểm"
+                                : ""
+                          }${
+                            selectedDeskVoucher()
+                              ? ` · ${selectedDeskVoucher()?.title}`
+                              : ""
+                          }`
                         : isMiaOi && miaCartOpen()
                           ? "Không gọi thêm"
                           : `Chưa chọn ${catalogUnit()}`}
@@ -3399,8 +4003,11 @@ export default function DeskAdministrationPage() {
                         gap: 8,
                         flexWrap: "nowrap",
                         flex: "0 0 auto",
+                        alignItems: "center",
                       }}
                     >
+                      {renderDeskRedeemControl(ordering)}
+                      {renderDeskVoucherButton(ordering)}
                       <button
                         type="button"
                         style={{
@@ -3431,19 +4038,30 @@ export default function DeskAdministrationPage() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
+                    <div
                       style={{
-                        ...styles.btn,
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
                         flex: "0 0 auto",
-                        background: accentColor(),
-                        opacity: cartLines.length && !ordering ? 1 : 0.45,
                       }}
-                      disabled={!cartLines.length || ordering}
-                      onClick={() => void saveOrder()}
                     >
-                      {ordering ? "Đang lưu…" : "Lưu đơn"}
-                    </button>
+                      {isMiaOi ? renderDeskRedeemControl(ordering) : null}
+                      {isMiaOi ? renderDeskVoucherButton(ordering) : null}
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.btn,
+                          flex: "0 0 auto",
+                          background: accentColor(),
+                          opacity: cartLines.length && !ordering ? 1 : 0.45,
+                        }}
+                        disabled={!cartLines.length || ordering}
+                        onClick={() => void saveOrder()}
+                      >
+                        {ordering ? "Đang lưu…" : "Lưu đơn"}
+                      </button>
+                    </div>
                   )}
                 </div>
               </>
@@ -3452,259 +4070,45 @@ export default function DeskAdministrationPage() {
             <p style={{ marginTop: 18, marginBottom: 8, fontWeight: 800 }}>
               Lịch sử khu này hôm nay
             </p>
-            {orderMsg && isPool ? (
-              <p
-                style={{
-                  margin: "0 0 10px",
-                  fontSize: 13,
-                  color: "#047857",
-                  fontWeight: 700,
-                }}
-              >
-                {orderMsg}
-              </p>
-            ) : null}
 
-            {hasCatalog ? (
-              (() => {
-                type HistRow = {
-                  key: string;
-                  at: string;
-                  title: string;
-                  status: string;
-                  statusColor: string;
-                  detail: string | null;
-                  promo: string | null;
-                  total: number | null;
-                  note: string | null;
-                  orderId: string | null;
-                };
-                const rows: HistRow[] = [];
-                const confirmedBills = confirmedPoolBills(selected.todayScans || []);
-                const usedCarts = (selected.carts || []).filter(
-                  (c) => c.status === "USED"
-                ).length;
-                for (const cart of selected.carts || []) {
-                  if (
-                    matchConfirmedBill(confirmedBills, cart, usedCarts)
-                  ) {
-                    continue;
-                  }
-                  const promo = parseCartPromo(cart.items);
-                  const views = foldPointsOntoItems(
-                    (cart.items || []).map((i) => ({
-                      id: i.id,
-                      nameVi: i.nameVi,
-                      qty: i.qty,
-                      unitPriceVnd: i.priceVnd,
-                    }))
-                  );
-                  const detail = views.length
-                    ? views
-                        .map(
-                          (v) =>
-                            `${v.qty}× ${v.nameVi} · ${formatVnd(v.netVnd)}${v.pointsLabel ? ` · ${v.pointsLabel}` : ""}`
-                        )
-                        .join(", ")
-                    : null;
-                  const promoClean = promo.hasVoucher ? "Voucher" : null;
-                  const st = cart.status || "—";
-                  const statusColor =
-                    st === "USED"
-                      ? "#047857"
-                      : st === "REJECTED" ||
-                          st === "CANCELLED" ||
-                          st === "NO_SHOW"
-                        ? "#b91c1c"
-                        : st === "PENDING_APPROVAL" || st === "OPEN"
-                          ? "#b45309"
-                          : "#64748b";
-                  rows.push({
-                    key: `cart-${cart.token}`,
-                    at: cart.createdAt || selected.updatedAt,
-                    title: "Yêu cầu QR",
-                    status: cartOrderLabel(st, zone, true, cart.adminNote),
-                    statusColor,
-                    detail,
-                    promo: promoClean,
-                    total: cart.totalVnd ?? null,
-                    note:
-                      st === "REJECTED" && cart.adminNote
-                        ? cart.adminNote
-                        : null,
-                    orderId: null,
-                  });
-                }
-                for (const o of selected.todayOrders || []) {
-                  rows.push({
-                    key: `ord-${o.id}`,
-                    at: o.at,
-                    title: "Đơn order",
-                    status: o.status,
-                    statusColor:
-                      o.status === "CANCELLED" ? "#b91c1c" : "#047857",
-                    detail: billFromItems(o.items, o.totalVnd),
-                    promo: null,
-                    total: o.totalVnd,
-                    note: null,
-                    orderId: o.id,
-                  });
-                }
-                rows.sort(
-                  (a, b) =>
-                    new Date(b.at).getTime() - new Date(a.at).getTime()
-                );
-                if (!rows.length) {
+            {(() => {
+                if (!guestTickets.length) {
                   return (
-                    <p style={styles.mute}>
-                      Chưa có yêu cầu / đơn nào hôm nay.
-                    </p>
+                    <p style={styles.mute}>Chưa có lần quét nào hôm nay.</p>
                   );
                 }
+                const focusedKey = focusedTicket?.key || guestTickets[0].key;
                 return (
-                  <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-                    {rows.map((r) => (
-                      <li
-                        key={r.key}
-                        style={{
-                          padding: "12px 0",
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 10,
-                            alignItems: "flex-start",
-                          }}
-                        >
-                          <div style={{ minWidth: 0 }}>
-                            <strong>{r.title}</strong>
-                            <span
-                              style={{
-                                marginLeft: 8,
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: r.statusColor,
-                              }}
-                            >
-                              {r.status}
-                            </span>
-                            {r.detail ? (
-                              <p
-                                style={{
-                                  margin: "4px 0 0",
-                                  fontSize: 13,
-                                  color: "#334155",
-                                  lineHeight: 1.4,
-                                }}
-                              >
-                                {r.detail}
-                                {r.total != null && !r.detail.includes("đ")
-                                  ? ` · ${formatVnd(r.total)}`
-                                  : ""}
-                              </p>
-                            ) : r.total != null ? (
-                              <p
-                                style={{
-                                  margin: "4px 0 0",
-                                  fontSize: 13,
-                                  color: "#64748b",
-                                }}
-                              >
-                                {formatVnd(r.total)}
-                              </p>
-                            ) : null}
-                            {r.promo ? (
-                              <p
-                                style={{
-                                  margin: "4px 0 0",
-                                  fontSize: 12,
-                                  fontWeight: 700,
-                                  color: "#b45309",
-                                }}
-                              >
-                                {r.promo}
-                              </p>
-                            ) : null}
-                            {r.note ? (
-                              <p
-                                style={{
-                                  margin: "4px 0 0",
-                                  fontSize: 12,
-                                  color: "#b91c1c",
-                                }}
-                              >
-                                Lý do: {r.note}
-                              </p>
-                            ) : null}
-                          </div>
-                          <div
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-end",
-                              gap: 8,
-                              flexShrink: 0,
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontFamily: "ui-monospace, monospace",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {formatTime(r.at)}
-                            </span>
-                            {isMiaOi &&
-                            r.orderId &&
-                            r.status !== "CANCELLED" ? (
-                              <button
-                                type="button"
-                                style={{
-                                  ...styles.ghost,
-                                  padding: "6px 10px",
-                                  fontSize: 12,
-                                }}
-                                disabled={cancellingOrderId === r.orderId}
-                                onClick={() => void cancelMiaOrder(r.orderId!)}
-                              >
-                                {cancellingOrderId === r.orderId
-                                  ? "…"
-                                  : "Huỷ đơn"}
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                );
-              })()
-            ) : selected.todayScans?.length ? (
               <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-                {selected.todayScans.map((s) => {
-                  const verified = !!s.ticketVerified || !!s.orderSummary;
-                  const poolGroup =
-                    isPool && s.eventType === "SERVICE_USE"
-                      ? poolScanGroups.get(poolScanGroupKey(s)) || [s]
-                      : [s];
-                  if (
-                    isPool &&
-                    s.eventType === "SERVICE_USE" &&
-                    s.id !== poolGroup[0]?.id
-                  ) {
-                    return null;
-                  }
-                  const totals = scanCartTotal(s.id);
+                {guestTickets.map((t, idx) => {
+                  const s = t.scan;
+                  const locked = poolTicketLocked(t);
+                  const isFocus = t.key === focusedKey;
+                  const totals = s
+                    ? scanCartTotal(s.id)
+                    : {
+                        sum: 0,
+                        qty: 0,
+                        accessoryDiscount: 0,
+                        membershipDiscount: 0,
+                      };
                   const { sum, qty } = totals;
-                  const busy = verifyingScanId === s.id;
+                  const busy = !!(s && verifyingScanId === s.id);
                   const cartLines = guestCartLines;
+                  const billDetail =
+                    (t.billText && t.billText !== "—" ? t.billText : null) ||
+                    s?.orderSummary ||
+                    null;
+                  const billTotal = t.billTotal ?? s?.totalVnd ?? null;
                   return (
                     <li
-                      key={s.id}
+                      key={t.key}
                       style={{
                         padding: "12px 0",
+                        cursor: t.key !== focusedKey ? "pointer" : "default",
+                      }}
+                      onClick={() => {
+                        if (t.key !== focusedKey) setSelectedTicketKey(t.key);
                       }}
                     >
                       <div
@@ -3716,35 +4120,51 @@ export default function DeskAdministrationPage() {
                         }}
                       >
                         <div>
-                          <strong>{s.serviceName}</strong>
-                          <span
-                            style={{
-                              marginLeft: 8,
-                              fontSize: 12,
-                              fontWeight: 700,
-                              color: verified ? "#047857" : "#b45309",
-                            }}
-                          >
-                            {verified ? "Đã xác thực" : "Chưa xác thực"}
-                            {poolGroup.length > 1
-                              ? ` · gộp ${poolGroup.length} lần quét`
-                              : ""}
-                          </span>
-                          {s.orderSummary ? (
+                          {idx === 0 ? (
+                            <>
+                              <strong>
+                                {zoneName || s?.serviceName || "Khu"}
+                              </strong>
+                              <span
+                                style={{
+                                  marginLeft: 8,
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: locked ? "#047857" : "#b45309",
+                                }}
+                              >
+                                {t.orderLabel}
+                              </span>
+                            </>
+                          ) : null}
+                          {billDetail ? (
                             <p
                               style={{
-                                margin: "2px 0 0",
+                                margin: idx === 0 ? "2px 0 0" : 0,
                                 fontSize: 13,
-                                color: "#64748b",
+                                color: "#334155",
+                                fontWeight: idx === 0 ? 400 : 700,
                               }}
                             >
-                              {s.orderSummary}
-                              {s.totalVnd
-                                ? ` · ${formatVnd(s.totalVnd)}`
+                              {billDetail}
+                              {billTotal != null &&
+                              !String(billDetail).includes("đ")
+                                ? ` · ${formatVnd(billTotal)}`
                                 : ""}
                             </p>
+                          ) : idx > 0 ? (
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: 13,
+                                fontWeight: 700,
+                                color: locked ? "#047857" : "#b45309",
+                              }}
+                            >
+                              {t.orderLabel}
+                            </p>
                           ) : null}
-                          {isPool && verified ? (
+                          {isPool && locked ? (
                             <div
                               style={{
                                 marginTop: 8,
@@ -3753,19 +4173,24 @@ export default function DeskAdministrationPage() {
                                 flexWrap: "wrap",
                               }}
                             >
-                              <button
-                                type="button"
-                                style={{
-                                  ...styles.ghost,
-                                  padding: "8px 12px",
-                                  fontSize: 13,
-                                  opacity: busy ? 0.5 : 1,
-                                }}
-                                disabled={busy}
-                                onClick={() => void undoPoolScan(s)}
-                              >
-                                {busy ? "…" : "Undo"}
-                              </button>
+                              {s ? (
+                                <button
+                                  type="button"
+                                  style={{
+                                    ...styles.ghost,
+                                    padding: "8px 12px",
+                                    fontSize: 13,
+                                    opacity: busy ? 0.5 : 1,
+                                  }}
+                                  disabled={busy}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void undoPoolScan(s);
+                                  }}
+                                >
+                                  {busy ? "…" : "Undo"}
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 style={{
@@ -3776,9 +4201,40 @@ export default function DeskAdministrationPage() {
                                   background: "#0c4a6e",
                                 }}
                                 disabled={busy}
-                                onClick={() => sendPoolBill(s)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  sendPoolTicketBill(t);
+                                }}
                               >
                                 In bill
+                              </button>
+                            </div>
+                          ) : null}
+                          {isMiaOi &&
+                          t.orderId &&
+                          selected.todayOrders.some(
+                            (o) =>
+                              o.id === t.orderId &&
+                              o.status !== "CANCELLED" &&
+                              !isFinalizedOrderStatus(o.status)
+                          ) ? (
+                            <div style={{ marginTop: 8 }}>
+                              <button
+                                type="button"
+                                style={{
+                                  ...styles.ghost,
+                                  padding: "8px 12px",
+                                  fontSize: 13,
+                                }}
+                                disabled={cancellingOrderId === t.orderId}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void cancelMiaOrder(t.orderId!);
+                                }}
+                              >
+                                {cancellingOrderId === t.orderId
+                                  ? "…"
+                                  : "Huỷ đơn"}
                               </button>
                             </div>
                           ) : null}
@@ -3790,11 +4246,11 @@ export default function DeskAdministrationPage() {
                             flexShrink: 0,
                           }}
                         >
-                          {formatTime(s.at)}
+                          {formatTime(t.scanAt || s?.at || "")}
                         </span>
                       </div>
 
-                      {isPool && !verified && !poolLocked ? (
+                      {isPool && !locked && isFocus && s ? (
                         <div
                           style={{
                             marginTop: 10,
@@ -3841,64 +4297,98 @@ export default function DeskAdministrationPage() {
                             </p>
                           ) : null}
                           <div style={{ display: "grid", gap: 8 }}>
-                            {POOL_MENU.map((item) => {
-                              const q = scanQty(s.id, item.id);
+                            {POOL_CATEGORIES.map((cat) => {
+                              const items = POOL_MENU.filter(
+                                (item) => item.category === cat.id
+                              );
+                              if (!items.length) return null;
+                              const sameDay = guestHasSameDayOlympicOrder();
                               return (
-                                <div key={item.id} style={styles.menuRow}>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontWeight: 700, fontSize: 14 }}>
-                                      {item.nameVi}
-                                    </div>
-                                    <div
-                                      style={{
-                                        fontSize: 12,
-                                        color: "#64748b",
-                                      }}
-                                    >
-                                      {formatPoolPrice(item)}
-                                      {item.durationMin
-                                        ? ` · ${item.durationMin}'`
-                                        : ""}
-                                      {item.note ? ` · ${item.note}` : ""}
-                                    </div>
-                                  </div>
-                                  <div
+                                <div key={cat.id} style={{ display: "grid", gap: 8 }}>
+                                  <p
                                     style={{
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 8,
+                                      margin: cat.id === "tre-em" ? "0" : "8px 0 0",
+                                      fontSize: 12,
+                                      fontWeight: 800,
+                                      color: "#0c4a6e",
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.04em",
                                     }}
                                   >
-                                    <button
-                                      type="button"
-                                      style={styles.qtyBtn}
-                                      onClick={() =>
-                                        setScanQty(s.id, item.id, q - 1)
-                                      }
-                                      disabled={q <= 0 || busy}
-                                    >
-                                      −
-                                    </button>
-                                    <span
-                                      style={{
-                                        width: 22,
-                                        textAlign: "center",
-                                        fontWeight: 800,
-                                      }}
-                                    >
-                                      {q}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      style={styles.qtyBtn}
-                                      onClick={() =>
-                                        setScanQty(s.id, item.id, q + 1)
-                                      }
-                                      disabled={busy}
-                                    >
-                                      +
-                                    </button>
-                                  </div>
+                                    {cat.nameVi}
+                                    {cat.id === "goi-thang" && sameDay
+                                      ? " · −10% cùng ngày với đơn Olympic"
+                                      : ""}
+                                  </p>
+                                  {items.map((item) => {
+                                    const q = scanQty(s.id, item.id);
+                                    return (
+                                      <div key={item.id} style={styles.menuRow}>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div
+                                            style={{
+                                              fontWeight: 700,
+                                              fontSize: 14,
+                                            }}
+                                          >
+                                            {item.nameVi}
+                                          </div>
+                                          <div
+                                            style={{
+                                              fontSize: 12,
+                                              color: "#64748b",
+                                            }}
+                                          >
+                                            {item.category === "goi-thang" &&
+                                            sameDay
+                                              ? `${Math.round((item.priceVnd * 0.9) / 1000)}K (−10%)`
+                                              : formatPoolPrice(item)}
+                                            {item.durationMin
+                                              ? ` · ${item.durationMin}'`
+                                              : ""}
+                                            {item.note ? ` · ${item.note}` : ""}
+                                          </div>
+                                        </div>
+                                        <div
+                                          style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                          }}
+                                        >
+                                          <button
+                                            type="button"
+                                            style={styles.qtyBtn}
+                                            onClick={() =>
+                                              setScanQty(s.id, item.id, q - 1)
+                                            }
+                                            disabled={q <= 0 || busy}
+                                          >
+                                            −
+                                          </button>
+                                          <span
+                                            style={{
+                                              width: 22,
+                                              textAlign: "center",
+                                              fontWeight: 800,
+                                            }}
+                                          >
+                                            {q}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            style={styles.qtyBtn}
+                                            onClick={() =>
+                                              setScanQty(s.id, item.id, q + 1)
+                                            }
+                                            disabled={busy}
+                                          >
+                                            +
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               );
                             })}
@@ -3911,43 +4401,6 @@ export default function DeskAdministrationPage() {
                               gap: 8,
                             }}
                           >
-                            <label
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                fontSize: 13,
-                              }}
-                            >
-                              <span style={{ color: "#64748b", minWidth: 90 }}>
-                                Giảm tay (đ)
-                              </span>
-                              <input
-                                type="number"
-                                min={0}
-                                step={1000}
-                                value={scanManualDiscount[s.id] || ""}
-                                placeholder="0"
-                                onChange={(e) => {
-                                  const n = Math.max(
-                                    0,
-                                    Math.round(Number(e.target.value) || 0)
-                                  );
-                                  setScanManualDiscount((prev) => ({
-                                    ...prev,
-                                    [s.id]: n,
-                                  }));
-                                }}
-                                style={{
-                                  flex: 1,
-                                  height: 36,
-                                  borderRadius: 10,
-                                  border: "1px solid #cbd5e1",
-                                  padding: "0 10px",
-                                  fontSize: 14,
-                                }}
-                              />
-                            </label>
                             <div
                               style={{
                                 display: "flex",
@@ -3959,7 +4412,7 @@ export default function DeskAdministrationPage() {
                               <div style={{ fontWeight: 800, fontSize: 13 }}>
                                 {qty ? (
                                   <>
-                                    Mua thêm {qty} món · {formatVnd(sum)}
+                                    Mua thêm {qty} món · {formatVnd(Math.max(0, sum - (isPool ? deskRedeemPreview().discountVnd : 0)))}
                                     {totals.accessoryDiscount > 0 ? (
                                       <span
                                         style={{
@@ -3973,17 +4426,17 @@ export default function DeskAdministrationPage() {
                                         {formatVnd(totals.accessoryDiscount)})
                                       </span>
                                     ) : null}
-                                    {totals.manualDiscount > 0 ? (
+                                    {totals.membershipDiscount > 0 ? (
                                       <span
                                         style={{
                                           display: "block",
                                           fontWeight: 600,
                                           fontSize: 12,
-                                          color: "#b45309",
+                                          color: "#047857",
                                         }}
                                       >
-                                        Giảm tay (−
-                                        {formatVnd(totals.manualDiscount)})
+                                        Gói tháng −10% cùng ngày với đơn Olympic (−
+                                        {formatVnd(totals.membershipDiscount)})
                                       </span>
                                     ) : null}
                                   </>
@@ -3993,7 +4446,16 @@ export default function DeskAdministrationPage() {
                                   "Chưa chọn vé"
                                 )}
                               </div>
-                              <div style={{ display: "flex", gap: 8 }}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: 8,
+                                  alignItems: "center",
+                                  flexWrap: "wrap",
+                                  justifyContent: "flex-end",
+                                }}
+                              >
+                                {renderDeskRedeemControl(busy)}
                                 {cartLines.length ? (
                                   <button
                                     type="button"
@@ -4004,7 +4466,10 @@ export default function DeskAdministrationPage() {
                                       opacity: busy ? 0.45 : 1,
                                     }}
                                     disabled={busy}
-                                    onClick={() => void verifyPoolScan(s, "cart")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void verifyPoolScan(s, "cart");
+                                    }}
                                   >
                                     {busy ? "Đang lưu…" : "Xác thực, không mua thêm"}
                                   </button>
@@ -4018,7 +4483,10 @@ export default function DeskAdministrationPage() {
                                     opacity: qty && !busy ? 1 : 0.45,
                                   }}
                                   disabled={!qty || busy}
-                                  onClick={() => void verifyPoolScan(s, "added")}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void verifyPoolScan(s, "added");
+                                  }}
                                 >
                                   {busy
                                     ? "Đang lưu…"
@@ -4035,24 +4503,12 @@ export default function DeskAdministrationPage() {
                   );
                 })}
               </ul>
-            ) : (
-              <p style={styles.mute}>Chưa có lần quét nào hôm nay.</p>
-            )}
+                );
+              })()}
 
-            {selected.pendingAdmin ? (
-              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-                <button
-                  type="button"
-                  style={styles.btn}
-                  disabled={saving}
-                  onClick={() => void markSeen()}
-                >
-                  {saving ? "Đang lưu…" : "Đã xem"}
-                </button>
-              </div>
-            ) : null}
           </div>
         </div>
+        </>
       ) : null}
     </main>
   );
@@ -4142,8 +4598,10 @@ const styles: Record<string, React.CSSProperties> = {
     height: 42,
     background: "#1e3a5f",
     color: "#fff",
+    fontFamily: "inherit",
     fontWeight: 800,
     fontSize: 14,
+    lineHeight: 1,
     cursor: "pointer",
     flex: "0 0 auto",
     whiteSpace: "nowrap",

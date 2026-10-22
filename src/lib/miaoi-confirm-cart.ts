@@ -1,4 +1,5 @@
 import { CART_STATUS } from "@/lib/cart-status";
+import { applyDeskRedeemUnits, earnableVnd } from "@/lib/desk-point-redeem";
 import { getMiaOiItem } from "@/lib/miaoi-menu";
 import {
   REDEEM_DRINK_MAX_VND,
@@ -7,6 +8,12 @@ import {
   redeemPoints,
 } from "@/lib/points";
 import { prisma } from "@/lib/prisma";
+import {
+  consumeDeskBillVoucher,
+  deskVoucherNote,
+  quoteDeskBillVoucher,
+  voucherErrorStatus,
+} from "@/lib/voucher-redeem";
 
 type CartItem = {
   id?: string;
@@ -36,6 +43,10 @@ export async function confirmMiaOiCartPayment(opts: {
   extraItems?: ExtraLine[];
   /** 50 điểm cho 1 món gọi thêm ≤ 50.000đ. */
   pointsRedeem?: ExtraRedeem | null;
+  /** Số đồ uống đổi điểm (50, 100, 150…). */
+  pointsRedeemUnits?: number;
+  voucherOfferId?: string;
+  staffName?: string;
 }) {
   const token = opts.token.trim().replace(/^.*\/q\//, "");
   const cart = await prisma.appServiceCart.findUnique({
@@ -168,9 +179,32 @@ export async function confirmMiaOiCartPayment(opts: {
   const extraTotal = extras.reduce((s, i) => s + i.unitPriceVnd * i.qty, 0);
 
   let extraPointsOff = 0;
+  let deskRedeemCost = 0;
+  let deskRedeemNote = "";
+  const deskUnits = Math.max(0, Math.round(Number(opts.pointsRedeemUnits) || 0));
+  if (deskUnits > 0) {
+    const applied = applyDeskRedeemUnits(finalItems, deskUnits, "drink");
+    finalItems.length = 0;
+    finalItems.push(...applied.items);
+    extraPointsOff = applied.discountVnd;
+    deskRedeemCost = applied.cost;
+    deskRedeemNote = `Sử dụng ${applied.cost} điểm · ${applied.unitsApplied} đồ uống`;
+    const payer = await prisma.appCustomer.findUnique({
+      where: { id: cart.customerId },
+      select: { pointsBalance: true },
+    });
+    if (applied.cost > 0 && (payer?.pointsBalance ?? 0) < applied.cost) {
+      return {
+        ok: false as const,
+        error: `Không đủ điểm (cần ${applied.cost}, đang có ${payer?.pointsBalance ?? 0}).`,
+        status: 400,
+      };
+    }
+  }
+
   const redeemTier = Math.round(Number(opts.pointsRedeem?.tier) || 0);
   const redeemItemId = String(opts.pointsRedeem?.itemId || "").trim();
-  if (redeemTier || redeemItemId) {
+  if (!deskUnits && (redeemTier || redeemItemId)) {
     if (redeemTier !== REDEEM_TIER_DRINK || !redeemItemId) {
       return {
         ok: false as const,
@@ -218,19 +252,46 @@ export async function confirmMiaOiCartPayment(opts: {
 
   const subtotalBeforeDiscount =
     orderItems.reduce((s, i) => s + i.unitPriceVnd * i.qty, 0) + extraTotal;
-  const totalVnd = Math.max(0, cart.totalVnd + extraTotal - extraPointsOff);
+  let totalVnd = Math.max(0, cart.totalVnd + extraTotal - extraPointsOff);
+  let voucherNote = "";
+  let voucherQuote = { offerId: "", title: "", discountVnd: 0 };
+  const voucherOfferId = String(opts.voucherOfferId || "").trim();
+  if (voucherOfferId) {
+    try {
+      voucherQuote = await quoteDeskBillVoucher({
+        customerId: cart.customerId,
+        offerId: voucherOfferId,
+        zone: "MIA_OI",
+        baseVnd: totalVnd,
+      });
+      totalVnd = Math.max(0, totalVnd - voucherQuote.discountVnd);
+      voucherNote = deskVoucherNote(voucherQuote);
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : "Không dùng được voucher.",
+        status: voucherErrorStatus(err),
+      };
+    }
+  }
 
   const order = await prisma.$transaction(async (tx) => {
     const created = await tx.appOrder.create({
       data: {
         customerId: cart.customerId,
         serviceId: service?.id || null,
-        status: "ACCEPTED",
+        status: "CONFIRMED",
         source: "ZONE_DESK",
         createdByType: "STAFF",
         createdById: opts.staffUserId,
         totalVnd,
-        note: `Thanh toán QR ${cart.token.slice(0, 12)}…`,
+        note: [
+          `Thanh toán QR ${cart.token.slice(0, 12)}…`,
+          deskRedeemNote,
+          voucherNote,
+        ]
+          .filter(Boolean)
+          .join(" · "),
         items: {
           create: finalItems.map((i) => ({
             itemId: i.itemId,
@@ -277,19 +338,42 @@ export async function confirmMiaOiCartPayment(opts: {
     return created;
   });
 
+  if (voucherQuote.offerId) {
+    await consumeDeskBillVoucher({
+      customerId: cart.customerId,
+      offerId: voucherQuote.offerId,
+      zone: "MIA_OI",
+      staffUserId: opts.staffUserId,
+      staffName: opts.staffName || "desk",
+      baseVnd: totalVnd + voucherQuote.discountVnd,
+      note: voucherNote,
+    }).catch((err) => {
+      console.error("[miaoi-confirm voucher]", err);
+    });
+  }
+
   const pts = await awardPurchasePoints({
     customerId: cart.customerId,
     refType: "SERVICE_CART",
     refId: cart.id,
-    subtotalVnd: subtotalBeforeDiscount,
-    note: `Mía Ơi · ${subtotalBeforeDiscount}đ trước giảm`,
+    subtotalVnd: earnableVnd(finalItems),
+    note: `Mía Ơi · ${earnableVnd(finalItems)}đ phần chưa đổi điểm`,
   }).catch((err) => {
     console.error("[miaoi-confirm points]", err);
     return null;
   });
 
   let pointsBalance = pts?.balance ?? null;
-  if (extraPointsOff > 0) {
+  if (deskRedeemCost > 0) {
+    const burned = await redeemPoints({
+      customerId: cart.customerId,
+      cost: deskRedeemCost,
+      refType: "APP_ORDER",
+      refId: `redeem:${order.id}`,
+      note: deskRedeemNote,
+    });
+    pointsBalance = burned.balance;
+  } else if (extraPointsOff > 0) {
     const burned = await redeemPoints({
       customerId: cart.customerId,
       cost: REDEEM_TIER_DRINK,
@@ -313,6 +397,6 @@ export async function confirmMiaOiCartPayment(opts: {
     customer: cart.customer,
     pointsAwarded: pts?.delta ?? 0,
     pointsBalance,
-    message: "Đã xác nhận thanh toán — được làm món.",
+    message: "Đã xác nhận thanh toán.",
   };
 }

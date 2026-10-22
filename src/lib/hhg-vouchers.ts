@@ -84,13 +84,49 @@ export function vouchersClaimableAtZone(deskZone: string): DeskHhgVoucher[] {
   return [];
 }
 
+/** Voucher áp vào bill tại quầy (Mía % / Spa / LN). */
+export function vouchersUsableAtZone(deskZone: string): DeskHhgVoucher[] {
+  const z = deskZone.toUpperCase();
+  if (z === "MIA_OI") {
+    return DESK_HHG_VOUCHERS.filter((v) => v.zoneCode === "MIA_OI");
+  }
+  if (z === "OLYMPIC_POOL" || z === "OLYMPIC") {
+    return DESK_HHG_VOUCHERS.filter((v) => v.zoneCode === "OLYMPIC_POOL");
+  }
+  return vouchersClaimableAtZone(z);
+}
+
 export function offerMatchesDeskZone(offerId: string, deskZone: string) {
   const v = getDeskHhgVoucher(offerId);
   if (!v) return false;
   const z = deskZone.toUpperCase();
   if (z === "SAUNA" || z === "SPA") return v.zoneCode === "SPA";
   if (z === "LONG_NUONG") return v.zoneCode === "LONG_NUONG";
+  if (z === "MIA_OI") return v.zoneCode === "MIA_OI";
+  if (z === "OLYMPIC_POOL" || z === "OLYMPIC") {
+    return v.zoneCode === "OLYMPIC_POOL";
+  }
   return false;
+}
+
+export function deskVoucherCut(
+  baseVnd: number,
+  v: {
+    discountType?: string;
+    discountVnd?: number;
+    discountPercent?: number;
+  } | null
+) {
+  const base = Math.max(0, Math.round(Number(baseVnd) || 0));
+  if (!v || base <= 0) return 0;
+  if (v.discountType === "amount") {
+    return Math.min(base, Math.max(0, Math.round(Number(v.discountVnd) || 0)));
+  }
+  if (v.discountType === "percent") {
+    const p = Math.min(100, Math.max(0, Number(v.discountPercent) || 0));
+    return Math.round((base * p) / 100);
+  }
+  return 0;
 }
 
 /**

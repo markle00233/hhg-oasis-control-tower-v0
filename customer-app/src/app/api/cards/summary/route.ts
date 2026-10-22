@@ -19,6 +19,7 @@ export async function GET() {
         fullName: customer.fullName,
         shortId: customer.phoneLast4 || customer.shortId,
         customerCode: customer.customerCode,
+        pointsBalance: customer.pointsBalance ?? 0,
       },
       ...summary,
     });

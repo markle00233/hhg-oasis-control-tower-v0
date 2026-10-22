@@ -1,0 +1,523 @@
+import {
+  applyOlympicMembership,
+  isOlympicMembershipActive,
+  pickPrimaryOlympicPackage,
+} from "@/lib/olympic-membership";
+import { applyDeskRedeemUnits, earnableVnd } from "@/lib/desk-point-redeem";
+import { awardPurchasePoints, redeemPoints } from "@/lib/points";
+import { computePoolPricing } from "@/lib/pool-pricing";
+import { prisma } from "@/lib/prisma";
+import { isSameDayMembershipEligible } from "@/lib/same-day-membership";
+import {
+  consumeDeskBillVoucher,
+  deskVoucherNote,
+  quoteDeskBillVoucher,
+  voucherErrorStatus,
+} from "@/lib/voucher-redeem";
+
+export type PoolCartLine = { itemId: string; qty: number };
+
+function asMeta(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function scanAlreadyVerified(meta: Record<string, unknown>) {
+  return meta.ticketVerified === true || typeof meta.orderId === "string";
+}
+
+export type OlympicConfirmOk = {
+  ok: true;
+  already: boolean;
+  pointsAwarded: number;
+  pointsBalance: number | null;
+  scanEventId: string;
+  closedScanIds: string[];
+  entryAt: Date;
+  order: {
+    id: string;
+    status: string;
+    totalVnd: number;
+    createdAt: Date;
+    items: {
+      itemId: string;
+      nameVi: string;
+      nameEn: string | null;
+      unitPriceVnd: number;
+      qty: number;
+    }[];
+  };
+  orderSummary: string;
+  membership: {
+    planLabel: string;
+    expiresAt: Date;
+    vouchersGranted: string[];
+  } | null;
+};
+
+export type OlympicConfirmFail = {
+  ok: false;
+  error: string;
+  status: number;
+  membershipLocked?: boolean;
+};
+
+/** Xác thực vé Hồ Olympic trên 1 lần quét. Giỏ OPEN mới vẫn chốt được dù hôm nay đã có đơn. */
+export async function confirmOlympicPoolScan(opts: {
+  customerId: string;
+  scanEventId: string;
+  items: PoolCartLine[];
+  staffUserId: string;
+  note?: string;
+  redeemUnits?: number;
+  voucherOfferId?: string;
+  staffName?: string;
+}): Promise<OlympicConfirmOk | OlympicConfirmFail> {
+  const customerId = opts.customerId.trim();
+  const scanEventId = opts.scanEventId.trim();
+  const lines = opts.items;
+  const note = String(opts.note || "").trim().slice(0, 300);
+
+  if (!customerId || !scanEventId) {
+    return { ok: false, error: "Thiếu customerId hoặc lần quét.", status: 400 };
+  }
+  if (!lines.length) {
+    return { ok: false, error: "Chọn ít nhất 1 vé.", status: 400 };
+  }
+
+  const sameDayMembership = await isSameDayMembershipEligible(prisma, {
+    id: customerId,
+  });
+  const priced = computePoolPricing(lines, {
+    sameDayMembership,
+  });
+  if (!priced.lines.length) {
+    return { ok: false, error: "Danh sách vé không hợp lệ.", status: 400 };
+  }
+  const orderItems = priced.lines.map((l) => ({
+    itemId: l.itemId,
+    nameVi: l.nameVi,
+    nameEn: l.nameEn,
+    unitPriceVnd: l.unitPriceVnd,
+    qty: l.qty,
+    pointsDiscountVnd: 0,
+    pointsRedeemTier: null as number | null,
+  }));
+  const redeemed = applyDeskRedeemUnits(
+    orderItems,
+    opts.redeemUnits || 0,
+    "ticket"
+  );
+  const redeemNote =
+    redeemed.cost > 0
+      ? `Sử dụng ${redeemed.cost} điểm · ${redeemed.unitsApplied} vé bơi`
+      : "";
+  let totalVnd = Math.max(0, priced.totalVnd - redeemed.discountVnd);
+  const subtotalVnd = priced.subtotalVnd;
+  let voucherNote = "";
+  let voucherQuote = { offerId: "", title: "", discountVnd: 0 };
+  const voucherOfferId = String(opts.voucherOfferId || "").trim();
+  if (voucherOfferId) {
+    try {
+      voucherQuote = await quoteDeskBillVoucher({
+        customerId,
+        offerId: voucherOfferId,
+        zone: "OLYMPIC_POOL",
+        baseVnd: totalVnd,
+      });
+      totalVnd = Math.max(0, totalVnd - voucherQuote.discountVnd);
+      voucherNote = deskVoucherNote(voucherQuote);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Không dùng được voucher.",
+        status: voucherErrorStatus(err),
+      };
+    }
+  }
+
+  const service = await prisma.appService.findUnique({
+    where: { serviceCode: "OLYMPIC_POOL" },
+    select: { id: true },
+  });
+  if (!service) {
+    return { ok: false, error: "Chưa cấu hình dịch vụ OLYMPIC_POOL.", status: 500 };
+  }
+
+  if (redeemed.cost > 0) {
+    const payer = await prisma.appCustomer.findUnique({
+      where: { id: customerId },
+      select: { pointsBalance: true, status: true },
+    });
+    if (!payer || payer.status !== "ACTIVE") {
+      return { ok: false, error: "Khách không hợp lệ.", status: 404 };
+    }
+    if (payer.pointsBalance < redeemed.cost) {
+      return {
+        ok: false,
+        error: `Không đủ điểm (cần ${redeemed.cost}, đang có ${payer.pointsBalance}).`,
+        status: 400,
+      };
+    }
+  }
+
+  const pkgIdEarly = pickPrimaryOlympicPackage(orderItems.map((i) => i.itemId));
+  if (pkgIdEarly) {
+    const existing = await prisma.appCustomer.findUnique({
+      where: { id: customerId },
+      select: {
+        segment: true,
+        vipExpiresAt: true,
+        vipPlanLabel: true,
+        status: true,
+      },
+    });
+    if (!existing || existing.status !== "ACTIVE") {
+      return { ok: false, error: "Khách không hợp lệ.", status: 404 };
+    }
+    if (
+      isOlympicMembershipActive({
+        segment: existing.segment,
+        vipExpiresAt: existing.vipExpiresAt,
+      })
+    ) {
+      const exp = existing.vipExpiresAt
+        ? existing.vipExpiresAt.toLocaleDateString("vi-VN")
+        : null;
+      return {
+        ok: false,
+        status: 409,
+        membershipLocked: true,
+        error: exp
+          ? `Khách đang dùng ${existing.vipPlanLabel || "gói hội viên"} đến ${exp}. Hết hạn mới được chọn gói mới.`
+          : "Khách đang dùng gói hội viên. Hết hạn mới được chọn gói mới.",
+      };
+    }
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const customer = await tx.appCustomer.findUnique({
+        where: { id: customerId },
+        select: {
+          id: true,
+          status: true,
+          fullName: true,
+          phone: true,
+          phoneLast4: true,
+          shortId: true,
+        },
+      });
+      if (!customer || customer.status !== "ACTIVE") {
+        throw Object.assign(new Error("Khách không hợp lệ."), { status: 404 });
+      }
+
+      const scan = await tx.appServiceEvent.findFirst({
+        where: {
+          id: scanEventId,
+          customerId: customer.id,
+          serviceId: service.id,
+          eventType: "SERVICE_USE",
+        },
+      });
+      if (!scan) {
+        throw Object.assign(new Error("Không tìm thấy lần quét này."), {
+          status: 404,
+        });
+      }
+
+      const prevMeta = asMeta(scan.metadata);
+      if (scanAlreadyVerified(prevMeta)) {
+        const orderId =
+          typeof prevMeta.orderId === "string" ? prevMeta.orderId : "";
+        const existingOrder = orderId
+          ? await tx.appOrder.findUnique({
+              where: { id: orderId },
+              include: { items: true },
+            })
+          : null;
+        return { already: true as const, customer, scan, existingOrder, prevMeta };
+      }
+
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const siblings = await tx.appServiceEvent.findMany({
+        where: {
+          customerId: customer.id,
+          serviceId: service.id,
+          eventType: "SERVICE_USE",
+          id: { not: scan.id },
+          createdAt: { gte: dayStart },
+        },
+        select: { id: true, metadata: true },
+      });
+
+      const cartToken =
+        typeof prevMeta.cartToken === "string" ? prevMeta.cartToken : null;
+      const cartsToUse = await tx.appServiceCart.findMany({
+        where: cartToken
+          ? { token: cartToken, customerId: customer.id, status: "OPEN" }
+          : {
+              customerId: customer.id,
+              status: "OPEN",
+              zoneCode: { in: ["OLYMPIC_POOL", "OLYMPIC"] },
+            },
+        select: { id: true },
+      });
+      const verifiedAt = new Date();
+      const discountParts: string[] = [];
+      if (priced.accessoryDiscountVnd > 0) {
+        discountParts.push(
+          `phụ kiện −10% (−${priced.accessoryDiscountVnd.toLocaleString("vi-VN")}đ)`
+        );
+      }
+      if (priced.membershipDiscountVnd > 0) {
+        discountParts.push(
+          `gói tháng −10% cùng ngày với đơn Olympic (−${priced.membershipDiscountVnd.toLocaleString("vi-VN")}đ)`
+        );
+      }
+      const discountNote = discountParts.length
+        ? ` · ${discountParts.join(" · ")}`
+        : "";
+
+      const order = await tx.appOrder.create({
+        data: {
+          customerId: customer.id,
+          serviceId: service.id,
+          status: "CONFIRMED",
+          totalVnd,
+          note:
+            (note || `Xác thực lúc quét ${scan.createdAt.toISOString()}`) +
+            discountNote +
+            (redeemNote ? ` · ${redeemNote}` : "") +
+            (voucherNote ? ` · ${voucherNote}` : ""),
+          items: {
+            create: orderItems.map((i) => ({
+              itemId: i.itemId,
+              nameVi: i.nameVi,
+              nameEn: i.nameEn,
+              unitPriceVnd: i.unitPriceVnd,
+              qty: i.qty,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+
+      const metaItems = redeemed.items.map((i) => ({
+        name: i.nameVi,
+        qty: i.qty,
+        unitPriceVnd: i.unitPriceVnd,
+        itemId: i.itemId,
+        pointsDiscountVnd: i.pointsDiscountVnd || 0,
+        pointsRedeemTier: i.pointsRedeemTier || null,
+      }));
+      const usedCartIds = cartsToUse.map((c) => c.id);
+
+      await tx.appServiceEvent.update({
+        where: { id: scan.id },
+        data: {
+          operationalStatus: "ACKNOWLEDGED",
+          metadata: {
+            ...prevMeta,
+            ticketVerified: true,
+            verifiedAt: verifiedAt.toISOString(),
+            entryAt: scan.createdAt.toISOString(),
+            orderId: order.id,
+            usedCartIds,
+            totalVnd,
+            subtotalVnd,
+            pointsRedeemUnits: redeemed.unitsApplied,
+            pointsRedeemCost: redeemed.cost,
+            accessoryDiscountVnd: priced.accessoryDiscountVnd,
+            membershipDiscountVnd: priced.membershipDiscountVnd,
+            manualDiscountVnd: priced.manualDiscountVnd,
+            placedBy: "desk",
+            verifiedByUserId: opts.staffUserId,
+            items: metaItems,
+          },
+        },
+      });
+
+      if (usedCartIds.length) {
+        await tx.appServiceCart.updateMany({
+          where: { id: { in: usedCartIds } },
+          data: { status: "USED" },
+        });
+      }
+
+      const closedScanIds = [scan.id];
+      for (const sib of siblings) {
+        const sibMeta = asMeta(sib.metadata);
+        if (scanAlreadyVerified(sibMeta)) continue;
+        await tx.appServiceEvent.update({
+          where: { id: sib.id },
+          data: {
+            operationalStatus: "ACKNOWLEDGED",
+            metadata: {
+              ...sibMeta,
+              ticketVerified: true,
+              mergedIntoScanId: scan.id,
+              verifiedAt: verifiedAt.toISOString(),
+              orderId: order.id,
+              totalVnd,
+              items: metaItems,
+            },
+          },
+        });
+        closedScanIds.push(sib.id);
+      }
+
+      return {
+        already: false as const,
+        customer,
+        scan,
+        order,
+        metaItems,
+        totalVnd,
+        subtotalVnd,
+        accessoryDiscountVnd: priced.accessoryDiscountVnd,
+        membershipDiscountVnd: priced.membershipDiscountVnd,
+        manualDiscountVnd: priced.manualDiscountVnd,
+        packageItemIds: orderItems.map((i) => i.itemId),
+        closedScanIds,
+      };
+    });
+
+    if (result.already) {
+      const order = result.existingOrder;
+      const items = order?.items || [];
+      const summaryFromMeta = Array.isArray(result.prevMeta.items)
+        ? (result.prevMeta.items as { qty?: number; name?: string }[])
+            .map((i) => `${i.qty || 1}× ${i.name || "vé"}`)
+            .join(", ")
+        : "";
+      return {
+        ok: true,
+        already: true,
+        pointsAwarded: 0,
+        pointsBalance: null,
+        scanEventId: result.scan.id,
+        closedScanIds: [result.scan.id],
+        entryAt: result.scan.createdAt,
+        order: order
+          ? {
+              id: order.id,
+              status: order.status,
+              totalVnd: order.totalVnd,
+              createdAt: order.createdAt,
+              items: items.map((i) => ({
+                itemId: i.itemId,
+                nameVi: i.nameVi,
+                nameEn: i.nameEn,
+                unitPriceVnd: i.unitPriceVnd,
+                qty: i.qty,
+              })),
+            }
+          : {
+              id: "",
+              status: "CONFIRMED",
+              totalVnd: 0,
+              createdAt: result.scan.createdAt,
+              items: [],
+            },
+        orderSummary:
+          summaryFromMeta ||
+          items.map((i) => `${i.qty}× ${i.nameVi}`).join(", "),
+        membership: null,
+      };
+    }
+
+    const pkgId = pickPrimaryOlympicPackage(result.packageItemIds);
+    let membership: OlympicConfirmOk["membership"] = null;
+    if (pkgId) {
+      const applied = await applyOlympicMembership(prisma, {
+        customerId: result.customer.id,
+        packageId: pkgId,
+      }).catch((err) => {
+        console.error("[olympic-confirm membership]", err);
+        return null;
+      });
+      if (applied && !applied.alreadyActive) {
+        membership = {
+          planLabel: applied.vipPlanLabel,
+          expiresAt: applied.vipExpiresAt,
+          vouchersGranted: applied.offerIds,
+        };
+      }
+    }
+
+    if (voucherQuote.offerId) {
+      await consumeDeskBillVoucher({
+        customerId: result.customer.id,
+        offerId: voucherQuote.offerId,
+        zone: "OLYMPIC_POOL",
+        staffUserId: opts.staffUserId,
+        staffName: opts.staffName || "desk",
+        baseVnd: totalVnd + voucherQuote.discountVnd,
+        note: voucherNote,
+      }).catch((err) => {
+        console.error("[olympic-confirm voucher]", err);
+      });
+    }
+
+    if (redeemed.cost > 0) {
+      await redeemPoints({
+        customerId: result.customer.id,
+        cost: redeemed.cost,
+        refType: "APP_ORDER",
+        refId: `redeem:${result.order.id}`,
+        note: redeemNote,
+      });
+    }
+
+    const pts = await awardPurchasePoints({
+      customerId: result.customer.id,
+      refType: "APP_ORDER",
+      refId: result.order.id,
+      subtotalVnd: earnableVnd(redeemed.items),
+      note: `Hồ Olympic · ${earnableVnd(redeemed.items)}đ phần chưa đổi điểm`,
+    }).catch((err) => {
+      console.error("[olympic-confirm points]", err);
+      return null;
+    });
+
+    return {
+      ok: true,
+      already: false,
+      pointsAwarded: pts?.delta ?? 0,
+      pointsBalance: pts?.balance ?? null,
+      scanEventId: result.scan.id,
+      closedScanIds: result.closedScanIds,
+      entryAt: result.scan.createdAt,
+      order: {
+        id: result.order.id,
+        status: result.order.status,
+        totalVnd: result.order.totalVnd,
+        createdAt: result.order.createdAt,
+        items: result.order.items.map((i) => ({
+          itemId: i.itemId,
+          nameVi: i.nameVi,
+          nameEn: i.nameEn,
+          unitPriceVnd: i.unitPriceVnd,
+          qty: i.qty,
+        })),
+      },
+      orderSummary: result.metaItems
+        .map((i) => `${i.qty}× ${i.name}`)
+        .join(", "),
+      membership,
+    };
+  } catch (e) {
+    const status =
+      e && typeof e === "object" && "status" in e
+        ? Number((e as { status: number }).status) || 500
+        : 500;
+    return {
+      ok: false,
+      status,
+      error: e instanceof Error ? e.message : "Không xác thực được",
+    };
+  }
+}

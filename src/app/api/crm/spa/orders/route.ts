@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
     const customerId = String(body.customerId || "").trim();
     const lines = Array.isArray(body.items) ? (body.items as CartLine[]) : [];
     const note = String(body.note || "").trim().slice(0, 300);
+    const scanEventId = String(body.scanEventId || "").trim();
 
     if (!customerId) {
       return NextResponse.json({ error: "Thiếu customerId." }, { status: 400 });
@@ -105,6 +106,36 @@ export async function POST(req: NextRequest) {
           },
         },
       });
+    }
+
+    if (scanEventId) {
+      const scan = await prisma.appServiceEvent.findFirst({
+        where: { id: scanEventId, customerId: customer.id },
+      });
+      if (scan) {
+        const prev =
+          scan.metadata && typeof scan.metadata === "object"
+            ? (scan.metadata as Record<string, unknown>)
+            : {};
+        await prisma.appServiceEvent.update({
+          where: { id: scan.id },
+          data: {
+            operationalStatus: "ACKNOWLEDGED",
+            metadata: {
+              ...prev,
+              ticketVerified: true,
+              orderId: order.id,
+              totalVnd,
+              items: orderItems.map((i) => ({
+                name: i.nameVi,
+                qty: i.qty,
+                unitPriceVnd: i.unitPriceVnd,
+                itemId: i.itemId,
+              })),
+            },
+          },
+        });
+      }
     }
 
     // Điểm chỉ cộng ở Mía Ơi + Hồ Olympic — Spa không cộng.

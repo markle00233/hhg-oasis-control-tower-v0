@@ -321,10 +321,12 @@ export default function AccountPage() {
               <p className="mt-2 font-display text-2xl font-semibold text-[#d4af37]">
                 {customer?.fullName || "Khách Oasis"}
               </p>
-              <p className="mt-1 font-mono text-sm font-semibold text-[#d4af37]/90">
-                {customer?.customerCode || "—"}
-                {customer?.shortId ? ` · ID ${customer.shortId}` : ""}
-              </p>
+              <PhoneIdLine
+                phone={customer?.phone}
+                shortId={customer?.shortId}
+                className="text-[#d4af37]/90"
+                iconClassName="text-[#d4af37]/80"
+              />
               <p className="mt-2 text-xs text-[#d4af37]/75">
                 {customer.packageLabel ||
                   customer.vipPlanLabel ||
@@ -344,10 +346,12 @@ export default function AccountPage() {
               <p className="mt-1 font-display text-2xl font-semibold text-oasis-ink">
                 {customer?.fullName || "Khách Oasis"}
               </p>
-              <p className="mt-1 font-mono text-sm font-semibold text-oasis-moss">
-                {customer?.customerCode || "—"}
-                {customer?.shortId ? ` · ID ${customer.shortId}` : ""}
-              </p>
+              <PhoneIdLine
+                phone={customer?.phone}
+                shortId={customer?.shortId}
+                className="text-oasis-moss"
+                iconClassName="text-oasis-mute"
+              />
               {customer?.packageLabel ? (
                 <p className="mt-2 text-xs text-oasis-mute">
                   {customer.packageLabel}
@@ -368,7 +372,7 @@ export default function AccountPage() {
             {customer?.pointsBalance ?? 0} điểm
           </p>
           <p className="mt-1 text-xs text-oasis-mute">
-            Cộng điểm chỉ từ Mía Ơi & Hồ Olympic (10.000đ trước giảm = 5
+            Cộng điểm chỉ từ Mía Ơi & Hồ Olympic (10.000đ trước giảm = 1
             điểm). Đổi: 50đ đồ uống / 100đ vé bơi.
           </p>
         </div>
@@ -840,6 +844,84 @@ function MenuLink({
       {label}
       <span className="text-oasis-mute">›</span>
     </Link>
+  );
+}
+
+function maskPhone(phone: string, visible: boolean) {
+  const digits = phone.replace(/\D/g, "");
+  if (!digits) return "—";
+  if (visible || digits.length <= 3) return phone;
+  return `${digits.slice(0, 3)}${"•".repeat(digits.length - 3)}`;
+}
+
+function EyeIcon({ off }: { off?: boolean }) {
+  if (off) {
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path
+          d="M3 3l18 18"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+        <path
+          d="M10.6 10.7a2 2 0 002.8 2.8"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+        <path
+          d="M9.9 5.2A10.9 10.9 0 0121 12a10.9 10.9 0 01-4.1 4.8M6.1 6.4A10.9 10.9 0 003 12a10.9 10.9 0 0012.4 6.6"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function PhoneIdLine({
+  phone,
+  shortId,
+  className,
+  iconClassName,
+}: {
+  phone?: string | null;
+  shortId?: string | null;
+  className?: string;
+  iconClassName?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  const raw = String(phone || "").trim();
+  return (
+    <p
+      className={`mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold ${className || ""}`}
+    >
+      <span>{raw ? maskPhone(raw, visible) : "—"}</span>
+      {raw ? (
+        <button
+          type="button"
+          aria-label={visible ? "Ẩn số điện thoại" : "Hiện số điện thoại"}
+          onClick={() => setVisible((v) => !v)}
+          className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${iconClassName || ""}`}
+        >
+          <EyeIcon off={visible} />
+        </button>
+      ) : null}
+      {shortId ? <span>· ID {shortId}</span> : null}
+    </p>
   );
 }
 

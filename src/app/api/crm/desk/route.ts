@@ -226,7 +226,7 @@ export async function GET(req: NextRequest) {
                 ? [
                     {
                       eventType: "MIA_OI_ORDER" as const,
-                      service: { serviceCode: "MIA_OI" },
+                      service: { serviceCode: { in: aliases } },
                     },
                   ]
                 : []),
@@ -234,7 +234,15 @@ export async function GET(req: NextRequest) {
                 ? [
                     {
                       eventType: "SPA_ORDER" as const,
-                      service: { serviceCode: "SAUNA" },
+                      service: { serviceCode: { in: aliases } },
+                    },
+                  ]
+                : []),
+              ...(zone === "OLYMPIC_POOL"
+                ? [
+                    {
+                      eventType: "POOL_ORDER" as const,
+                      service: { serviceCode: { in: aliases } },
                     },
                   ]
                 : []),
@@ -254,17 +262,10 @@ export async function GET(req: NextRequest) {
         orders: {
           where: {
             createdAt: { gte: dayStart },
-            ...(zone === "MIA_OI" ||
-            zone === "SAUNA" ||
-            zone === "OLYMPIC_POOL"
-              ? { service: { serviceCode: zone } }
-              : { id: "__none__" }),
+            service: { serviceCode: { in: aliases } },
           },
           orderBy: { createdAt: "desc" },
-          take:
-            zone === "MIA_OI" || zone === "SAUNA" || zone === "OLYMPIC_POOL"
-              ? 40
-              : 0,
+          take: 40,
           select: {
             id: true,
             status: true,
@@ -272,6 +273,7 @@ export async function GET(req: NextRequest) {
             createdAt: true,
             items: {
               select: {
+                itemId: true,
                 nameVi: true,
                 qty: true,
                 unitPriceVnd: true,
@@ -388,10 +390,11 @@ export async function GET(req: NextRequest) {
             ? (meta.items as { name?: string; qty?: number }[])
             : [];
           const ticketVerified =
-            (e.eventType === "SERVICE_USE" &&
-              (meta.ticketVerified === true || !!meta.orderId)) ||
-            (e.eventType === "MIA_OI_ORDER" &&
-              (meta.ticketVerified === true || !!meta.orderId));
+            meta.ticketVerified === true ||
+            !!meta.orderId ||
+            e.eventType === "MIA_OI_ORDER" ||
+            e.eventType === "SPA_ORDER" ||
+            e.eventType === "POOL_ORDER";
           const orderSummary =
             e.eventType === "MIA_OI_ORDER" ||
             e.eventType === "SPA_ORDER" ||
@@ -458,6 +461,7 @@ export async function GET(req: NextRequest) {
           status: o.status,
           totalVnd: o.totalVnd,
           items: o.items.map((i) => ({
+            itemId: i.itemId,
             nameVi: i.nameVi,
             qty: i.qty,
             unitPriceVnd: i.unitPriceVnd,

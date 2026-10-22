@@ -236,7 +236,7 @@ export default function MiaOiOrderPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu Mía Ơi"
-          subtitle="Chờ quầy duyệt → nhận QR → nhân viên quét QR xác nhận thanh toán rồi mới làm món."
+          subtitle="Chờ quầy duyệt → nhận QR → quầy xác nhận (không gọi thêm / gọi thêm) = chốt đơn."
           detailLines={success.lines}
           cartToken={success.cartToken}
           initialStatus={success.status}

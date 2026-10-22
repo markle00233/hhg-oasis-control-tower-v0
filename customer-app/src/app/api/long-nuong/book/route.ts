@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionCustomer } from "@/lib/session";
+import { ensureLongNuongService } from "@/lib/ensure-long-nuong";
 import { LONG_NUONG_SESSION_HOURS } from "@/lib/long-nuong";
 import { isValidPhone, normalizePhone, phoneShortId } from "@/lib/phone";
 import {
@@ -65,15 +66,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const service = await prisma.appService.findUnique({
-      where: { serviceCode: "LONG_NUONG" },
-    });
-    if (!service) {
-      return NextResponse.json(
-        { error: "Lòng Nướng chưa cấu hình." },
-        { status: 404 }
-      );
-    }
+    const service = await ensureLongNuongService();
 
     const phoneNormalized = normalizePhone(guestPhone);
     const phoneLast4 = phoneShortId(phoneNormalized);

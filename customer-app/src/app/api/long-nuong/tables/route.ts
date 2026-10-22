@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { ensureLongNuongService } from "@/lib/ensure-long-nuong";
 import type { TableVisualStatus } from "@/lib/long-nuong";
 import { localDayKey, tableShortLabel } from "@/lib/long-nuong";
 
@@ -35,15 +36,7 @@ export async function GET(req: NextRequest) {
     const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
     const now = new Date();
 
-    const service = await prisma.appService.findUnique({
-      where: { serviceCode: "LONG_NUONG" },
-    });
-    if (!service) {
-      return NextResponse.json(
-        { error: "Lòng Nướng chưa cấu hình." },
-        { status: 404 }
-      );
-    }
+    const service = await ensureLongNuongService();
 
     const tables = await prisma.appResource.findMany({
       where: { serviceId: service.id, type: "TABLE", active: true },

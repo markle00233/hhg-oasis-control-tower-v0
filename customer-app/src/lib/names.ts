@@ -37,6 +37,9 @@ export function maskedIdentityLabel(
   fullName: string | null | undefined
 ) {
   const digits = String(phone || "").replace(/\D/g, "");
-  const phonePart = digits || "—";
-  return `${phonePart}. ${maskFullName(fullName)}`;
+  const phonePart =
+    digits.length <= 3
+      ? digits || "—"
+      : `${digits.slice(0, 3)}${"•".repeat(digits.length - 3)}`;
+  return `${phonePart} · ${maskFullName(fullName)}`;
 }

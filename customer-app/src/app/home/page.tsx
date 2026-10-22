@@ -23,7 +23,7 @@ function greeting() {
 export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [shortId, setShortId] = useState("");
+  const [pointsBalance, setPointsBalance] = useState(0);
   const [vip, setVip] = useState(false);
   const [vipPlanLabel, setVipPlanLabel] = useState<string | null>(null);
   const [membershipTier, setMembershipTier] = useState<MembershipTier | null>(
@@ -59,7 +59,11 @@ export default function HomePage() {
       }
       if (cancelled) return;
       setName(data.customer?.fullName || "");
-      setShortId(data.customer?.shortId || "");
+      setPointsBalance(
+        typeof data.customer?.pointsBalance === "number"
+          ? data.customer.pointsBalance
+          : 0
+      );
       setActive(data.active || []);
       setUpcoming(data.upcoming || []);
 
@@ -71,6 +75,9 @@ export default function HomePage() {
           setMembershipTier(me.customer.membershipTier || null);
           setMembershipPackageId(me.customer.membershipPackageId || null);
           setVipExpiresLabel(me.customer.vipExpiresLabel || null);
+          if (typeof me.customer.pointsBalance === "number") {
+            setPointsBalance(me.customer.pointsBalance);
+          }
         }
       }
     })();
@@ -105,11 +112,9 @@ export default function HomePage() {
             <p className="truncate font-display text-xl font-semibold text-oasis-ink">
               {name || "Khách HHG Oasis"}
             </p>
-            {shortId ? (
-              <p className="font-mono text-sm font-semibold text-oasis-moss">
-                ID {shortId}
-              </p>
-            ) : null}
+            <p className="font-mono text-sm font-semibold text-oasis-moss">
+              {pointsBalance} điểm
+            </p>
             {vip && vipPlanLabel ? (
               <p className="mt-0.5 text-[11px] font-bold text-oasis-moss">
                 {vipPlanLabel}

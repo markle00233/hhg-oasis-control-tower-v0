@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const zoneCode = String(body.zoneCode || "").trim().toUpperCase();
     const zoneName = String(body.zoneName || "").trim() || undefined;
-    const items = Array.isArray(body.items)
+    let items = Array.isArray(body.items)
       ? (body.items as CartItemInput[])
       : [];
     const offerIds = Array.from(
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
           .filter(Boolean)
       )
     );
-    const discountVnd = Math.max(0, Math.round(Number(body.discountVnd) || 0));
+    let discountVnd = Math.max(0, Math.round(Number(body.discountVnd) || 0));
     const pointsRedeemTierRaw = Math.round(
       Number(body.pointsRedeemTier) || 0
     );
@@ -265,6 +265,51 @@ export async function POST(req: NextRequest) {
         );
       }
       pointsRedeemDiscountVnd = check.discountVnd;
+    }
+
+    if (isMembershipUpgrade) {
+      const { OLYMPIC_MONTHLY } = await import("@/lib/service-catalogs");
+      const { isOlympicMembershipPackageId } = await import(
+        "@/lib/membership-theme"
+      );
+      const {
+        isSameDayMembershipEligible,
+        sameDayMembershipDiscountVnd,
+      } = await import("@/lib/same-day-membership");
+      items = items.map((i) => {
+        if (!isOlympicMembershipPackageId(i.id)) return i;
+        const pkg = OLYMPIC_MONTHLY.find((p) => p.id === i.id);
+        if (!pkg) return i;
+        return { ...i, priceVnd: pkg.priceVnd, qty: 1 };
+      });
+      const eligible = await isSameDayMembershipEligible(prisma, {
+        id: customerRecord.id,
+      });
+      if (eligible) {
+        const membershipSubtotal = items
+          .filter((i) => isOlympicMembershipPackageId(i.id))
+          .reduce(
+            (s, i) =>
+              s +
+              Math.max(0, Math.round(Number(i.priceVnd) || 0)) *
+                Math.max(0, Math.round(Number(i.qty) || 0)),
+            0
+          );
+        const extra = sameDayMembershipDiscountVnd(membershipSubtotal);
+        if (extra > 0) {
+          discountVnd += extra;
+          items = [
+            ...items,
+            {
+              id: "disc-same-day-membership",
+              nameVi: "Giảm 10% gói tháng (cùng ngày với đơn bơi)",
+              qty: 1,
+              priceVnd: 0,
+              note: `−${extra.toLocaleString("vi-VN")}đ`,
+            },
+          ];
+        }
+      }
     }
 
     const {

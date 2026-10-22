@@ -1,15 +1,10 @@
 import { NextResponse } from "next/server";
-import { createCustomerAccount } from "@/lib/account";
 import { getSessionCustomer } from "@/lib/session";
 
 export const preferredRegion = "sin1";
 export const dynamic = "force-dynamic";
 
-/**
- * Single round-trip for cold open:
- * - existing session → home
- * - no session → create account + session
- */
+/** Cold open: existing session only. New guests must register with name + phone. */
 export async function POST() {
   try {
     const existing = await getSessionCustomer();
@@ -26,19 +21,13 @@ export async function POST() {
       });
     }
 
-    const { customer, tempPassword } = await createCustomerAccount();
-    return NextResponse.json({
-      ok: true,
-      created: true,
-      message: "Your Oasis Account has been created.",
-      customer: {
-        id: customer.id,
-        customerCode: customer.customerCode,
-        username: customer.username,
-        createdAt: customer.createdAt,
+    return NextResponse.json(
+      {
+        error: "Nhập họ tên và số điện thoại để tạo tài khoản.",
+        needRegister: true,
       },
-      temporaryPassword: tempPassword,
-    });
+      { status: 400 }
+    );
   } catch (e) {
     console.error("[customer start]", e);
     return NextResponse.json(
