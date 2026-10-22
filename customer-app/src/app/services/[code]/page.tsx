@@ -10,6 +10,7 @@ import {
   VoucherPickerModal,
 } from "@/components/VoucherPicker";
 import { PointsBalanceBar } from "@/components/PointsBalanceBar";
+import { SwimLessonHome } from "@/components/SwimLessonHome";
 import { PointsRedeemControl } from "@/components/PointsRedeemControl";
 import {
   applyOffersDiscount,
@@ -759,6 +760,7 @@ export default function ServiceInfoPage({
                 />
               ))}
             </section>
+            <SwimLessonHome showBanner={false} />
             <section className="space-y-3">
               <h2 className="font-display text-xl font-semibold text-oasis-ink">
                 Gói tháng + quyền lợi

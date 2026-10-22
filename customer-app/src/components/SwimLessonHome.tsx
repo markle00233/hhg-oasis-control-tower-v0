@@ -16,24 +16,26 @@ const HIGHLIGHT = SWIM_PACKAGES.filter((p) =>
   )
 );
 
-export function SwimLessonHome() {
+export function SwimLessonHome({ showBanner = true }: { showBanner?: boolean }) {
   return (
     <section className="space-y-3">
-      <Link
-        href={SWIM_ANNOUNCEMENT.href}
-        className="block overflow-hidden rounded-[24px] bg-gradient-to-br from-[#0c4a6e] via-[#0369a1] to-[#38bdf8] p-4 text-white shadow-soft"
-      >
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-100/90">
-          Thông báo · Hồ Olympic
-        </p>
-        <h2 className="mt-1 font-display text-xl font-semibold leading-tight">
-          {SWIM_ANNOUNCEMENT.title}
-        </h2>
-        <p className="mt-1 text-sm text-sky-50/90">{SWIM_ANNOUNCEMENT.subtitle}</p>
-        <p className="mt-3 text-xs font-bold text-lime-200">
-          Xem đầy đủ gói & liên hệ HLV →
-        </p>
-      </Link>
+      {showBanner ? (
+        <Link
+          href={SWIM_ANNOUNCEMENT.href}
+          className="block overflow-hidden rounded-[24px] bg-gradient-to-br from-[#0c4a6e] via-[#0369a1] to-[#38bdf8] p-4 text-white shadow-soft"
+        >
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-100/90">
+            Thông báo · Hồ Olympic
+          </p>
+          <h2 className="mt-1 font-display text-xl font-semibold leading-tight">
+            {SWIM_ANNOUNCEMENT.title}
+          </h2>
+          <p className="mt-1 text-sm text-sky-50/90">{SWIM_ANNOUNCEMENT.subtitle}</p>
+          <p className="mt-3 text-xs font-bold text-lime-200">
+            Xem đầy đủ gói & liên hệ HLV →
+          </p>
+        </Link>
+      ) : null}
 
       <div className="flex items-end justify-between px-0.5">
         <div>
@@ -82,8 +84,8 @@ export function SwimLessonHome() {
               {p.detail}
             </p>
             {p.bonusVisits > 0 ? (
-              <p className="mt-2 rounded-full bg-[#fef08a] px-2.5 py-1 text-center text-[11px] font-bold text-[#0c4a6e]">
-                +{p.bonusVisits} lượt tự chọn
+              <p className="mt-2 rounded-2xl bg-[#fef08a] px-2.5 py-1.5 text-[11px] font-bold leading-snug text-[#0c4a6e]">
+                {p.bonusNote || `+${p.bonusVisits} lượt tự chọn`}
               </p>
             ) : null}
             {p.extras?.length ? (

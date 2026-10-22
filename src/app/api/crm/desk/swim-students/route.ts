@@ -20,6 +20,7 @@ function serialize(row: {
   bonusVisitsLeft: number;
   status: string;
   note: string | null;
+  billPhotoAt: Date | null;
   startedAt: Date;
   expiresAt: Date | null;
   createdAt: Date;
@@ -37,6 +38,7 @@ function serialize(row: {
     bonusVisitsLeft: row.bonusVisitsLeft,
     status: row.status,
     note: row.note,
+    hasBillPhoto: Boolean(row.billPhotoAt),
     startedAt: row.startedAt,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
@@ -44,10 +46,53 @@ function serialize(row: {
   };
 }
 
+const STUDENT_LIST_SELECT = {
+  id: true,
+  fullName: true,
+  phone: true,
+  packageId: true,
+  packageLabel: true,
+  sessionsTotal: true,
+  sessionsLeft: true,
+  bonusVisitsTotal: true,
+  bonusVisitsLeft: true,
+  status: true,
+  note: true,
+  billPhotoAt: true,
+  startedAt: true,
+  expiresAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+/** Ảnh bill JPEG/PNG/WebP, đã nén phía quầy. */
+function parseBillPhoto(raw: unknown): string | null {
+  const dataUrl = String(raw || "").trim();
+  if (
+    !/^data:image\/(jpeg|jpg|png|webp);base64,[a-z0-9+/=\s]+$/i.test(dataUrl)
+  ) {
+    return null;
+  }
+  if (dataUrl.length < 80 || dataUrl.length > 1_200_000) return null;
+  return dataUrl;
+}
+
 /** GET danh sách học viên bơi. */
 export async function GET(req: NextRequest) {
   const gate = await requireDeskZone(ZONE);
   if ("error" in gate) return gate.error;
+
+  const photoId = String(req.nextUrl.searchParams.get("photoId") || "").trim();
+  if (photoId) {
+    const row = await prisma.appSwimStudent.findUnique({
+      where: { id: photoId },
+      select: { billPhoto: true },
+    });
+    if (!row?.billPhoto) {
+      return NextResponse.json({ error: "Chưa có ảnh bill." }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, billPhoto: row.billPhoto });
+  }
 
   const q = String(req.nextUrl.searchParams.get("q") || "")
     .trim()
@@ -70,6 +115,7 @@ export async function GET(req: NextRequest) {
           }
         : {}),
     },
+    select: STUDENT_LIST_SELECT,
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     take: 200,
   });
@@ -80,7 +126,7 @@ export async function GET(req: NextRequest) {
   });
 }
 
-/** POST thêm học viên. Body: { fullName, phone?, packageId, note? } */
+/** POST chốt đơn học bơi. Body: { fullName, phone?, packageId, note?, billPhoto } */
 export async function POST(req: NextRequest) {
   const gate = await requireDeskZone(ZONE);
   if ("error" in gate) return gate.error;
@@ -91,6 +137,7 @@ export async function POST(req: NextRequest) {
     const phoneRaw = String(body.phone || "").trim();
     const packageId = String(body.packageId || "").trim();
     const note = String(body.note || "").trim().slice(0, 500) || null;
+    const billPhoto = parseBillPhoto(body.billPhoto);
     const pkg = getSwimPackage(packageId);
 
     if (fullName.length < 2) {
@@ -102,9 +149,16 @@ export async function POST(req: NextRequest) {
     if (!pkg) {
       return NextResponse.json({ error: "Chọn gói học." }, { status: 400 });
     }
+    if (!billPhoto) {
+      return NextResponse.json(
+        { error: "Chụp ảnh bill trước khi chốt đơn." },
+        { status: 400 }
+      );
+    }
 
     const sessionsTotal = pkg.sessions ?? 0;
     const phoneNormalized = phoneRaw ? normalizePhone(phoneRaw) : null;
+    const now = new Date();
 
     const row = await prisma.appSwimStudent.create({
       data: {
@@ -119,8 +173,11 @@ export async function POST(req: NextRequest) {
         bonusVisitsLeft: pkg.bonusVisits,
         status: "ACTIVE",
         note,
-        startedAt: new Date(),
+        billPhoto,
+        billPhotoAt: now,
+        startedAt: now,
       },
+      select: STUDENT_LIST_SELECT,
     });
 
     return NextResponse.json({ ok: true, student: serialize(row) });
@@ -147,7 +204,17 @@ export async function PATCH(req: NextRequest) {
     if (!id) {
       return NextResponse.json({ error: "Thiếu id" }, { status: 400 });
     }
-    const existing = await prisma.appSwimStudent.findUnique({ where: { id } });
+    const existing = await prisma.appSwimStudent.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        sessionsLeft: true,
+        sessionsTotal: true,
+        bonusVisitsLeft: true,
+        bonusVisitsTotal: true,
+        status: true,
+      },
+    });
     if (!existing) {
       return NextResponse.json({ error: "Không tìm thấy" }, { status: 404 });
     }
@@ -171,6 +238,7 @@ export async function PATCH(req: NextRequest) {
               ? "DONE"
               : existing.status,
         },
+        select: STUDENT_LIST_SELECT,
       });
       return NextResponse.json({ ok: true, student: serialize(row) });
     }
@@ -185,6 +253,7 @@ export async function PATCH(req: NextRequest) {
       const row = await prisma.appSwimStudent.update({
         where: { id },
         data: { bonusVisitsLeft: existing.bonusVisitsLeft - 1 },
+        select: STUDENT_LIST_SELECT,
       });
       return NextResponse.json({ ok: true, student: serialize(row) });
     }
@@ -233,6 +302,7 @@ export async function PATCH(req: NextRequest) {
     const row = await prisma.appSwimStudent.update({
       where: { id },
       data,
+      select: STUDENT_LIST_SELECT,
     });
     return NextResponse.json({ ok: true, student: serialize(row) });
   } catch (e) {
