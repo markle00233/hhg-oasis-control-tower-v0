@@ -20,15 +20,12 @@ export default function LoginPage() {
     if (mode === "signup") setPhase("signup");
   }, []);
 
-  async function loginWith(name: string, phone: string, confirmExisting = false) {
+  async function loginWith(phone: string) {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        fullName: name.trim(),
-        username: name.trim(),
         password: phone,
-        confirmExisting,
       }),
     });
     const data = await res.json();
@@ -41,12 +38,38 @@ export default function LoginPage() {
     setBusy(true);
     setError("");
     try {
-      await loginWith(fullName, password);
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password, lookup: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Đăng nhập thất bại");
+      setMaskedLabel(String(data.maskedLabel || ""));
+      setPhase("confirm");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function confirmYes() {
+    setBusy(true);
+    setError("");
+    try {
+      await loginWith(password);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function backToLogin() {
+    setError("");
+    setMaskedLabel("");
+    setPhase("login");
   }
 
   async function onSignup(e: FormEvent) {
@@ -64,35 +87,12 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không tạo được tài khoản.");
-      if (data.exists) {
-        setMaskedLabel(String(data.maskedLabel || ""));
-        setPhase("confirm");
-        return;
-      }
       router.replace("/home");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tạo được tài khoản.");
     } finally {
       setBusy(false);
     }
-  }
-
-  async function confirmYes() {
-    setBusy(true);
-    setError("");
-    try {
-      await loginWith(fullName, password, true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function confirmNo() {
-    setMaskedLabel("");
-    setError("Số điện thoại này đã được gắn với tài khoản khác.");
-    setPhase("login");
   }
 
   const fieldClass =
@@ -109,9 +109,11 @@ export default function LoginPage() {
             HHG Oasis
           </h1>
           <p className="mt-2 text-sm text-oasis-mute">
-            {phase === "signup" || phase === "confirm"
+            {phase === "signup"
               ? "Tạo tài khoản bằng họ tên và số điện thoại."
-              : "Đăng nhập bằng họ tên + số điện thoại (mật khẩu)."}
+              : phase === "confirm"
+                ? "Xác nhận đây là tài khoản của bạn."
+                : "Đăng nhập bằng mật khẩu."}
           </p>
         </div>
 
@@ -137,7 +139,7 @@ export default function LoginPage() {
             <button
               type="button"
               disabled={busy}
-              onClick={confirmNo}
+              onClick={backToLogin}
               className="flex h-12 w-full items-center justify-center text-sm font-semibold text-oasis-mute"
             >
               Không phải tôi
@@ -145,10 +147,7 @@ export default function LoginPage() {
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
-                setError("");
-                setPhase("signup");
-              }}
+              onClick={backToLogin}
               className="flex h-10 w-full items-center justify-center text-sm font-semibold text-oasis-mute"
             >
               ← Đổi số điện thoại
@@ -208,14 +207,21 @@ export default function LoginPage() {
               onSubmit={onLogin}
               className="space-y-4 rounded-[28px] bg-white/80 p-5 shadow-soft"
             >
-              <NamePhoneFields
-                fullName={fullName}
-                setFullName={setFullName}
-                phone={password}
-                setPhone={setPassword}
-                fieldClass={fieldClass}
-                phoneLabel="Mật khẩu (số điện thoại)"
-              />
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-oasis-mute">
+                  Mật khẩu
+                </span>
+                <input
+                  type="tel"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={fieldClass}
+                  autoComplete="current-password"
+                  inputMode="tel"
+                  placeholder="09xxxxxxxx"
+                  required
+                />
+              </label>
               {error ? <p className="text-sm text-oasis-coral">{error}</p> : null}
               <button
                 type="submit"

@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionCustomer } from "@/lib/session";
 import { ensureLongNuongService } from "@/lib/ensure-long-nuong";
-import { LONG_NUONG_SESSION_HOURS } from "@/lib/long-nuong";
+import {
+  LONG_NUONG_CLOSED_MESSAGE,
+  LONG_NUONG_SESSION_HOURS,
+  isWithinLongNuongHours,
+  minutesInVietnam,
+} from "@/lib/long-nuong";
 import { isValidPhone, normalizePhone, phoneShortId } from "@/lib/phone";
 import {
   CART_STATUS,
@@ -57,6 +62,12 @@ export async function POST(req: NextRequest) {
     if (Number.isNaN(endAt.getTime()) || endAt <= startAt) {
       endAt = new Date(
         startAt.getTime() + LONG_NUONG_SESSION_HOURS * 60 * 60 * 1000
+      );
+    }
+    if (!isWithinLongNuongHours(minutesInVietnam(startAt))) {
+      return NextResponse.json(
+        { error: LONG_NUONG_CLOSED_MESSAGE },
+        { status: 400 }
       );
     }
     if (startAt.getTime() < Date.now() - 5 * 60 * 1000) {

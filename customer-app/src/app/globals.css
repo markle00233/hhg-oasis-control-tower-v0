@@ -81,6 +81,58 @@ body.theme-m12 .bg-white\/70 {
   animation: rise 0.45s ease both;
 }
 
+/* VIP card: a slow gold mist drifting across the whole card.
+   One element, three layered gradients — the gradients already fade to
+   transparent, so no blur filter (which would re-run on every frame). */
+.vip-pop {
+  animation: vip-pop 0.7s ease both;
+}
+
+.vip-smoke-field {
+  position: absolute;
+  /* Oversized so the drift never exposes an edge inside the card. */
+  inset: -12% -8%;
+  pointer-events: none;
+  background:
+    radial-gradient(72% 68% at 14% 8%, rgba(243, 217, 138, 0.55), transparent 70%),
+    radial-gradient(78% 82% at 58% 96%, rgba(243, 217, 138, 0.5), transparent 70%),
+    radial-gradient(52% 62% at 96% 38%, rgba(255, 248, 220, 0.32), transparent 70%);
+  animation: vip-smoke 9s ease-in-out infinite;
+}
+
+@keyframes vip-pop {
+  0% {
+    opacity: 0.4;
+    transform: scale(0.96);
+  }
+  65% {
+    transform: scale(1.035);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes vip-smoke {
+  0%,
+  100% {
+    transform: translate3d(0, 8px, 0) scale(0.92);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translate3d(10px, -18px, 0) scale(1.12);
+    opacity: 0.85;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vip-pop,
+  .vip-smoke-field {
+    animation: none;
+  }
+}
+
 /* Horizontal swipe rows (vouchers / offers) */
 .scrollbar-none {
   -ms-overflow-style: none;

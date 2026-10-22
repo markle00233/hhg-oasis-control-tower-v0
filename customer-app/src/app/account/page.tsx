@@ -309,34 +309,40 @@ export default function AccountPage() {
         </h1>
 
         <div
-          className={`rounded-[28px] p-5 shadow-soft ${
+          className={`relative overflow-hidden rounded-[28px] p-5 shadow-soft ${
             customer?.vip ? "bg-black" : "bg-[#e8e6e1]"
           }`}
         >
           {customer?.vip ? (
             <>
-              <p className="font-display text-4xl font-black tracking-[0.12em] text-[#d4af37]">
-                VIP
-              </p>
-              <p className="mt-2 font-display text-2xl font-semibold text-[#d4af37]">
-                {customer?.fullName || "Khách Oasis"}
-              </p>
-              <PhoneIdLine
-                phone={customer?.phone}
-                shortId={customer?.shortId}
-                className="text-[#d4af37]/90"
-                iconClassName="text-[#d4af37]/80"
-              />
-              <p className="mt-2 text-xs text-[#d4af37]/75">
-                {customer.packageLabel ||
-                  customer.vipPlanLabel ||
-                  "Gói VIP HHG Oasis"}
-                {customer.packageExpiresLabel || customer.vipExpiresLabel
-                  ? ` · đến ${
-                      customer.packageExpiresLabel || customer.vipExpiresLabel
-                    }`
-                  : ""}
-              </p>
+              <div className="vip-smoke-field" aria-hidden />
+              <div className="vip-pop relative text-[#d4af37]">
+                <p className="font-display text-4xl font-black tracking-[0.12em]">
+                  VIP
+                </p>
+                <p className="mt-2 font-display text-2xl font-semibold">
+                  {customer?.fullName || "Khách Oasis"}
+                </p>
+                <div className="mt-2 w-fit max-w-full">
+                  <PhoneIdLine
+                    phone={customer?.phone}
+                    shortId={customer?.shortId}
+                    pop
+                    className="text-[#f3d98a]"
+                    iconClassName="text-[#f6e27a]"
+                  />
+                  <p className="mt-1.5 text-sm font-bold tracking-wide text-[#f6e27a] [text-shadow:0_0_16px_rgba(243,217,138,0.65)]">
+                    {customer.packageLabel ||
+                      customer.vipPlanLabel ||
+                      "Gói VIP HHG Oasis"}
+                    {customer.packageExpiresLabel || customer.vipExpiresLabel
+                      ? ` · đến ${
+                          customer.packageExpiresLabel || customer.vipExpiresLabel
+                        }`
+                      : ""}
+                  </p>
+                </div>
+              </div>
             </>
           ) : (
             <>
@@ -897,17 +903,21 @@ function PhoneIdLine({
   shortId,
   className,
   iconClassName,
+  pop,
 }: {
   phone?: string | null;
   shortId?: string | null;
   className?: string;
   iconClassName?: string;
+  pop?: boolean;
 }) {
   const [visible, setVisible] = useState(false);
   const raw = String(phone || "").trim();
   return (
     <p
-      className={`mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold ${className || ""}`}
+      className={`flex items-center gap-1.5 font-mono font-semibold ${
+        pop ? "text-base font-bold tracking-wide" : "mt-1 text-sm"
+      } ${className || ""}`}
     >
       <span>{raw ? maskPhone(raw, visible) : "—"}</span>
       {raw ? (
@@ -915,7 +925,11 @@ function PhoneIdLine({
           type="button"
           aria-label={visible ? "Ẩn số điện thoại" : "Hiện số điện thoại"}
           onClick={() => setVisible((v) => !v)}
-          className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${iconClassName || ""}`}
+          className={`grid shrink-0 place-items-center rounded-full ${
+            pop
+              ? "h-8 w-8 bg-[#d4af37]/15 ring-1 ring-[#f6e27a]/50"
+              : "h-7 w-7"
+          } ${iconClassName || ""}`}
         >
           <EyeIcon off={visible} />
         </button>

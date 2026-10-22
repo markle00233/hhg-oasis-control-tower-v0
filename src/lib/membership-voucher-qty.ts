@@ -4,6 +4,7 @@ import {
   isLimitedMembershipVoucher,
   packageIdFromVipPlanLabel,
   qtyForOlympicVoucher,
+  voucherLeavesWalletWhenSpent,
 } from "@/lib/hhg-vouchers";
 
 type Tx = Pick<PrismaClient, "appCollectedOffer" | "appCustomer">;
@@ -39,6 +40,8 @@ export async function ensureMembershipVoucherQty(
     },
   });
   if (!row) return null;
+
+  if (row.status === "USED" && !opts.reset) return row;
 
   if (granted == null) {
     if (row.qtyTotal != null || row.qtyRemaining != null) {
@@ -124,12 +127,16 @@ export async function consumeMembershipVoucherUse(
     );
   }
 
+  const next = left - 1;
   const updated = await prisma.appCollectedOffer.update({
     where: { id: row.id },
     data: {
-      qtyRemaining: left - 1,
+      qtyRemaining: next,
       usedAt: new Date(),
-      status: "COLLECTED",
+      status:
+        next <= 0 && voucherLeavesWalletWhenSpent(offerId)
+          ? "USED"
+          : "COLLECTED",
     },
   });
 

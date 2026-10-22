@@ -730,6 +730,11 @@ model AppCustomer {
   /// Active VIP / membership package end (null = not VIP)
   vipExpiresAt     DateTime?
   vipPlanLabel     String?
+  /// When the current package started. Orders before this stay Khách lẻ.
+  vipStartedAt     DateTime?
+  /// Lượt bơi miễn phí còn lại trên gói VIP.
+  vipChoiceTotal   Int      @default(0)
+  vipChoiceLeft    Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -744,6 +749,7 @@ model AppCustomer {
   pointLedger      AppPointLedger[]
   offerClaimLogs   AppOfferClaimLog[]
   voucherRedemptions AppVoucherRedemption[]
+  vipChoiceLogs    AppVipChoiceLog[]
 
   @@index([status])
   @@index([createdAt])
@@ -752,6 +758,21 @@ model AppCustomer {
   @@index([segment])
   @@index([phoneNormalized])
   @@map("app_customers")
+}
+
+/// Mỗi lượt tự chọn VIP đã chốt trên đơn Hồ Olympic.
+model AppVipChoiceLog {
+  id         String      @id @default(cuid())
+  customerId String
+  customer   AppCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// Bơi miễn phí
+  purpose    String
+  orderId    String?
+  usedAt     DateTime    @default(now())
+
+  @@index([customerId, usedAt])
+  @@index([orderId])
+  @@map("app_vip_choice_logs")
 }
 
 /// Point earn / redeem ledger (idempotent per ref).
@@ -855,8 +876,11 @@ model AppServiceCart {
   totalVnd   Int      @default(0)
   /// PENDING_APPROVAL | OPEN | USED | REJECTED | NO_SHOW | EXPIRED | CANCELLED
   status     String   @default("PENDING_APPROVAL")
-  /// Staff reject reason (when REJECTED)
+  /// Staff reject reason (when REJECTED). "Đã dùng" khi lượt đã kết thúc.
   adminNote  String?
+  /// Ảnh bill giấy. Bắt buộc trước khi chốt đơn.
+  billPhoto   String?
+  billPhotoAt DateTime?
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -1117,8 +1141,23 @@ model AppSwimStudent {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  bonusLogs AppSwimBonusLog[]
+
   @@index([status, createdAt])
   @@index([phoneNormalized])
   @@index([fullName])
   @@map("app_swim_students")
+}
+
+/// Mỗi lần học viên dùng 1 lượt tự chọn (bơi tự do hoặc gội).
+model AppSwimBonusLog {
+  id        String         @id @default(cuid())
+  studentId String
+  student   AppSwimStudent @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  /// Bơi tự do | Gội 30'
+  purpose   String
+  usedAt    DateTime       @default(now())
+
+  @@index([studentId, usedAt])
+  @@map("app_swim_bonus_logs")
 }

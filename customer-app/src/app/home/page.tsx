@@ -96,34 +96,34 @@ export default function HomePage() {
         packageId={membershipPackageId}
       />
       <div className="animate-rise space-y-5">
-        <header className="flex items-center gap-2">
+        <header className="flex items-center gap-3">
           <Link
             href="/qr"
-            className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-oasis-deep text-sm font-black text-oasis-sand shadow-soft"
+            className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-oasis-deep text-sm font-black leading-none text-oasis-sand shadow-soft"
             aria-label="My Oasis QR"
             title="My Oasis QR"
           >
             QR
           </Link>
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-oasis-mute">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <p className="text-[11px] font-bold uppercase leading-none tracking-[0.14em] text-oasis-mute">
               {greeting()}
             </p>
-            <p className="truncate font-display text-xl font-semibold text-oasis-ink">
+            <p className="truncate font-display text-xl font-semibold leading-none text-oasis-ink">
               {name || "Khách HHG Oasis"}
             </p>
-            <p className="font-mono text-sm font-semibold text-oasis-moss">
+            <p className="font-mono text-sm font-semibold leading-none text-oasis-moss">
               {pointsBalance} điểm
             </p>
             {vip && vipPlanLabel ? (
-              <p className="mt-0.5 text-[11px] font-bold text-oasis-moss">
+              <p className="text-[11px] font-bold leading-none text-oasis-moss">
                 {vipPlanLabel}
               </p>
             ) : null}
           </div>
           <Link
             href="/account"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-oasis-moss/15 text-sm font-black text-oasis-moss"
+            className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-oasis-moss/15 text-sm font-black leading-none text-oasis-moss"
             aria-label="Account"
           >
             {name ? name.trim().charAt(0).toUpperCase() : "U"}

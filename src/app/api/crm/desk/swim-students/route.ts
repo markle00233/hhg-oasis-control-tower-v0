@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
 import { normalizePhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
-import { getSwimPackage } from "@/lib/swim-packages";
+import { getSwimPackage, isSwimBonusPurpose } from "@/lib/swim-packages";
 
 export const dynamic = "force-dynamic";
 
@@ -244,16 +244,35 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === "use-bonus") {
+      const purpose = String(body.purpose || "").trim();
+      if (!isSwimBonusPurpose(purpose)) {
+        return NextResponse.json(
+          { error: "Chọn bơi tự do hoặc gội 30'." },
+          { status: 400 }
+        );
+      }
       if (existing.bonusVisitsLeft <= 0) {
         return NextResponse.json(
           { error: "Đã hết lượt tự chọn." },
           { status: 409 }
         );
       }
-      const row = await prisma.appSwimStudent.update({
-        where: { id },
-        data: { bonusVisitsLeft: existing.bonusVisitsLeft - 1 },
-        select: STUDENT_LIST_SELECT,
+      const row = await prisma.$transaction(async (tx) => {
+        const spent = await tx.appSwimStudent.updateMany({
+          where: { id, bonusVisitsLeft: { gte: 1 } },
+          data: { bonusVisitsLeft: { decrement: 1 } },
+        });
+        if (spent.count !== 1) {
+          throw Object.assign(new Error("Đã hết lượt tự chọn."), { status: 409 });
+        }
+        await tx.appSwimBonusLog.create({
+          data: { studentId: id, purpose },
+        });
+        const updated = await tx.appSwimStudent.findUniqueOrThrow({
+          where: { id },
+          select: STUDENT_LIST_SELECT,
+        });
+        return updated;
       });
       return NextResponse.json({ ok: true, student: serialize(row) });
     }
@@ -306,10 +325,14 @@ export async function PATCH(req: NextRequest) {
     });
     return NextResponse.json({ ok: true, student: serialize(row) });
   } catch (e) {
-    console.error("[desk/swim-students PATCH]", e);
+    const status =
+      e && typeof e === "object" && "status" in e
+        ? Number((e as { status: number }).status) || 500
+        : 500;
+    if (status >= 500) console.error("[desk/swim-students PATCH]", e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed" },
-      { status: 500 }
+      { status }
     );
   }
 }

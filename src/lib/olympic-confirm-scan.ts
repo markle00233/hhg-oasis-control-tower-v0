@@ -3,7 +3,11 @@ import {
   isOlympicMembershipActive,
   pickPrimaryOlympicPackage,
 } from "@/lib/olympic-membership";
-import { applyDeskRedeemUnits, earnableVnd } from "@/lib/desk-point-redeem";
+import {
+  applyDeskRedeemUnits,
+  earnableVnd,
+  isDeskRedeemTicket,
+} from "@/lib/desk-point-redeem";
 import { awardPurchasePoints, redeemPoints } from "@/lib/points";
 import { computePoolPricing } from "@/lib/pool-pricing";
 import { prisma } from "@/lib/prisma";
@@ -25,6 +29,61 @@ function asMeta(value: unknown): Record<string, unknown> {
 
 function scanAlreadyVerified(meta: Record<string, unknown>) {
   return meta.ticketVerified === true || typeof meta.orderId === "string";
+}
+
+/** Vé khách đã đổi trên QR — không đốt điểm lần nữa ở quầy. */
+function coverPoolCartPoints(
+  orderItems: {
+    itemId: string;
+    qty: number;
+    unitPriceVnd: number;
+    pointsDiscountVnd: number;
+    pointsRedeemTier: number | null;
+  }[],
+  cartItems: unknown
+) {
+  if (!Array.isArray(cartItems)) return;
+  const byId = new Map<string, number>();
+  let explicit = 0;
+  let legacy = 0;
+  for (const row of cartItems) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { id?: string; qty?: number; pointsRedeemQty?: number };
+    const id = String(rec.id || "");
+    if (id.startsWith("points-redeem-100")) {
+      legacy = Math.max(legacy, Math.round(Number(rec.qty) || 1));
+      continue;
+    }
+    const qty = Math.max(0, Math.round(Number(rec.qty) || 0));
+    const redeemed = Math.min(
+      qty,
+      Math.max(0, Math.round(Number(rec.pointsRedeemQty) || 0))
+    );
+    if (redeemed > 0 && isDeskRedeemTicket(id)) {
+      byId.set(id, (byId.get(id) || 0) + redeemed);
+      explicit += redeemed;
+    }
+  }
+  if (explicit > 0) {
+    for (const line of orderItems) {
+      const want = byId.get(line.itemId) || 0;
+      if (want <= 0 || line.unitPriceVnd <= 0) continue;
+      const take = Math.min(line.qty, want);
+      line.pointsDiscountVnd = take * line.unitPriceVnd;
+      line.pointsRedeemTier = 100;
+      byId.set(line.itemId, want - take);
+    }
+    return;
+  }
+  let left = legacy;
+  for (const line of orderItems) {
+    if (left <= 0) break;
+    if (!isDeskRedeemTicket(line.itemId) || line.unitPriceVnd <= 0) continue;
+    const take = Math.min(line.qty, left);
+    line.pointsDiscountVnd = take * line.unitPriceVnd;
+    line.pointsRedeemTier = 100;
+    left -= take;
+  }
 }
 
 export type OlympicConfirmOk = {
@@ -104,6 +163,29 @@ export async function confirmOlympicPoolScan(opts: {
     pointsDiscountVnd: 0,
     pointsRedeemTier: null as number | null,
   }));
+  const scanHead = await prisma.appServiceEvent.findFirst({
+    where: { id: scanEventId, customerId, eventType: "SERVICE_USE" },
+    select: { metadata: true },
+  });
+  const linkedToken =
+    typeof asMeta(scanHead?.metadata).cartToken === "string"
+      ? String(asMeta(scanHead?.metadata).cartToken)
+      : "";
+  const linkedCart = linkedToken
+    ? await prisma.appServiceCart.findFirst({
+        where: { token: linkedToken, customerId, status: "OPEN" },
+        select: { items: true },
+      })
+    : await prisma.appServiceCart.findFirst({
+        where: {
+          customerId,
+          status: "OPEN",
+          zoneCode: { in: ["OLYMPIC_POOL", "OLYMPIC"] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { items: true },
+      });
+  coverPoolCartPoints(orderItems, linkedCart?.items);
   const redeemed = applyDeskRedeemUnits(
     orderItems,
     opts.redeemUnits || 0,
@@ -435,6 +517,7 @@ export async function confirmOlympicPoolScan(opts: {
       const applied = await applyOlympicMembership(prisma, {
         customerId: result.customer.id,
         packageId: pkgId,
+        from: result.order.createdAt,
       }).catch((err) => {
         console.error("[olympic-confirm membership]", err);
         return null;

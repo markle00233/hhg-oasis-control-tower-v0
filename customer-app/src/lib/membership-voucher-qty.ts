@@ -4,6 +4,7 @@ import {
   isLimitedMembershipVoucher,
   packageIdFromVipPlanLabel,
   qtyForOlympicVoucher,
+  voucherLeavesWalletWhenSpent,
 } from "@/lib/hhg-vouchers";
 
 type Tx = Pick<PrismaClient, "appCollectedOffer" | "appCustomer">;
@@ -42,6 +43,8 @@ export async function ensureMembershipVoucherQty(
   });
   if (!row) return null;
 
+  if (row.status === "USED" && !opts.reset) return row;
+
   if (granted == null) {
     // Unlimited trong hạn gói
     if (row.qtyTotal != null || row.qtyRemaining != null) {
@@ -69,8 +72,8 @@ export async function ensureMembershipVoucherQty(
 
 /**
  * Trừ 1 lần dùng voucher hội viên có giới hạn.
- * Unlimited (Mía %) → không trừ, nhưng chỉ khi gói còn hạn.
- * Hết lần → throw status 409; thẻ vẫn COLLECTED.
+ * Mía Ơi % hết lượt thì chuyển USED và biến khỏi ví.
+ * Hết lần → throw status 409.
  */
 export async function consumeMembershipVoucherUse(
   prisma: Tx,
@@ -121,7 +124,6 @@ export async function consumeMembershipVoucherUse(
   }
 
   if (!isLimitedMembershipVoucher(offerId) || row.qtyTotal == null) {
-    // Mía %: dùng suốt từ ngày nâng cấp → hết hạn gói, không trừ lượt
     return {
       qtyTotal: null,
       qtyRemaining: null,
@@ -143,8 +145,10 @@ export async function consumeMembershipVoucherUse(
     data: {
       qtyRemaining: next,
       usedAt: new Date(),
-      // Giữ COLLECTED dù 0 — thẻ vẫn hiện, không dùng thêm
-      status: "COLLECTED",
+      status:
+        next <= 0 && voucherLeavesWalletWhenSpent(offerId)
+          ? "USED"
+          : "COLLECTED",
     },
   });
 

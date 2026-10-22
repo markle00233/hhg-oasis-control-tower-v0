@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
 import { createCustomerSession } from "@/lib/session";
+import { maskedIdentityLabel } from "@/lib/names";
 import { normalizePhone } from "@/lib/phone";
 
 function foldName(raw: string) {
@@ -64,12 +65,10 @@ export async function POST(req: NextRequest) {
     const password = String(body.password || "");
     const keys = phoneKeys(password);
     const confirmExisting = body.confirmExisting === true;
+    const lookupOnly = body.lookup === true;
 
-    if (!password || (!login && !confirmExisting)) {
-      return NextResponse.json(
-        { error: "Nhập họ tên và số điện thoại." },
-        { status: 400 }
-      );
+    if (!password) {
+      return NextResponse.json({ error: "Nhập mật khẩu." }, { status: 400 });
     }
 
     if (confirmExisting) {
@@ -107,6 +106,61 @@ export async function POST(req: NextRequest) {
           username: existing.username,
           fullName: existing.fullName,
           createdAt: existing.createdAt,
+        },
+      });
+    }
+
+    if (!login) {
+      const byPhoneOnly = keys.length
+        ? (
+            await prisma.appCustomer.findMany({
+              where: {
+                status: "ACTIVE",
+                OR: [
+                  ...keys.flatMap((k) => [
+                    { phoneNormalized: k },
+                    { username: k },
+                    { phone: k },
+                  ]),
+                  { phoneNormalized: { endsWith: keys[0]!.slice(-9) } },
+                  { phone: { contains: keys[0]!.slice(-9) } },
+                ],
+              },
+              take: 10,
+            })
+          ).filter((row) => phonesMatch(password, row))
+        : [];
+      if (byPhoneOnly.length > 1) {
+        return NextResponse.json(
+          { error: "Số điện thoại này gắn với nhiều tài khoản." },
+          { status: 409 }
+        );
+      }
+      const only = byPhoneOnly[0];
+      if (!only) {
+        return NextResponse.json(
+          { error: "Mật khẩu không đúng." },
+          { status: 401 }
+        );
+      }
+      if (lookupOnly) {
+        return NextResponse.json({
+          ok: true,
+          maskedLabel: maskedIdentityLabel(
+            only.phone || only.phoneNormalized || password,
+            only.fullName
+          ),
+        });
+      }
+      await createCustomerSession(only.id);
+      return NextResponse.json({
+        ok: true,
+        customer: {
+          id: only.id,
+          customerCode: only.customerCode,
+          username: only.username,
+          fullName: only.fullName,
+          createdAt: only.createdAt,
         },
       });
     }

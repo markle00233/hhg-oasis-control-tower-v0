@@ -62,6 +62,13 @@ export async function POST(req: NextRequest) {
       ? phoneNormalizedRaw
       : `0${phoneNormalizedRaw}`;
     const phoneNormalized = phoneDisplay;
+    const phoneKeys = Array.from(
+      new Set(
+        [phoneNormalizedRaw, phoneDisplay, phoneNormalizedRaw.replace(/^0+/, "")]
+          .map((p) => p.trim())
+          .filter((p) => p.length >= 9)
+      )
+    );
     const shortId = phoneShortId(phoneDisplay);
     /** Mật khẩu đăng nhập app = số điện thoại (≥8 ký tự). */
     const password =
@@ -71,7 +78,14 @@ export async function POST(req: NextRequest) {
     const passwordHash = await hashPassword(password);
 
     let customer = await prisma.appCustomer.findFirst({
-      where: { phoneNormalized },
+      where: {
+        OR: [
+          { phoneNormalized: { in: phoneKeys } },
+          { phone: { in: phoneKeys } },
+          { username: { in: phoneKeys } },
+        ],
+      },
+      orderBy: { createdAt: "asc" },
     });
     let created = false;
 
@@ -81,12 +95,9 @@ export async function POST(req: NextRequest) {
         (!customer.vipExpiresAt ||
           customer.vipExpiresAt.getTime() > Date.now());
       const patch: Prisma.AppCustomerUpdateInput = {
-        fullName,
-        phone: phoneDisplay,
-        phoneLast4: shortId,
-        shortId,
+        fullName: customer.fullName || fullName,
         status: "ACTIVE",
-        segment: keepVip ? "VIP" : "WALK_IN",
+        segment: keepVip ? "VIP" : customer.segment,
         ...(!customer.identityToken
           ? { identityToken: `oq_${randomBytes(18).toString("base64url")}` }
           : {}),

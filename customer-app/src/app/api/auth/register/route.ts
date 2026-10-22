@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createCustomerAccount, findCustomerByPhone } from "@/lib/account";
-import { maskedIdentityLabel } from "@/lib/names";
 import { isValidPhone } from "@/lib/phone";
 
 export async function POST(req: NextRequest) {
@@ -24,14 +23,10 @@ export async function POST(req: NextRequest) {
 
     const existing = await findCustomerByPhone(phone);
     if (existing) {
-      return NextResponse.json({
-        ok: true,
-        exists: true,
-        maskedLabel: maskedIdentityLabel(
-          existing.phone || existing.phoneNormalized || phone,
-          existing.fullName
-        ),
-      });
+      return NextResponse.json(
+        { error: "Số điện thoại này đã được gắn với tài khoản khác." },
+        { status: 409 }
+      );
     }
 
     const { customer } = await createCustomerAccount({ fullName, phone });

@@ -4,6 +4,7 @@ import { CART_STATUS } from "@/lib/cart-status";
 import { deskZoneAliases } from "@/lib/desk-zones";
 import { findCustomerByIdentityToken } from "@/lib/identity-qr";
 import { activateLongNuongTable } from "@/lib/long-nuong-activate";
+import { markSpaInUse } from "@/lib/spa-visit";
 import {
   applyOlympicMembership,
   pickPrimaryOlympicPackage,
@@ -138,40 +139,13 @@ export async function POST(req: NextRequest) {
         cartToken: cart.token,
       });
 
-      let tableActivation: Awaited<
-        ReturnType<typeof activateLongNuongTable>
-      > | null = null;
-      if (
-        zone === "LONG_NUONG" &&
-        (cart.status === "OPEN" || cart.status === "PENDING_APPROVAL")
-      ) {
-        tableActivation = await activateLongNuongTable({
-          cartId: cart.id,
-          customerId: cart.customer.id,
-          items: cart.items,
-          cartStatus: cart.status,
-        }).catch((err) => {
-          console.error("[resolve-qr long-nuong]", err);
-          return null;
-        });
-      }
-
-      let courtActivation: Awaited<
-        ReturnType<typeof activatePickleballCourt>
-      > | null = null;
-      if (zone === "PICKLEBALL" && cart.status === "OPEN") {
-        courtActivation = await activatePickleballCourt({
-          cartId: cart.id,
-          customerId: cart.customer.id,
-          items: cart.items,
-          cartStatus: cart.status,
-          guestName: cart.customer.fullName,
-          guestPhone: cart.customer.phone,
-        }).catch((err) => {
-          console.error("[resolve-qr pickleball]", err);
-          return null;
-        });
-      }
+      const arrival = await finalizeArrivalCart({
+        zone,
+        cart,
+        customerId: cart.customer.id,
+        guestName: cart.customer.fullName,
+        guestPhone: cart.customer.phone,
+      });
 
       /** Hồ Olympic — gói tháng: quét QR OPEN = xác nhận nâng cấp → VIP + theme. */
       let membership: {
@@ -197,6 +171,7 @@ export async function POST(req: NextRequest) {
           const applied = await applyOlympicMembership(prisma, {
             customerId: cart.customer.id,
             packageId: pkgId,
+            from: cart.createdAt,
           }).catch((err) => {
             console.error("[resolve-qr membership]", err);
             return null;
@@ -243,29 +218,17 @@ export async function POST(req: NextRequest) {
           items: cart.items,
           totalVnd: cart.totalVnd,
           status:
-            tableActivation?.activated ||
-            courtActivation?.activated ||
+            arrival.table?.activated ||
+            arrival.court?.activated ||
+            arrival.spa?.activated ||
             membership
               ? "USED"
               : cart.status,
           expiresAt: cart.expiresAt,
         },
-        table: tableActivation?.activated
-          ? {
-              activated: true,
-              already: "already" in tableActivation && tableActivation.already,
-              resource: tableActivation.resource,
-              sessionId: tableActivation.sessionId,
-            }
-          : null,
-        court: courtActivation?.activated
-          ? {
-              activated: true,
-              already: "already" in courtActivation && courtActivation.already,
-              resource: courtActivation.resource,
-              sessionId: courtActivation.sessionId,
-            }
-          : null,
+        table: arrival.table,
+        court: arrival.court,
+        spa: arrival.spa,
         payment: null,
         membership,
         customer: {
@@ -340,6 +303,16 @@ export async function POST(req: NextRequest) {
       cartToken: openCart?.token || null,
     });
 
+    const arrival = openCart
+      ? await finalizeArrivalCart({
+          zone,
+          cart: openCart,
+          customerId: customer.id,
+          guestName: customer.fullName,
+          guestPhone: customer.phone,
+        })
+      : { table: null, court: null, spa: null };
+
     return NextResponse.json({
       ok: true,
       mode:
@@ -357,6 +330,9 @@ export async function POST(req: NextRequest) {
         shortId: customer.shortId || customer.phoneLast4,
         segment: customer.segment,
       },
+      table: arrival.table,
+      court: arrival.court,
+      spa: arrival.spa,
       cart: openCart
         ? {
             token: openCart.token,
@@ -364,7 +340,12 @@ export async function POST(req: NextRequest) {
             zoneName: openCart.zoneName,
             items: openCart.items,
             totalVnd: openCart.totalVnd,
-            status: openCart.status,
+            status:
+              arrival.table?.activated ||
+              arrival.court?.activated ||
+              arrival.spa?.activated
+                ? "USED"
+                : openCart.status,
             expiresAt: openCart.expiresAt,
           }
         : null,
@@ -385,6 +366,95 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/** Quét QR đơn hoặc QR khách khi đã có yêu cầu mở → đóng order (check-in). */
+async function finalizeArrivalCart(opts: {
+  zone: string;
+  customerId: string;
+  cart: {
+    id: string;
+    status: string;
+    items: unknown;
+    zoneCode?: string | null;
+  };
+  guestName?: string | null;
+  guestPhone?: string | null;
+}) {
+  const live =
+    opts.cart.status === "OPEN" || opts.cart.status === "PENDING_APPROVAL";
+  const cartZone = String(opts.cart.zoneCode || "").toUpperCase();
+  if (!live || (cartZone && !deskZoneAliases(opts.zone).includes(cartZone))) {
+    return { table: null, court: null };
+  }
+
+  let table: {
+    activated: true;
+    already: boolean;
+    resource: { id: string; code: string; name: string } | null;
+    sessionId: string | null;
+  } | null = null;
+  let court: {
+    activated: true;
+    already: boolean;
+    resource: { id: string; code: string; name: string };
+    sessionId: string;
+  } | null = null;
+  let spa: { activated: true } | null = null;
+
+  if (opts.zone === "LONG_NUONG") {
+    const activated = await activateLongNuongTable({
+      cartId: opts.cart.id,
+      customerId: opts.customerId,
+      items: opts.cart.items,
+      cartStatus: opts.cart.status,
+    }).catch((err) => {
+      console.error("[resolve-qr long-nuong]", err);
+      return null;
+    });
+    if (activated?.activated) {
+      table = {
+        activated: true,
+        already: "already" in activated && activated.already,
+        resource: activated.resource,
+        sessionId: activated.sessionId,
+      };
+    }
+  }
+
+  if (opts.zone === "PICKLEBALL" && opts.cart.status === "OPEN") {
+    const activated = await activatePickleballCourt({
+      cartId: opts.cart.id,
+      customerId: opts.customerId,
+      items: opts.cart.items,
+      cartStatus: opts.cart.status,
+      guestName: opts.guestName,
+      guestPhone: opts.guestPhone,
+    }).catch((err) => {
+      console.error("[resolve-qr pickleball]", err);
+      return null;
+    });
+    if (activated?.activated) {
+      court = {
+        activated: true,
+        already: "already" in activated && activated.already,
+        resource: activated.resource,
+        sessionId: activated.sessionId,
+      };
+    }
+  }
+
+  if (opts.zone === "SAUNA" || opts.zone === "SPA") {
+    const started = await markSpaInUse(opts.cart.id, opts.cart.status).catch(
+      (err) => {
+        console.error("[resolve-qr spa]", err);
+        return false;
+      }
+    );
+    if (started) spa = { activated: true };
+  }
+
+  return { table, court, spa };
 }
 
 /** Staff scanned guest QR at desk → create SERVICE_USE so guest appears + can verify. */

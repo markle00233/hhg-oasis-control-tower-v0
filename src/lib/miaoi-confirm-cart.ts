@@ -20,6 +20,7 @@ type CartItem = {
   nameVi?: string;
   qty?: number;
   priceVnd?: number;
+  pointsRedeemQty?: number;
 };
 
 type ExtraLine = { itemId?: string; qty?: number; useAltPrice?: boolean };
@@ -113,6 +114,8 @@ export async function confirmMiaOiCartPayment(opts: {
 
   const rawItems = Array.isArray(cart.items) ? (cart.items as CartItem[]) : [];
   let cartRedeemTier = 0;
+  let cartRedeemUnits = 0;
+  let explicitRedeemUnits = 0;
   const orderItems: OrderLine[] = [];
   for (const i of rawItems) {
     if (!i) continue;
@@ -120,27 +123,53 @@ export async function confirmMiaOiCartPayment(opts: {
     if (id.startsWith("voucher-")) continue;
     if (id.startsWith("points-redeem-")) {
       const tier = Math.round(Number(id.slice("points-redeem-".length)) || 0);
-      if (tier === 50 || tier === 100) cartRedeemTier = tier;
+      if (tier === 50 || tier === 100) {
+        cartRedeemTier = tier;
+        cartRedeemUnits = Math.max(
+          cartRedeemUnits,
+          Math.round(Number(i.qty) || 1)
+        );
+      }
       continue;
     }
-    orderItems.push({
+    const qty = Math.min(Math.max(Number(i.qty) || 1, 1), 99);
+    const unitPriceVnd = Math.max(0, Math.round(Number(i.priceVnd) || 0));
+    const line: OrderLine = {
       itemId: id || "item",
       nameVi: String(i.nameVi || "Món"),
       nameEn: null,
-      unitPriceVnd: Math.max(0, Math.round(Number(i.priceVnd) || 0)),
-      qty: Math.min(Math.max(Number(i.qty) || 1, 1), 99),
-    });
-  }
-  if (cartRedeemTier === REDEEM_TIER_DRINK) {
-    const hit = orderItems.find(
-      (l) => l.unitPriceVnd > 0 && l.unitPriceVnd <= REDEEM_DRINK_MAX_VND
+      unitPriceVnd,
+      qty,
+    };
+    const requested = Math.min(
+      qty,
+      Math.max(0, Math.round(Number(i.pointsRedeemQty) || 0))
     );
-    if (hit) {
+    if (
+      requested > 0 &&
+      unitPriceVnd > 0 &&
+      unitPriceVnd <= REDEEM_DRINK_MAX_VND
+    ) {
+      line.pointsRedeemTier = REDEEM_TIER_DRINK;
+      line.pointsDiscountVnd = requested * unitPriceVnd;
+      explicitRedeemUnits += requested;
+    }
+    orderItems.push(line);
+  }
+  if (explicitRedeemUnits === 0 && cartRedeemTier === REDEEM_TIER_DRINK) {
+    let left = Math.max(1, cartRedeemUnits);
+    for (const hit of orderItems) {
+      if (left <= 0) break;
+      if (hit.unitPriceVnd <= 0 || hit.unitPriceVnd > REDEEM_DRINK_MAX_VND) {
+        continue;
+      }
+      const take = Math.min(hit.qty, left);
       hit.pointsRedeemTier = REDEEM_TIER_DRINK;
       hit.pointsDiscountVnd = Math.min(
         hit.unitPriceVnd * hit.qty,
-        (hit.pointsDiscountVnd || 0) + hit.unitPriceVnd
+        (hit.pointsDiscountVnd || 0) + take * hit.unitPriceVnd
       );
+      left -= take;
     }
   }
 
@@ -183,10 +212,15 @@ export async function confirmMiaOiCartPayment(opts: {
   let deskRedeemNote = "";
   const deskUnits = Math.max(0, Math.round(Number(opts.pointsRedeemUnits) || 0));
   if (deskUnits > 0) {
+    const alreadyOff = finalItems.reduce(
+      (s, i) =>
+        s + Math.min(i.unitPriceVnd * i.qty, i.pointsDiscountVnd || 0),
+      0
+    );
     const applied = applyDeskRedeemUnits(finalItems, deskUnits, "drink");
     finalItems.length = 0;
     finalItems.push(...applied.items);
-    extraPointsOff = applied.discountVnd;
+    extraPointsOff = Math.max(0, applied.discountVnd - alreadyOff);
     deskRedeemCost = applied.cost;
     deskRedeemNote = `Sử dụng ${applied.cost} điểm · ${applied.unitsApplied} đồ uống`;
     const payer = await prisma.appCustomer.findUnique({
@@ -334,6 +368,38 @@ export async function confirmMiaOiCartPayment(opts: {
           },
         },
       });
+      const checkIns = await tx.appServiceEvent.findMany({
+        where: {
+          customerId: cart.customerId,
+          serviceId: service.id,
+          eventType: "SERVICE_USE",
+          operationalStatus: "NEW",
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      });
+      for (const scan of checkIns) {
+        const meta =
+          scan.metadata &&
+          typeof scan.metadata === "object" &&
+          !Array.isArray(scan.metadata)
+            ? (scan.metadata as Record<string, unknown>)
+            : {};
+        if (meta.cartToken !== cart.token) continue;
+        await tx.appServiceEvent.update({
+          where: { id: scan.id },
+          data: {
+            operationalStatus: "ACKNOWLEDGED",
+            metadata: {
+              ...meta,
+              orderId: created.id,
+              cartToken: cart.token,
+              ticketVerified: true,
+              closedBy: "desk_confirm_payment",
+            },
+          },
+        });
+      }
     }
     return created;
   });
@@ -350,6 +416,31 @@ export async function confirmMiaOiCartPayment(opts: {
     }).catch((err) => {
       console.error("[miaoi-confirm voucher]", err);
     });
+  }
+
+  const embeddedOfferIds = new Set<string>();
+  for (const row of rawItems) {
+    const id = String(row?.id || "");
+    if (!id.startsWith("voucher-")) continue;
+    for (const oid of id.slice("voucher-".length).split("+")) {
+      const offerId = oid.trim();
+      if (offerId && offerId !== voucherQuote.offerId) embeddedOfferIds.add(offerId);
+    }
+  }
+  if (embeddedOfferIds.size) {
+    const { isLimitedMembershipVoucher } = await import("@/lib/hhg-vouchers");
+    const { consumeMembershipVoucherUse } = await import(
+      "@/lib/membership-voucher-qty"
+    );
+    for (const offerId of embeddedOfferIds) {
+      if (!isLimitedMembershipVoucher(offerId)) continue;
+      await consumeMembershipVoucherUse(prisma, {
+        customerId: cart.customerId,
+        offerId,
+      }).catch((err) => {
+        console.error("[miaoi-confirm cart voucher]", err);
+      });
+    }
   }
 
   const pts = await awardPurchasePoints({

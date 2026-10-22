@@ -100,6 +100,10 @@ function bookingStatusLabel(status: string, zone?: string): string {
   if (zone === "LONG_NUONG") {
     if (status === "PENDING") return "Chờ gọi xác nhận";
     if (status === "CONFIRMED") return "Đã gọi xác nhận";
+    if (status === "IN_SERVICE" || status === "CHECKED_IN" || status === "ARRIVED") {
+      return "Đang dùng";
+    }
+    if (status === "COMPLETED") return "Đã dùng";
   }
   switch (status) {
     case "PENDING":
@@ -151,8 +155,26 @@ function orderStatusTone(
   return "mute";
 }
 
+function spaVisitDone(note?: string | null) {
+  return (note || "").trim() === "Đã dùng";
+}
+
+function spaZone(zoneCode?: string) {
+  const z = (zoneCode || "").toUpperCase();
+  return z === "SPA" || z === "SAUNA";
+}
+
+function visitInUseZone(zoneCode?: string) {
+  const z = (zoneCode || "").toUpperCase();
+  return spaZone(z) || z === "LONG_NUONG";
+}
+
 /** Trạng thái yêu cầu QR dịch vụ: tạo mã → duyệt → NV xác nhận / từ chối. */
-function cartStatusLabel(status: string, zoneCode?: string): string {
+function cartStatusLabel(
+  status: string,
+  zoneCode?: string,
+  adminNote?: string | null
+): string {
   const z = (zoneCode || "").toUpperCase();
   switch (status) {
     case "PENDING_APPROVAL":
@@ -162,6 +184,8 @@ function cartStatusLabel(status: string, zoneCode?: string): string {
         ? "Đã duyệt · chờ NV xác nhận thanh toán"
         : "Đã duyệt · chờ NV quét / xác nhận";
     case "USED":
+      if (visitInUseZone(z) && !spaVisitDone(adminNote)) return "Đang dùng";
+      if (visitInUseZone(z)) return "Đã dùng";
       return z === "MIA_OI"
         ? "NV đã xác nhận TT · hoàn tất"
         : "NV đã xác nhận · hoàn tất";
@@ -238,8 +262,15 @@ function cartTokenForBooking(
   return null;
 }
 
-function cartBucket(status: string): "active" | "upcoming" | "history" {
+function cartBucket(
+  status: string,
+  zoneCode?: string,
+  adminNote?: string | null
+): "active" | "upcoming" | "history" {
   if (status === "PENDING_APPROVAL" || status === "OPEN") return "active";
+  if (status === "USED" && visitInUseZone(zoneCode) && !spaVisitDone(adminNote)) {
+    return "active";
+  }
   return "history";
 }
 
@@ -274,6 +305,7 @@ function parseCartPromoLines(items: unknown): {
   const itemLines: string[] = [];
   let hasVoucher = false;
   let pointsTier: number | null = null;
+  let pointsCost = 0;
   for (const row of items) {
     if (!row || typeof row !== "object") continue;
     const r = row as {
@@ -289,7 +321,11 @@ function parseCartPromoLines(items: unknown): {
     }
     if (id.startsWith("points-redeem-")) {
       const t = Math.round(Number(id.replace("points-redeem-", "")) || 0);
-      if (t === 50 || t === 100) pointsTier = t;
+      if (t === 50 || t === 100) {
+        pointsTier = t;
+        const units = Math.max(1, Math.round(Number(r.qty) || 1));
+        pointsCost = t * units;
+      }
       continue;
     }
     if (!r.nameVi) continue;
@@ -303,7 +339,7 @@ function parseCartPromoLines(items: unknown): {
   }
   const parts: string[] = [];
   if (hasVoucher) parts.push("Có voucher");
-  if (pointsTier) parts.push(`Đổi ${pointsTier} điểm`);
+  if (pointsTier) parts.push(`Đổi ${pointsCost} điểm`);
   return {
     itemLines,
     promoLabel: parts.length ? parts.join(" · ") : null,
@@ -456,7 +492,7 @@ async function collectCards(
                   "NO_SHOW",
                   "EXPIRED",
                 ]
-              : ["PENDING_APPROVAL", "OPEN"],
+              : ["PENDING_APPROVAL", "OPEN", "USED"],
         },
       },
       orderBy: { createdAt: "desc" },
@@ -513,7 +549,7 @@ async function collectCards(
       resourceName: s.resource.name,
       partySize: null,
       status: "IN_SERVICE",
-      statusLabel: "Đang sử dụng",
+      statusLabel: zone === "LONG_NUONG" ? "Đang dùng" : "Đang sử dụng",
       statusTone: "ok",
       accent: accentFor(zone),
       href: s.bookingId
@@ -681,7 +717,7 @@ async function collectCards(
     const promo = parseCartPromoLines(cart.items);
     const bill =
       promo.itemLines.join(", ") || formatVnd(cart.totalVnd);
-    const bucket = cartBucket(cart.status);
+    const bucket = cartBucket(cart.status, zone, cart.adminNote);
     if (opts.historyLimit === 0 && bucket === "history") continue;
     const detailLines = [...promo.itemLines];
     if (cart.adminNote && cart.status === "REJECTED") {
@@ -699,7 +735,7 @@ async function collectCards(
       resourceName: null,
       partySize: null,
       status: cart.status,
-      statusLabel: cartStatusLabel(cart.status, zone),
+      statusLabel: cartStatusLabel(cart.status, zone, cart.adminNote),
       statusTone: cartStatusTone(cart.status),
       accent: accentFor(zone),
       href:

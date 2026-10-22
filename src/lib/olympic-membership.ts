@@ -84,6 +84,38 @@ export function cartItemsIncludeMembership(items: unknown): boolean {
  * Mỗi tài khoản chỉ 1 gói tại một thời điểm — còn hạn thì từ chối (không cộng tháng / đổi gói).
  * Voucher hội viên → seed COLLECTED, dùng theo thời hạn gói.
  */
+export const OLYMPIC_PACKAGE_IDS = ["oly-1m", "oly-3m", "oly-6m", "oly-12m"] as const;
+
+export function isOlympicPackageId(id: string) {
+  return (OLYMPIC_PACKAGE_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * Account is VIP now, but an order placed before this package started
+ * still shows as Khách lẻ.
+ */
+export function segmentAtTime(opts: {
+  segment?: string | null;
+  segmentLabel?: string | null;
+  vipStartedAt?: Date | string | null;
+  at?: Date | string | null;
+}): { segment: string; segmentLabel: string } {
+  const segment = String(opts.segment || "WALK_IN").toUpperCase();
+  const label =
+    opts.segmentLabel ||
+    (segment === "VIP" ? "VIP" : segment === "MEMBER" ? "Member" : "Khách lẻ");
+  if (segment !== "VIP") return { segment, segmentLabel: label };
+  if (!opts.vipStartedAt || !opts.at) {
+    return { segment: "VIP", segmentLabel: "VIP" };
+  }
+  const start = new Date(opts.vipStartedAt).getTime();
+  const when = new Date(opts.at).getTime();
+  if (Number.isNaN(start) || Number.isNaN(when) || when >= start) {
+    return { segment: "VIP", segmentLabel: "VIP" };
+  }
+  return { segment: "WALK_IN", segmentLabel: "Khách lẻ" };
+}
+
 export async function applyOlympicMembership(
   prisma: PrismaClient,
   opts: {
@@ -132,6 +164,7 @@ export async function applyOlympicMembership(
       segment: "VIP",
       vipPlanLabel,
       vipExpiresAt,
+      vipStartedAt: from,
     },
   });
 

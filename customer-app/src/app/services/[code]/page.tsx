@@ -11,7 +11,10 @@ import {
 } from "@/components/VoucherPicker";
 import { PointsBalanceBar } from "@/components/PointsBalanceBar";
 import { SwimLessonHome } from "@/components/SwimLessonHome";
-import { PointsRedeemControl } from "@/components/PointsRedeemControl";
+import {
+  PointsRedeemControl,
+  TicketPointsRedeem,
+} from "@/components/PointsRedeemControl";
 import {
   applyOffersDiscount,
   HOME_SERVICES,
@@ -140,6 +143,9 @@ function PackageCard({
   canRedeem100,
   onRedeemChange,
   sameDaySaleVnd,
+  ticketRedeemQty,
+  ticketRedeemMax,
+  onTicketRedeem,
 }: {
   p: ServicePackage;
   selected: boolean;
@@ -157,6 +163,9 @@ function PackageCard({
   canRedeem100?: boolean;
   onRedeemChange?: (tier: 50 | 100 | null) => void;
   sameDaySaleVnd?: number | null;
+  ticketRedeemQty?: number;
+  ticketRedeemMax?: number;
+  onTicketRedeem?: (qty: number) => void;
 }) {
   return (
     <div
@@ -229,7 +238,7 @@ function PackageCard({
           </div>
         </div>
       </button>
-      {selected && (onOpenVoucher || showQty || onRedeemChange) ? (
+      {selected && (onOpenVoucher || showQty || onRedeemChange || onTicketRedeem) ? (
         <div className="space-y-2 border-t border-oasis-line/50 px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
           {onOpenVoucher ? (
@@ -271,6 +280,16 @@ function PackageCard({
               canRedeem50={!!canRedeem50}
               canRedeem100={!!canRedeem100}
               onChange={onRedeemChange}
+            />
+          ) : null}
+          {onTicketRedeem ? (
+            <TicketPointsRedeem
+              pointsBalance={pointsBalance ?? 0}
+              orderQty={qty}
+              redeemQty={ticketRedeemQty ?? 0}
+              maxQty={ticketRedeemMax ?? 0}
+              unitPriceVnd={p.priceVnd}
+              onChange={onTicketRedeem}
             />
           ) : null}
         </div>
@@ -329,6 +348,7 @@ export default function ServiceInfoPage({
   const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
   const [pointsBalance, setPointsBalance] = useState(0);
   const [redeemTier, setRedeemTier] = useState<50 | 100 | null>(null);
+  const [ticketRedeem, setTicketRedeem] = useState<Record<string, number>>({});
   const [membershipLocked, setMembershipLocked] = useState(false);
   const [membershipExpiresLabel, setMembershipExpiresLabel] = useState<
     string | null
@@ -483,23 +503,32 @@ export default function ServiceInfoPage({
         id: pkg.id,
         priceVnd: pkg.priceVnd,
         qty,
+        redeemQty: isSwimTicketId(pkg.id) ? ticketRedeem[pkg.id] || 0 : 0,
       })),
-    [selectedPkgs]
+    [selectedPkgs, ticketRedeem]
+  );
+  const swimRedeemUnits = redeemItems.reduce(
+    (n, i) => n + (isSwimTicketId(i.id) ? i.redeemQty : 0),
+    0
   );
   const canRedeem50 =
     pointsBalance >= 50 &&
     redeemItems.some((i) => i.priceVnd > 0 && i.priceVnd <= REDEEM_DRINK_MAX_VND);
-  const canRedeem100 =
-    pointsBalance >= 100 &&
-    (code === "OLYMPIC_POOL" || code === "OLYMPIC") &&
-    redeemItems.some((i) => isSwimTicketId(i.id));
-  const redeemPreview = redeemTier
-    ? computeGuestPointsRedeem({
-        zoneCode: code,
-        tier: redeemTier,
-        items: redeemItems,
-      })
-    : null;
+  const canRedeem100 = false;
+  const redeemPreview =
+    swimRedeemUnits > 0
+      ? computeGuestPointsRedeem({
+          zoneCode: code,
+          tier: 100,
+          items: redeemItems,
+        })
+      : redeemTier
+        ? computeGuestPointsRedeem({
+            zoneCode: code,
+            tier: redeemTier,
+            items: redeemItems,
+          })
+        : null;
   const pointsDiscount = redeemPreview?.ok ? redeemPreview.discountVnd : 0;
   const totalVnd = Math.max(0, priced.totalVnd - pointsDiscount);
   const totalDiscountVnd =
@@ -555,9 +584,10 @@ export default function ServiceInfoPage({
         lines.push(`Voucher ${line.offer.title}`);
       }
     }
-    if (redeemTier && pointsDiscount > 0) {
+    if ((swimRedeemUnits > 0 || redeemTier) && pointsDiscount > 0) {
+      const pointCost = swimRedeemUnits > 0 ? swimRedeemUnits * 100 : redeemTier;
       lines.push(
-        `Đổi ${redeemTier} điểm −${new Intl.NumberFormat("vi-VN").format(pointsDiscount)}đ`
+        `Đổi ${pointCost} điểm −${new Intl.NumberFormat("vi-VN").format(pointsDiscount)}đ`
       );
     }
     if (totalVnd > 0 || subtotalVnd > 0) {
@@ -576,6 +606,7 @@ export default function ServiceInfoPage({
     accessoryAutoDiscount,
     membershipAutoDiscount,
     redeemTier,
+    swimRedeemUnits,
     pointsDiscount,
   ]);
 
@@ -653,9 +684,19 @@ export default function ServiceInfoPage({
           qty,
           priceVnd: pkg.priceVnd,
           note: pkg.note,
+          ...(isSwimTicketId(pkg.id) && (ticketRedeem[pkg.id] || 0) > 0
+            ? { pointsRedeemQty: ticketRedeem[pkg.id] }
+            : {}),
         })),
       ];
-      if (redeemTier) {
+      if (swimRedeemUnits > 0) {
+        const check = computeGuestPointsRedeem({
+          zoneCode: code,
+          tier: 100,
+          items: redeemItems,
+        });
+        if (!check.ok) throw new Error(check.error || "Không đổi điểm được");
+      } else if (redeemTier) {
         const check = computeGuestPointsRedeem({
           zoneCode: code,
           tier: redeemTier,
@@ -673,7 +714,8 @@ export default function ServiceInfoPage({
           items,
           offerIds: appliedOffers.map((o) => o.id),
           discountVnd: accessoryAutoDiscount + priced.discountVnd,
-          pointsRedeemTier: redeemTier,
+          pointsRedeemTier: swimRedeemUnits > 0 ? 100 : redeemTier,
+          ...(swimRedeemUnits > 0 ? { pointsRedeemUnits: swimRedeemUnits } : {}),
           ...(selectedMonthly
             ? { guestFullName, guestPhone }
             : {}),
@@ -790,18 +832,49 @@ export default function ServiceInfoPage({
               <h2 className="font-display text-xl font-semibold text-oasis-ink">
                 Vé lẻ
               </h2>
-              {OLYMPIC_PACKAGES.map((p) => (
-                <PackageCard
-                  key={p.id}
-                  p={p}
-                  selected={!!selected[p.id]}
-                  qty={selected[p.id] || 1}
-                  showQty
-                  {...voucherField}
-                  onToggle={() => setSelected((s) => toggleId(s, p.id))}
-                  onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
-                />
-              ))}
+              {OLYMPIC_PACKAGES.map((p) => {
+                const orderQty = selected[p.id] || 1;
+                const otherUnits = Object.entries(ticketRedeem).reduce(
+                  (n, [id, q]) => (id === p.id ? n : n + (q || 0)),
+                  0
+                );
+                const redeemMax = Math.min(
+                  orderQty,
+                  Math.max(0, Math.floor(pointsBalance / 100) - otherUnits)
+                );
+                return (
+                  <PackageCard
+                    key={p.id}
+                    p={p}
+                    selected={!!selected[p.id]}
+                    qty={orderQty}
+                    showQty
+                    {...voucherField}
+                    canRedeem100={false}
+                    onRedeemChange={undefined}
+                    ticketRedeemQty={selected[p.id] ? ticketRedeem[p.id] || 0 : 0}
+                    ticketRedeemMax={selected[p.id] ? redeemMax : 0}
+                    onTicketRedeem={(n) =>
+                      setTicketRedeem((prev) => {
+                        const next = Math.max(0, Math.min(redeemMax, n));
+                        return { ...prev, [p.id]: next };
+                      })
+                    }
+                    onToggle={() => {
+                      setSelected((s) => toggleId(s, p.id));
+                      setTicketRedeem((prev) => ({ ...prev, [p.id]: 0 }));
+                    }}
+                    onQty={(n) => {
+                      const q = Math.max(0, Math.min(20, n));
+                      setSelected((s) => setQty(s, p.id, n));
+                      setTicketRedeem((prev) => ({
+                        ...prev,
+                        [p.id]: Math.min(prev[p.id] || 0, q),
+                      }));
+                    }}
+                  />
+                );
+              })}
             </section>
             <SwimLessonHome showBanner={false} />
             <section className="space-y-3">

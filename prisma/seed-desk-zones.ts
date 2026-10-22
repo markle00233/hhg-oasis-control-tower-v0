@@ -40,6 +40,8 @@ const prisma = new PrismaClient();
 
 /** Password cố định theo yêu cầu cho acc ADMINISTRATION{khu}. */
 const ZONE_ADMIN_PASSWORD = "12345678";
+/** Admin tile on the zone picker. Same account as global ADMINISTRATION. */
+const ADMIN_PANEL_PASSWORD = "12345678!";
 
 async function upsertDeskUser(opts: {
   username: string;
@@ -111,6 +113,33 @@ async function main() {
       reset: true,
     });
     (admin === "created" ? created : updated).push(adminUser);
+  }
+
+  const administrationHash = await hashPassword(ADMIN_PANEL_PASSWORD);
+  const administration = await prisma.user.findUnique({
+    where: { username: "ADMINISTRATION" },
+  });
+  if (!administration) {
+    await prisma.user.create({
+      data: {
+        username: "ADMINISTRATION",
+        displayName: "ADMINISTRATION",
+        passwordHash: administrationHash,
+        systemRole: "SYSTEM_ADMIN",
+        status: "ACTIVE",
+      },
+    });
+    created.push("ADMINISTRATION");
+  } else {
+    await prisma.user.update({
+      where: { id: administration.id },
+      data: {
+        passwordHash: administrationHash,
+        systemRole: "SYSTEM_ADMIN",
+        status: "ACTIVE",
+      },
+    });
+    updated.push("ADMINISTRATION");
   }
 
   console.log("[seed-desk-zones] ok", { created, updated, reset });

@@ -239,14 +239,17 @@ export async function POST(req: NextRequest) {
     }
 
     let pointsRedeemDiscountVnd = 0;
+    let pointsRedeemUnits = 0;
     if (pointsRedeemTier) {
       const check = computeGuestPointsRedeem({
         zoneCode,
         tier: pointsRedeemTier,
+        units: Math.max(0, Math.round(Number(body.pointsRedeemUnits) || 0)) || undefined,
         items: items.map((i) => ({
           id: String(i.id || ""),
           priceVnd: Math.max(0, Math.round(Number(i.priceVnd) || 0)),
           qty: Math.max(0, Math.round(Number(i.qty) || 0)),
+          redeemQty: Math.max(0, Math.round(Number(i.pointsRedeemQty) || 0)),
         })),
       });
       if (!check.ok) {
@@ -265,6 +268,19 @@ export async function POST(req: NextRequest) {
         );
       }
       pointsRedeemDiscountVnd = check.discountVnd;
+      pointsRedeemUnits = check.units;
+      if (pointsRedeemTier === 50 || pointsRedeemTier === 100) {
+        items = items.map((item, index) => {
+          const alloc = check.allocations.find((a) => a.index === index);
+          const redeemQty = alloc?.redeemQty || 0;
+          if (redeemQty <= 0) {
+            const rest = { ...item };
+            delete rest.pointsRedeemQty;
+            return rest;
+          }
+          return { ...item, pointsRedeemQty: redeemQty };
+        });
+      }
     }
 
     if (isMembershipUpgrade) {
@@ -318,6 +334,7 @@ export async function POST(req: NextRequest) {
       discountVnd: applied,
       offerIds: savedOfferIds,
       pointsRedeemTier: savedTier,
+      pointsRedeemCost: savedCost,
     } = await createServiceCart({
       customerId: customerRecord.id,
       zoneCode,
@@ -326,6 +343,7 @@ export async function POST(req: NextRequest) {
       discountVnd,
       offerIds,
       pointsRedeemTier,
+      pointsRedeemUnits,
       pointsRedeemDiscountVnd,
     });
 
@@ -390,12 +408,13 @@ export async function POST(req: NextRequest) {
 
     let pointsBalance = customerRecord.pointsBalance ?? 0;
     if (savedTier) {
+      const burned = savedCost || savedTier;
       const pts = await redeemPoints({
         customerId: customerRecord.id,
-        cost: savedTier,
+        cost: burned,
         refType: "SERVICE_CART",
         refId: cart.id,
-        note: `Đổi ${savedTier} điểm · ${zoneCode} · QR ${cart.token.slice(-6)}`,
+        note: `Đổi ${burned} điểm · ${zoneCode} · QR ${cart.token.slice(-6)}`,
       });
       pointsBalance = pts.balance;
     }

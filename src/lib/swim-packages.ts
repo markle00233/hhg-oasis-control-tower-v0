@@ -15,6 +15,13 @@ export type SwimPackage = {
   detail: string;
 };
 
+/** Lượt tự chọn được dùng cho một trong hai việc này. */
+export const SWIM_BONUS_PURPOSES = ["Bơi tự do", "Gội 30'"] as const;
+
+export function isSwimBonusPurpose(value: string): value is (typeof SWIM_BONUS_PURPOSES)[number] {
+  return (SWIM_BONUS_PURPOSES as readonly string[]).includes(value);
+}
+
 export const SWIM_HOTLINE = "0828808080";
 export const SWIM_COACH_PHONE = "0949131155";
 export const SWIM_COACH_NAME = "HLV Phương";

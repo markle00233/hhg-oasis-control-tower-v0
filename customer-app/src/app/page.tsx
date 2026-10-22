@@ -53,7 +53,7 @@ export default function GatePage() {
           </h1>
           <p className="mt-3 text-base text-oasis-mute">
             Tạo tài khoản để đặt sân, gọi món, giữ QR dịch vụ trên trang cá nhân.
-            Đăng nhập bằng họ tên + số điện thoại.
+            Đăng nhập bằng mật khẩu.
           </p>
         </div>
 
@@ -73,7 +73,7 @@ export default function GatePage() {
         </div>
 
         <p className="text-center text-xs text-oasis-mute">
-          Đăng nhập: họ tên · mật khẩu là số điện thoại.
+          Mật khẩu là số điện thoại đã đăng ký.
         </p>
       </div>
     </main>
