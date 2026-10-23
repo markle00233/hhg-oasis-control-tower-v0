@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { User } from "@prisma/client";
-import { isZoneDeskAdmin } from "@/lib/desk-zones";
+import { isZoneDeskAdmin, sameDeskSector } from "@/lib/desk-zones";
 import { prisma } from "@/lib/prisma";
 import { readSessionUserId } from "@/lib/session";
 
@@ -49,7 +49,8 @@ export function canAccessDeskZone(
 ): boolean {
   if (isSystemAdmin(user)) return true;
   const z = zoneCode.trim().toUpperCase();
-  return !!user.deskZone && user.deskZone.toUpperCase() === z;
+  const home = (user.deskZone || "").toUpperCase();
+  return !!home && sameDeskSector(home, z);
 }
 
 /** Current User from trusted session cookie, or null. */

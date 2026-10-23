@@ -6,6 +6,25 @@ export type TableVisualStatus = "available" | "occupied" | "held";
 export const LONG_NUONG_SESSION_HOURS = 3;
 export const LONG_NUONG_OPEN_MIN = 10 * 60; // 10:00
 export const LONG_NUONG_CLOSE_MIN = 22 * 60; // 22:00
+export const LONG_NUONG_CLOSED_MESSAGE = "Lòng nướng chưa mở cửa";
+
+export function isWithinLongNuongHours(minutes: number) {
+  return minutes >= LONG_NUONG_OPEN_MIN && minutes <= LONG_NUONG_CLOSE_MIN;
+}
+
+/** Giờ địa phương Việt Nam của một thời điểm (kể cả khi server không ở UTC+7). */
+export function minutesInVietnam(d: Date): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  let hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  if (hour === 24) hour = 0;
+  return hour * 60 + minute;
+}
 
 export function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -78,11 +97,8 @@ export function validateArrival(
   if (min == null) {
     return { ok: false, error: "Nhập giờ đến (HH:mm)." };
   }
-  if (min < LONG_NUONG_OPEN_MIN || min > LONG_NUONG_CLOSE_MIN - 30) {
-    return {
-      ok: false,
-      error: `Giờ nhận bàn ${minutesToHm(LONG_NUONG_OPEN_MIN)} – ${minutesToHm(LONG_NUONG_CLOSE_MIN)}.`,
-    };
+  if (!isWithinLongNuongHours(min)) {
+    return { ok: false, error: LONG_NUONG_CLOSED_MESSAGE };
   }
   const startAt = atLocal(dayKey, min).toISOString();
   const endAt = new Date(

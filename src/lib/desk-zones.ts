@@ -56,8 +56,8 @@ export function isZoneDeskAdmin(
 ) {
   const z = parseZoneAdminUsername(String(user.username || ""));
   if (!z) return false;
-  if (zoneCode && z.code !== zoneCode.trim().toUpperCase()) return false;
-  if (user.deskZone && user.deskZone.toUpperCase() !== z.code) return false;
+  if (zoneCode && !sameDeskSector(z.code, zoneCode)) return false;
+  if (user.deskZone && !sameDeskSector(user.deskZone, z.code)) return false;
   return true;
 }
 
@@ -70,6 +70,22 @@ export function deskZoneByUsername(username: string): DeskZone | null {
 
 export function dashboardTitle(zoneName: string) {
   return `Dashboard ${zoneName}`;
+}
+
+/** Mía Ơi và Hồ Olympic dùng chung một quầy: đổi chỗ không cần đăng xuất. */
+export const MIA_OLYMPIC_SECTOR = ["MIA_OI", "OLYMPIC_POOL"] as const;
+export const MIA_OLYMPIC_LABEL = "Mía Ơi · Hồ Olympic";
+
+export function miaOlympicSector(code: string) {
+  const z = code.trim().toUpperCase();
+  return (MIA_OLYMPIC_SECTOR as readonly string[]).includes(z);
+}
+
+export function sameDeskSector(a: string, b: string) {
+  const left = a.trim().toUpperCase();
+  const right = b.trim().toUpperCase();
+  if (left === right) return true;
+  return miaOlympicSector(left) && miaOlympicSector(right);
 }
 
 /** Zone codes that map to the same desk counter (customer QR may use SPA vs SAUNA). */

@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionCustomer } from "@/lib/session";
-import { LONG_NUONG_SESSION_HOURS } from "@/lib/long-nuong";
+import { ensureLongNuongService } from "@/lib/ensure-long-nuong";
+import {
+  LONG_NUONG_CLOSED_MESSAGE,
+  LONG_NUONG_SESSION_HOURS,
+  isWithinLongNuongHours,
+  minutesInVietnam,
+} from "@/lib/long-nuong";
 import { isValidPhone, normalizePhone, phoneShortId } from "@/lib/phone";
 import {
   CART_STATUS,
@@ -58,6 +64,12 @@ export async function POST(req: NextRequest) {
         startAt.getTime() + LONG_NUONG_SESSION_HOURS * 60 * 60 * 1000
       );
     }
+    if (!isWithinLongNuongHours(minutesInVietnam(startAt))) {
+      return NextResponse.json(
+        { error: LONG_NUONG_CLOSED_MESSAGE },
+        { status: 400 }
+      );
+    }
     if (startAt.getTime() < Date.now() - 5 * 60 * 1000) {
       return NextResponse.json(
         { error: "Giờ đến đã qua — chọn khung khác." },
@@ -65,15 +77,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const service = await prisma.appService.findUnique({
-      where: { serviceCode: "LONG_NUONG" },
-    });
-    if (!service) {
-      return NextResponse.json(
-        { error: "Lòng Nướng chưa cấu hình." },
-        { status: 404 }
-      );
-    }
+    const service = await ensureLongNuongService();
 
     const phoneNormalized = normalizePhone(guestPhone);
     const phoneLast4 = phoneShortId(phoneNormalized);

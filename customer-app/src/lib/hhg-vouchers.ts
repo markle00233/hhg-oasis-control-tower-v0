@@ -40,7 +40,7 @@ export const HHG_OASIS_VOUCHERS: HhgVoucher[] = [
     id: "hhg-oly-mia-5",
     title: "Mía Ơi −5%",
     subtitle:
-      "HHG Oasis · Giảm 5% nước Mía Ơi · từ ngày nâng cấp đến hết hạn gói (không giới hạn số lần)",
+      "HHG Oasis · Giảm 5% nước Mía Ơi · dùng 1 lần, từ ngày nâng cấp đến hết hạn gói",
     sourceLabel: "Voucher từ HHG Oasis",
     zoneCode: "MIA_OI",
     zoneLabel: "Mía Ơi",
@@ -55,7 +55,7 @@ export const HHG_OASIS_VOUCHERS: HhgVoucher[] = [
     id: "hhg-oly-mia-10",
     title: "Mía Ơi −10%",
     subtitle:
-      "HHG Oasis · Giảm 10% nước Mía Ơi · từ ngày nâng cấp đến hết hạn gói (không giới hạn số lần)",
+      "HHG Oasis · Giảm 10% nước Mía Ơi · dùng 1 lần, từ ngày nâng cấp đến hết hạn gói",
     sourceLabel: "Voucher từ HHG Oasis",
     zoneCode: "MIA_OI",
     zoneLabel: "Mía Ơi",
@@ -113,7 +113,7 @@ export function isDurationMembershipVoucher(offerId: string) {
 
 /**
  * Số lần kèm theo từng gói tháng.
- * `null` = không giới hạn số lần trong hạn gói (vd Mía %).
+ * `null` = không giới hạn số lần trong hạn gói.
  */
 export function qtyForOlympicVoucher(
   packageId: string,
@@ -122,22 +122,22 @@ export function qtyForOlympicVoucher(
   const map: Record<string, Record<string, number | null>> = {
     "oly-1m": {
       "hhg-oly-spa-goi": 1,
-      "hhg-oly-mia-5": null,
+      "hhg-oly-mia-5": 1,
     },
     "oly-3m": {
       "hhg-oly-spa-massage": 1,
       "hhg-oly-ln-100k": 1,
-      "hhg-oly-mia-5": null,
+      "hhg-oly-mia-5": 1,
     },
     "oly-6m": {
       "hhg-oly-spa-massage": 3,
       "hhg-oly-ln-100k": 3,
-      "hhg-oly-mia-10": null,
+      "hhg-oly-mia-10": 1,
     },
     "oly-12m": {
       "hhg-oly-spa-massage": 8,
       "hhg-oly-ln-100k": 8,
-      "hhg-oly-mia-10": null,
+      "hhg-oly-mia-10": 1,
     },
   };
   const row = map[packageId];
@@ -161,6 +161,13 @@ export function isLimitedMembershipVoucher(offerId: string) {
   return (
     offerId === "hhg-oly-spa-goi" ||
     offerId === "hhg-oly-spa-massage" ||
-    offerId === "hhg-oly-ln-100k"
+    offerId === "hhg-oly-ln-100k" ||
+    offerId === "hhg-oly-mia-5" ||
+    offerId === "hhg-oly-mia-10"
   );
+}
+
+/** Hết lượt thì gỡ khỏi ví. Spa / Lòng Nướng vẫn hiện 0/N. */
+export function voucherLeavesWalletWhenSpent(offerId: string) {
+  return offerId === "hhg-oly-mia-5" || offerId === "hhg-oly-mia-10";
 }

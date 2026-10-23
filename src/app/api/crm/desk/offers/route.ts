@@ -8,7 +8,7 @@ import {
 import {
   getDeskHhgVoucher,
   offerMatchesDeskZone,
-  vouchersClaimableAtZone,
+  vouchersUsableAtZone,
 } from "@/lib/hhg-vouchers";
 import { normalizePhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
@@ -78,8 +78,12 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (!phoneRaw) {
-    return NextResponse.json({ error: "Thiếu số điện thoại." }, { status: 400 });
+  const customerId = String(url.searchParams.get("customerId") || "").trim();
+  if (!phoneRaw && !customerId) {
+    return NextResponse.json(
+      { error: "Thiếu số điện thoại hoặc customerId." },
+      { status: 400 }
+    );
   }
   if (!zone) {
     return NextResponse.json({ error: "Thiếu zone." }, { status: 400 });
@@ -87,35 +91,42 @@ export async function GET(req: NextRequest) {
   const gate = await requireDeskZone(zone);
   if ("error" in gate) return gate.error;
 
-  const phoneNormalized = normalizePhone(phoneRaw);
-  if (phoneNormalized.length < 9) {
+  const phoneNormalized = phoneRaw ? normalizePhone(phoneRaw) : "";
+  if (phoneRaw && phoneNormalized.length < 9) {
     return NextResponse.json(
       { error: "Số điện thoại không hợp lệ." },
       { status: 400 }
     );
   }
 
-  const customer = await prisma.appCustomer.findFirst({
-    where: {
-      OR: [
-        { phoneNormalized },
-        { phone: phoneRaw },
-        { phone: { contains: phoneNormalized.slice(-9) } },
-      ],
-      status: "ACTIVE",
-    },
-    select: {
-      id: true,
-      fullName: true,
-      phone: true,
-      phoneNormalized: true,
-      customerCode: true,
-      segment: true,
-      pointsBalance: true,
-      vipPlanLabel: true,
-      vipExpiresAt: true,
-    },
-  });
+  const customerSelect = {
+    id: true,
+    fullName: true,
+    phone: true,
+    phoneNormalized: true,
+    customerCode: true,
+    segment: true,
+    pointsBalance: true,
+    vipPlanLabel: true,
+    vipExpiresAt: true,
+  } as const;
+
+  const customer = customerId
+    ? await prisma.appCustomer.findFirst({
+        where: { id: customerId, status: "ACTIVE" },
+        select: customerSelect,
+      })
+    : await prisma.appCustomer.findFirst({
+        where: {
+          OR: [
+            { phoneNormalized },
+            { phone: phoneRaw },
+            { phone: { contains: phoneNormalized.slice(-9) } },
+          ],
+          status: "ACTIVE",
+        },
+        select: customerSelect,
+      });
   if (!customer) {
     return NextResponse.json(
       { error: "Không tìm thấy khách với SĐT này." },
@@ -123,17 +134,19 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const claimable = vouchersClaimableAtZone(zone);
-  const claimableIds = new Set(claimable.map((v) => v.id));
-
-  const rows = await prisma.appCollectedOffer.findMany({
-    where: {
-      customerId: customer.id,
-      status: "COLLECTED",
-      offerId: { in: [...claimableIds] },
-    },
-    orderBy: { collectedAt: "desc" },
-  });
+  const claimable = vouchersUsableAtZone(zone);
+  const claimableIds = claimable.map((v) => v.id);
+  const rows =
+    claimableIds.length === 0
+      ? []
+      : await prisma.appCollectedOffer.findMany({
+          where: {
+            customerId: customer.id,
+            status: "COLLECTED",
+            offerId: { in: claimableIds },
+          },
+          orderBy: { collectedAt: "desc" },
+        });
 
   const wallet = rows.map((r) => {
     const meta = getDeskHhgVoucher(r.offerId);

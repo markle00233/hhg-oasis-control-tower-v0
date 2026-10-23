@@ -5,6 +5,126 @@ import {
   REDEEM_TIER_SWIM,
 } from "@/lib/points-redeem";
 
+function formatVnd(n: number) {
+  return `${new Intl.NumberFormat("vi-VN").format(n)}đ`;
+}
+
+/** Số ly cùng một món đổi điểm. Mỗi ly = 50 điểm. */
+export function DrinkPointsRedeem({
+  pointsBalance,
+  orderQty,
+  redeemQty,
+  maxQty,
+  unitPriceVnd,
+  onChange,
+}: {
+  pointsBalance: number;
+  orderQty: number;
+  redeemQty: number;
+  maxQty: number;
+  unitPriceVnd: number;
+  onChange: (qty: number) => void;
+}) {
+  const capped = redeemQty > 0 && redeemQty >= maxQty && maxQty < orderQty;
+  const hint =
+    redeemQty > 0
+      ? `${redeemQty} ly · ${redeemQty * REDEEM_TIER_DRINK} điểm · −${formatVnd(redeemQty * unitPriceVnd)}${capped ? " · hết điểm" : ""}`
+      : pointsBalance < REDEEM_TIER_DRINK
+        ? `Cần ${REDEEM_TIER_DRINK} điểm · đang có ${pointsBalance}`
+        : maxQty < 1
+          ? "Không đủ điểm để đổi thêm"
+          : "50 điểm mỗi ly";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-bold text-oasis-ink">Đổi 50 điểm / ly</p>
+        <p
+          className={`text-[11px] ${redeemQty > 0 ? "font-semibold text-amber-800" : "text-oasis-mute"}`}
+        >
+          {hint}
+        </p>
+      </div>
+      <button
+        type="button"
+        className="grid h-9 w-9 place-items-center rounded-xl bg-oasis-sand font-bold disabled:opacity-40"
+        onClick={() => onChange(redeemQty - 1)}
+        disabled={redeemQty <= 0}
+        aria-label="Bớt ly đổi điểm"
+      >
+        −
+      </button>
+      <span className="w-6 text-center font-bold">{redeemQty}</span>
+      <button
+        type="button"
+        className="grid h-9 w-9 place-items-center rounded-xl bg-oasis-deep font-bold text-oasis-sand disabled:opacity-40"
+        onClick={() => onChange(redeemQty + 1)}
+        disabled={redeemQty >= maxQty}
+        aria-label="Thêm ly đổi điểm"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+/** Số vé cùng một loại đổi điểm. Mỗi vé = 100 điểm. */
+export function TicketPointsRedeem({
+  pointsBalance,
+  orderQty,
+  redeemQty,
+  maxQty,
+  unitPriceVnd,
+  onChange,
+}: {
+  pointsBalance: number;
+  orderQty: number;
+  redeemQty: number;
+  maxQty: number;
+  unitPriceVnd: number;
+  onChange: (qty: number) => void;
+}) {
+  const capped = redeemQty > 0 && redeemQty >= maxQty && maxQty < orderQty;
+  const hint =
+    redeemQty > 0
+      ? `${redeemQty} vé · ${redeemQty * REDEEM_TIER_SWIM} điểm · −${formatVnd(redeemQty * unitPriceVnd)}${capped ? " · hết điểm" : ""}`
+      : pointsBalance < REDEEM_TIER_SWIM
+        ? `Cần ${REDEEM_TIER_SWIM} điểm · đang có ${pointsBalance}`
+        : maxQty < 1
+          ? "Không đủ điểm để đổi thêm"
+          : "100 điểm mỗi vé";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-bold text-oasis-ink">Đổi 100 điểm / vé</p>
+        <p
+          className={`text-[11px] ${redeemQty > 0 ? "font-semibold text-sky-900" : "text-oasis-mute"}`}
+        >
+          {hint}
+        </p>
+      </div>
+      <button
+        type="button"
+        className="grid h-9 w-9 place-items-center rounded-xl bg-oasis-sand font-bold disabled:opacity-40"
+        onClick={() => onChange(redeemQty - 1)}
+        disabled={redeemQty <= 0}
+        aria-label="Bớt vé đổi điểm"
+      >
+        −
+      </button>
+      <span className="w-6 text-center font-bold">{redeemQty}</span>
+      <button
+        type="button"
+        className="grid h-9 w-9 place-items-center rounded-xl bg-oasis-deep font-bold text-oasis-sand disabled:opacity-40"
+        onClick={() => onChange(redeemQty + 1)}
+        disabled={redeemQty >= maxQty}
+        aria-label="Thêm vé đổi điểm"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
 /** Nút đổi điểm cạnh voucher — chọn 50 / 100 rồi gửi QR cho NV xác nhận. */
 export function PointsRedeemControl({
   pointsBalance,

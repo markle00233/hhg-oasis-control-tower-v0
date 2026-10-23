@@ -1,4 +1,9 @@
 import { prisma } from "./prisma";
+import {
+  customerCanCancelOrder,
+  isFinalizedOrderStatus,
+  isHistoryOrderStatus,
+} from "./cancel-order";
 
 /** UI/read model — source of truth remains Booking / Order / Session / SERVICE_USE. */
 export type ServiceCardViewModel = {
@@ -30,8 +35,10 @@ export type ServiceCardViewModel = {
   /** Voucher / đổi điểm */
   promoLabel?: string | null;
   totalLabel?: string | null;
-  /** Khách được huỷ đơn Mía Ơi / Olympic đã xác nhận trong hôm nay. */
+  /** Khách huỷ được khi đơn chưa được NV xác nhận (PENDING/SUBMITTED, hôm nay). */
   canCancel?: boolean;
+  /** Epoch ms for timeline sort. */
+  sortAt?: number;
 };
 
 const ZONE_ACCENT: Record<string, string> = {
@@ -67,7 +74,17 @@ function hm(d: Date) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function dateLabel(d: Date) {
+function calendarDate(d: Date) {
+  return d.toLocaleDateString("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function dateLabel(d: Date, absolute = false) {
+  if (absolute) return calendarDate(d);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const that = new Date(d);
@@ -76,17 +93,17 @@ function dateLabel(d: Date) {
   if (diff === 0) return "Hôm nay";
   if (diff === 1) return "Ngày mai";
   if (diff === -1) return "Hôm qua";
-  return d.toLocaleDateString("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  return calendarDate(d);
 }
 
 function bookingStatusLabel(status: string, zone?: string): string {
   if (zone === "LONG_NUONG") {
     if (status === "PENDING") return "Chờ gọi xác nhận";
     if (status === "CONFIRMED") return "Đã gọi xác nhận";
+    if (status === "IN_SERVICE" || status === "CHECKED_IN" || status === "ARRIVED") {
+      return "Đang dùng";
+    }
+    if (status === "COMPLETED") return "Đã dùng";
   }
   switch (status) {
     case "PENDING":
@@ -114,12 +131,10 @@ function orderStatusLabel(status: string): string {
     case "PENDING":
     case "SUBMITTED":
       return "Chờ nhận";
-    case "ACCEPTED":
-      return "NV đã xác nhận";
     case "PREPARING":
       return "Đang làm";
+    case "ACCEPTED":
     case "READY":
-      return "Sẵn sàng";
     case "SERVED":
     case "DONE":
     case "CONFIRMED":
@@ -134,15 +149,32 @@ function orderStatusLabel(status: string): string {
 function orderStatusTone(
   status: string
 ): "ok" | "warn" | "bad" | "mute" {
-  if (["CANCELLED"].includes(status)) return "bad";
-  if (["SERVED", "DONE", "CONFIRMED", "ACCEPTED", "READY"].includes(status))
-    return "ok";
+  if (status === "CANCELLED") return "bad";
+  if (isFinalizedOrderStatus(status)) return "ok";
   if (["PENDING", "SUBMITTED", "PREPARING"].includes(status)) return "warn";
   return "mute";
 }
 
+function spaVisitDone(note?: string | null) {
+  return (note || "").trim() === "Đã dùng";
+}
+
+function spaZone(zoneCode?: string) {
+  const z = (zoneCode || "").toUpperCase();
+  return z === "SPA" || z === "SAUNA";
+}
+
+function visitInUseZone(zoneCode?: string) {
+  const z = (zoneCode || "").toUpperCase();
+  return spaZone(z) || z === "LONG_NUONG";
+}
+
 /** Trạng thái yêu cầu QR dịch vụ: tạo mã → duyệt → NV xác nhận / từ chối. */
-function cartStatusLabel(status: string, zoneCode?: string): string {
+function cartStatusLabel(
+  status: string,
+  zoneCode?: string,
+  adminNote?: string | null
+): string {
   const z = (zoneCode || "").toUpperCase();
   switch (status) {
     case "PENDING_APPROVAL":
@@ -152,6 +184,8 @@ function cartStatusLabel(status: string, zoneCode?: string): string {
         ? "Đã duyệt · chờ NV xác nhận thanh toán"
         : "Đã duyệt · chờ NV quét / xác nhận";
     case "USED":
+      if (visitInUseZone(z) && !spaVisitDone(adminNote)) return "Đang dùng";
+      if (visitInUseZone(z)) return "Đã dùng";
       return z === "MIA_OI"
         ? "NV đã xác nhận TT · hoàn tất"
         : "NV đã xác nhận · hoàn tất";
@@ -228,8 +262,15 @@ function cartTokenForBooking(
   return null;
 }
 
-function cartBucket(status: string): "active" | "upcoming" | "history" {
+function cartBucket(
+  status: string,
+  zoneCode?: string,
+  adminNote?: string | null
+): "active" | "upcoming" | "history" {
   if (status === "PENDING_APPROVAL" || status === "OPEN") return "active";
+  if (status === "USED" && visitInUseZone(zoneCode) && !spaVisitDone(adminNote)) {
+    return "active";
+  }
   return "history";
 }
 
@@ -264,6 +305,7 @@ function parseCartPromoLines(items: unknown): {
   const itemLines: string[] = [];
   let hasVoucher = false;
   let pointsTier: number | null = null;
+  let pointsCost = 0;
   for (const row of items) {
     if (!row || typeof row !== "object") continue;
     const r = row as {
@@ -279,7 +321,11 @@ function parseCartPromoLines(items: unknown): {
     }
     if (id.startsWith("points-redeem-")) {
       const t = Math.round(Number(id.replace("points-redeem-", "")) || 0);
-      if (t === 50 || t === 100) pointsTier = t;
+      if (t === 50 || t === 100) {
+        pointsTier = t;
+        const units = Math.max(1, Math.round(Number(r.qty) || 1));
+        pointsCost = t * units;
+      }
       continue;
     }
     if (!r.nameVi) continue;
@@ -293,7 +339,7 @@ function parseCartPromoLines(items: unknown): {
   }
   const parts: string[] = [];
   if (hasVoucher) parts.push("Có voucher");
-  if (pointsTier) parts.push(`Đổi ${pointsTier} điểm`);
+  if (pointsTier) parts.push(`Đổi ${pointsCost} điểm`);
   return {
     itemLines,
     promoLabel: parts.length ? parts.join(" · ") : null,
@@ -328,14 +374,18 @@ export async function buildHomeCardSummary(customerId: string) {
   return { active, upcoming };
 }
 
-/** Activity timeline buckets. */
+/** Activity timeline buckets. History is newest → oldest. */
 export async function buildActivityCards(customerId: string) {
   const now = new Date();
   const cards = await collectCards(customerId, now, { historyLimit: 40 });
+  const oldestFirst = (a: ServiceCardViewModel, b: ServiceCardViewModel) =>
+    (a.sortAt ?? 0) - (b.sortAt ?? 0);
+  const newestFirst = (a: ServiceCardViewModel, b: ServiceCardViewModel) =>
+    (b.sortAt ?? 0) - (a.sortAt ?? 0);
   return {
-    active: cards.filter((c) => c.bucket === "active"),
-    upcoming: cards.filter((c) => c.bucket === "upcoming"),
-    history: cards.filter((c) => c.bucket === "history"),
+    active: cards.filter((c) => c.bucket === "active").sort(oldestFirst),
+    upcoming: cards.filter((c) => c.bucket === "upcoming").sort(oldestFirst),
+    history: cards.filter((c) => c.bucket === "history").sort(newestFirst),
   };
 }
 
@@ -442,7 +492,7 @@ async function collectCards(
                   "NO_SHOW",
                   "EXPIRED",
                 ]
-              : ["PENDING_APPROVAL", "OPEN"],
+              : ["PENDING_APPROVAL", "OPEN", "USED"],
         },
       },
       orderBy: { createdAt: "desc" },
@@ -499,7 +549,7 @@ async function collectCards(
       resourceName: s.resource.name,
       partySize: null,
       status: "IN_SERVICE",
-      statusLabel: "Đang sử dụng",
+      statusLabel: zone === "LONG_NUONG" ? "Đang dùng" : "Đang sử dụng",
       statusTone: "ok",
       accent: accentFor(zone),
       href: s.bookingId
@@ -511,6 +561,7 @@ async function collectCards(
       bucket: "active",
       bookingCode: s.booking?.bookingCode || null,
       detailLines: s.resource.name ? [`Tài nguyên: ${s.resource.name}`] : [],
+      sortAt: s.startAt.getTime(),
     });
   }
 
@@ -539,7 +590,7 @@ async function collectCards(
       subtitle:
         resourceName ||
         (zone === "LONG_NUONG" ? `${b.partySize} khách` : b.bookingCode),
-      dateLabel: dateLabel(b.startAt),
+      dateLabel: dateLabel(b.startAt, bucket === "history"),
       timeLabel: `${hm(b.startAt)} – ${hm(b.endAt)}`,
       resourceName,
       partySize: b.partySize,
@@ -567,14 +618,13 @@ async function collectCards(
       referenceId: b.id,
       bucket,
       bookingCode: b.bookingCode,
+      sortAt: b.startAt.getTime(),
     });
   }
 
   for (const o of openOrders) {
     const zone = o.service?.serviceCode || "MIA_OI";
-    const done = ["SERVED", "DONE", "CONFIRMED", "CANCELLED"].includes(
-      o.status
-    );
+    const done = isHistoryOrderStatus(o.status);
     if (opts.historyLimit === 0 && done) continue;
     const detailLines = (o.items || []).map(
       (it) =>
@@ -600,7 +650,7 @@ async function collectCards(
       zoneName: o.service?.serviceName || "Mía Ơi",
       title: o.service?.serviceName || "Mía Ơi",
       subtitle: formatVnd(o.totalVnd),
-      dateLabel: dateLabel(o.createdAt),
+      dateLabel: dateLabel(o.createdAt, done),
       timeLabel: hm(o.createdAt),
       resourceName: null,
       partySize: null,
@@ -616,10 +666,13 @@ async function collectCards(
       detailLines,
       promoLabel: promoParts.length ? promoParts.join(" · ") : null,
       totalLabel: formatVnd(o.totalVnd),
-      canCancel:
-        o.status !== "CANCELLED" &&
-        ["MIA_OI", "OLYMPIC_POOL", "OLYMPIC"].includes(zone) &&
-        vnDayKey(o.createdAt) === vnDayKey(now),
+      canCancel: customerCanCancelOrder({
+        status: o.status,
+        zone,
+        createdAt: o.createdAt,
+        now,
+      }),
+      sortAt: o.createdAt.getTime(),
     });
   }
 
@@ -664,7 +717,7 @@ async function collectCards(
     const promo = parseCartPromoLines(cart.items);
     const bill =
       promo.itemLines.join(", ") || formatVnd(cart.totalVnd);
-    const bucket = cartBucket(cart.status);
+    const bucket = cartBucket(cart.status, zone, cart.adminNote);
     if (opts.historyLimit === 0 && bucket === "history") continue;
     const detailLines = [...promo.itemLines];
     if (cart.adminNote && cart.status === "REJECTED") {
@@ -677,12 +730,12 @@ async function collectCards(
       zoneName: cart.zoneName || zone,
       title: cart.zoneName || zone,
       subtitle: bill,
-      dateLabel: dateLabel(cart.createdAt),
+      dateLabel: dateLabel(cart.createdAt, bucket === "history"),
       timeLabel: hm(cart.createdAt),
       resourceName: null,
       partySize: null,
       status: cart.status,
-      statusLabel: cartStatusLabel(cart.status, zone),
+      statusLabel: cartStatusLabel(cart.status, zone, cart.adminNote),
       statusTone: cartStatusTone(cart.status),
       accent: accentFor(zone),
       href:
@@ -696,6 +749,7 @@ async function collectCards(
       detailLines,
       promoLabel: promo.promoLabel,
       totalLabel: formatVnd(cart.totalVnd),
+      sortAt: cart.createdAt.getTime(),
     });
   }
 
@@ -726,7 +780,7 @@ async function collectCards(
       subtitle:
         detailLines[0] ||
         (totalVnd != null ? formatVnd(totalVnd) : "Check-in"),
-      dateLabel: dateLabel(e.createdAt),
+      dateLabel: dateLabel(e.createdAt, true),
       timeLabel: hm(e.createdAt),
       resourceName: null,
       partySize: null,
@@ -751,6 +805,7 @@ async function collectCards(
       bucket: "history",
       detailLines,
       totalLabel: totalVnd != null ? formatVnd(totalVnd) : null,
+      sortAt: e.createdAt.getTime(),
     });
   }
 
@@ -758,7 +813,7 @@ async function collectCards(
   cards.sort((a, b) => {
     const br = rank[a.bucket] - rank[b.bucket];
     if (br !== 0) return br;
-    return a.dateLabel.localeCompare(b.dateLabel);
+    return (a.sortAt ?? 0) - (b.sortAt ?? 0);
   });
 
   return cards;

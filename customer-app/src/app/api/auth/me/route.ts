@@ -62,6 +62,15 @@ export async function GET() {
     ? packageIdFromTier(membershipTier)
     : null;
 
+  const { isSameDayMembershipEligible } = await import(
+    "@/lib/same-day-membership"
+  );
+  const sameDayMembershipDiscount = vip
+    ? false
+    : await isSameDayMembershipEligible(prisma, {
+        id: customer.id,
+      });
+
   return NextResponse.json({
     authenticated: true,
     customer: {
@@ -86,6 +95,8 @@ export async function GET() {
       membershipPackageId,
       /** Còn hạn gói → khoá upgrade / downgrade */
       membershipLocked: vip,
+      /** −10% gói tháng nếu đã có đơn vé bơi hôm nay */
+      sameDayMembershipDiscount,
     },
   });
 }

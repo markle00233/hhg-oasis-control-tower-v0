@@ -11,7 +11,10 @@ import {
 } from "@/components/VoucherPicker";
 import { PointsBalanceBar } from "@/components/PointsBalanceBar";
 import { SwimLessonHome } from "@/components/SwimLessonHome";
-import { PointsRedeemControl } from "@/components/PointsRedeemControl";
+import {
+  PointsRedeemControl,
+  TicketPointsRedeem,
+} from "@/components/PointsRedeemControl";
 import {
   applyOffersDiscount,
   HOME_SERVICES,
@@ -34,11 +37,16 @@ import {
   isSwimTicketId,
   REDEEM_DRINK_MAX_VND,
 } from "@/lib/points-redeem";
+import {
+  formatMembershipPayLabel,
+  sameDayMembershipDiscountVnd,
+  sameDayMembershipPriceVnd,
+} from "@/lib/same-day-membership";
 
 const META: Record<string, { title: string; body: string; accent: string }> = {
   OLYMPIC_POOL: {
     title: "Hồ Olympic",
-    body: "Vé lẻ · Gói tháng (+ voucher HHG) · Phụ kiện (từ 02 món −10%). Tích điểm: 10K trước giảm = 5 điểm.",
+    body: "Vé lẻ · Gói tháng (+ voucher HHG, −10% nếu đăng ký cùng ngày với đơn bơi) · Phụ kiện (từ 02 món −10%). Tích điểm: 10K trước giảm = 1 điểm.",
     accent: "#1e3a8a",
   },
   GYM: {
@@ -134,6 +142,10 @@ function PackageCard({
   canRedeem50,
   canRedeem100,
   onRedeemChange,
+  sameDaySaleVnd,
+  ticketRedeemQty,
+  ticketRedeemMax,
+  onTicketRedeem,
 }: {
   p: ServicePackage;
   selected: boolean;
@@ -150,6 +162,10 @@ function PackageCard({
   canRedeem50?: boolean;
   canRedeem100?: boolean;
   onRedeemChange?: (tier: 50 | 100 | null) => void;
+  sameDaySaleVnd?: number | null;
+  ticketRedeemQty?: number;
+  ticketRedeemMax?: number;
+  onTicketRedeem?: (qty: number) => void;
 }) {
   return (
     <div
@@ -189,8 +205,17 @@ function PackageCard({
                   <p className="text-xs text-oasis-mute">{p.nameEn}</p>
                 ) : null}
               </div>
-              <p className="shrink-0 font-mono text-lg font-bold text-oasis-moss">
-                {formatPkgPriceShort(p)}
+              <p className="shrink-0 text-right font-mono text-lg font-bold text-oasis-moss">
+                {sameDaySaleVnd != null && sameDaySaleVnd < p.priceVnd ? (
+                  <>
+                    <span className="mr-1 text-sm font-medium text-oasis-mute line-through">
+                      {formatPkgPriceShort(p)}
+                    </span>
+                    {formatMembershipPayLabel(sameDaySaleVnd)}
+                  </>
+                ) : (
+                  formatPkgPriceShort(p)
+                )}
               </p>
             </div>
             {p.durationMin ? (
@@ -213,7 +238,7 @@ function PackageCard({
           </div>
         </div>
       </button>
-      {selected && (onOpenVoucher || showQty || onRedeemChange) ? (
+      {selected && (onOpenVoucher || showQty || onRedeemChange || onTicketRedeem) ? (
         <div className="space-y-2 border-t border-oasis-line/50 px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
           {onOpenVoucher ? (
@@ -255,6 +280,16 @@ function PackageCard({
               canRedeem50={!!canRedeem50}
               canRedeem100={!!canRedeem100}
               onChange={onRedeemChange}
+            />
+          ) : null}
+          {onTicketRedeem ? (
+            <TicketPointsRedeem
+              pointsBalance={pointsBalance ?? 0}
+              orderQty={qty}
+              redeemQty={ticketRedeemQty ?? 0}
+              maxQty={ticketRedeemMax ?? 0}
+              unitPriceVnd={p.priceVnd}
+              onChange={onTicketRedeem}
             />
           ) : null}
         </div>
@@ -313,10 +348,12 @@ export default function ServiceInfoPage({
   const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
   const [pointsBalance, setPointsBalance] = useState(0);
   const [redeemTier, setRedeemTier] = useState<50 | 100 | null>(null);
+  const [ticketRedeem, setTicketRedeem] = useState<Record<string, number>>({});
   const [membershipLocked, setMembershipLocked] = useState(false);
   const [membershipExpiresLabel, setMembershipExpiresLabel] = useState<
     string | null
   >(null);
+  const [sameDayMembership, setSameDayMembership] = useState(false);
   const [profile, setProfile] = useState<{
     fullName: string;
     phone: string;
@@ -339,6 +376,7 @@ export default function ServiceInfoPage({
           setPointsBalance(Number(md.customer?.pointsBalance) || 0);
           setMembershipLocked(!!md.customer?.membershipLocked || !!md.customer?.vip);
           setMembershipExpiresLabel(md.customer?.vipExpiresLabel || null);
+          setSameDayMembership(!!md.customer?.sameDayMembershipDiscount);
           const fullName = String(md.customer?.fullName || "").trim();
           const phone = String(md.customer?.phone || "").trim();
           setDraftName(fullName);
@@ -428,6 +466,19 @@ export default function ServiceInfoPage({
       ? Math.round(accessorySubtotal * 0.1)
       : 0;
 
+  const membershipSubtotal = useMemo(() => {
+    let s = 0;
+    for (const { pkg, qty } of selectedPkgs) {
+      if (/^oly-\d+m$/i.test(pkg.id)) s += pkg.priceVnd * qty;
+    }
+    return s;
+  }, [selectedPkgs]);
+
+  const membershipAutoDiscount =
+    code === "OLYMPIC_POOL" && sameDayMembership
+      ? sameDayMembershipDiscountVnd(membershipSubtotal)
+      : 0;
+
   const subtotalVnd = useMemo(() => {
     let s = 0;
     for (const { pkg, qty } of selectedPkgs) {
@@ -436,7 +487,10 @@ export default function ServiceInfoPage({
     return s;
   }, [selectedPkgs]);
 
-  const afterAccessoryVnd = Math.max(0, subtotalVnd - accessoryAutoDiscount);
+  const afterAccessoryVnd = Math.max(
+    0,
+    subtotalVnd - accessoryAutoDiscount - membershipAutoDiscount
+  );
 
   const priced = useMemo(
     () => applyOffersDiscount(afterAccessoryVnd, appliedOffers),
@@ -449,27 +503,39 @@ export default function ServiceInfoPage({
         id: pkg.id,
         priceVnd: pkg.priceVnd,
         qty,
+        redeemQty: isSwimTicketId(pkg.id) ? ticketRedeem[pkg.id] || 0 : 0,
       })),
-    [selectedPkgs]
+    [selectedPkgs, ticketRedeem]
+  );
+  const swimRedeemUnits = redeemItems.reduce(
+    (n, i) => n + (isSwimTicketId(i.id) ? i.redeemQty : 0),
+    0
   );
   const canRedeem50 =
     pointsBalance >= 50 &&
     redeemItems.some((i) => i.priceVnd > 0 && i.priceVnd <= REDEEM_DRINK_MAX_VND);
-  const canRedeem100 =
-    pointsBalance >= 100 &&
-    (code === "OLYMPIC_POOL" || code === "OLYMPIC") &&
-    redeemItems.some((i) => isSwimTicketId(i.id));
-  const redeemPreview = redeemTier
-    ? computeGuestPointsRedeem({
-        zoneCode: code,
-        tier: redeemTier,
-        items: redeemItems,
-      })
-    : null;
+  const canRedeem100 = false;
+  const redeemPreview =
+    swimRedeemUnits > 0
+      ? computeGuestPointsRedeem({
+          zoneCode: code,
+          tier: 100,
+          items: redeemItems,
+        })
+      : redeemTier
+        ? computeGuestPointsRedeem({
+            zoneCode: code,
+            tier: redeemTier,
+            items: redeemItems,
+          })
+        : null;
   const pointsDiscount = redeemPreview?.ok ? redeemPreview.discountVnd : 0;
   const totalVnd = Math.max(0, priced.totalVnd - pointsDiscount);
   const totalDiscountVnd =
-    accessoryAutoDiscount + priced.discountVnd + pointsDiscount;
+    accessoryAutoDiscount +
+    membershipAutoDiscount +
+    priced.discountVnd +
+    pointsDiscount;
 
   const voucherField = {
     appliedOffers,
@@ -504,6 +570,11 @@ export default function ServiceInfoPage({
         `Phụ kiện −10% (−${new Intl.NumberFormat("vi-VN").format(accessoryAutoDiscount)}đ)`
       );
     }
+    if (membershipAutoDiscount > 0) {
+      lines.push(
+        `Gói tháng −10% cùng ngày đơn bơi (−${new Intl.NumberFormat("vi-VN").format(membershipAutoDiscount)}đ)`
+      );
+    }
     for (const line of priced.lines) {
       if (line.discountVnd > 0) {
         lines.push(
@@ -513,9 +584,10 @@ export default function ServiceInfoPage({
         lines.push(`Voucher ${line.offer.title}`);
       }
     }
-    if (redeemTier && pointsDiscount > 0) {
+    if ((swimRedeemUnits > 0 || redeemTier) && pointsDiscount > 0) {
+      const pointCost = swimRedeemUnits > 0 ? swimRedeemUnits * 100 : redeemTier;
       lines.push(
-        `Đổi ${redeemTier} điểm −${new Intl.NumberFormat("vi-VN").format(pointsDiscount)}đ`
+        `Đổi ${pointCost} điểm −${new Intl.NumberFormat("vi-VN").format(pointsDiscount)}đ`
       );
     }
     if (totalVnd > 0 || subtotalVnd > 0) {
@@ -532,7 +604,9 @@ export default function ServiceInfoPage({
     subtotalVnd,
     priced.lines,
     accessoryAutoDiscount,
+    membershipAutoDiscount,
     redeemTier,
+    swimRedeemUnits,
     pointsDiscount,
   ]);
 
@@ -610,9 +684,19 @@ export default function ServiceInfoPage({
           qty,
           priceVnd: pkg.priceVnd,
           note: pkg.note,
+          ...(isSwimTicketId(pkg.id) && (ticketRedeem[pkg.id] || 0) > 0
+            ? { pointsRedeemQty: ticketRedeem[pkg.id] }
+            : {}),
         })),
       ];
-      if (redeemTier) {
+      if (swimRedeemUnits > 0) {
+        const check = computeGuestPointsRedeem({
+          zoneCode: code,
+          tier: 100,
+          items: redeemItems,
+        });
+        if (!check.ok) throw new Error(check.error || "Không đổi điểm được");
+      } else if (redeemTier) {
         const check = computeGuestPointsRedeem({
           zoneCode: code,
           tier: redeemTier,
@@ -630,7 +714,8 @@ export default function ServiceInfoPage({
           items,
           offerIds: appliedOffers.map((o) => o.id),
           discountVnd: accessoryAutoDiscount + priced.discountVnd,
-          pointsRedeemTier: redeemTier,
+          pointsRedeemTier: swimRedeemUnits > 0 ? 100 : redeemTier,
+          ...(swimRedeemUnits > 0 ? { pointsRedeemUnits: swimRedeemUnits } : {}),
           ...(selectedMonthly
             ? { guestFullName, guestPhone }
             : {}),
@@ -747,18 +832,49 @@ export default function ServiceInfoPage({
               <h2 className="font-display text-xl font-semibold text-oasis-ink">
                 Vé lẻ
               </h2>
-              {OLYMPIC_PACKAGES.map((p) => (
-                <PackageCard
-                  key={p.id}
-                  p={p}
-                  selected={!!selected[p.id]}
-                  qty={selected[p.id] || 1}
-                  showQty
-                  {...voucherField}
-                  onToggle={() => setSelected((s) => toggleId(s, p.id))}
-                  onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
-                />
-              ))}
+              {OLYMPIC_PACKAGES.map((p) => {
+                const orderQty = selected[p.id] || 1;
+                const otherUnits = Object.entries(ticketRedeem).reduce(
+                  (n, [id, q]) => (id === p.id ? n : n + (q || 0)),
+                  0
+                );
+                const redeemMax = Math.min(
+                  orderQty,
+                  Math.max(0, Math.floor(pointsBalance / 100) - otherUnits)
+                );
+                return (
+                  <PackageCard
+                    key={p.id}
+                    p={p}
+                    selected={!!selected[p.id]}
+                    qty={orderQty}
+                    showQty
+                    {...voucherField}
+                    canRedeem100={false}
+                    onRedeemChange={undefined}
+                    ticketRedeemQty={selected[p.id] ? ticketRedeem[p.id] || 0 : 0}
+                    ticketRedeemMax={selected[p.id] ? redeemMax : 0}
+                    onTicketRedeem={(n) =>
+                      setTicketRedeem((prev) => {
+                        const next = Math.max(0, Math.min(redeemMax, n));
+                        return { ...prev, [p.id]: next };
+                      })
+                    }
+                    onToggle={() => {
+                      setSelected((s) => toggleId(s, p.id));
+                      setTicketRedeem((prev) => ({ ...prev, [p.id]: 0 }));
+                    }}
+                    onQty={(n) => {
+                      const q = Math.max(0, Math.min(20, n));
+                      setSelected((s) => setQty(s, p.id, n));
+                      setTicketRedeem((prev) => ({
+                        ...prev,
+                        [p.id]: Math.min(prev[p.id] || 0, q),
+                      }));
+                    }}
+                  />
+                );
+              })}
             </section>
             <SwimLessonHome showBanner={false} />
             <section className="space-y-3">
@@ -772,7 +888,7 @@ export default function ServiceInfoPage({
                         ? ` đến ${membershipExpiresLabel}`
                         : ""
                     }. Hết hạn mới chọn gói mới.`
-                  : "1 gói / lần · hết hạn về khách thường mới chọn tiếp. Kèm voucher HHG (LN, Mía Ơi, Spa…)."}
+                  : "1 gói / lần · hết hạn về khách thường mới chọn tiếp. Kèm voucher HHG (LN, Mía Ơi, Spa…). Đã bơi hôm nay rồi đăng ký gói → −10%."}
               </p>
               {OLYMPIC_MONTHLY.map((p) => (
                 <PackageCard
@@ -782,6 +898,11 @@ export default function ServiceInfoPage({
                   qty={selected[p.id] || 1}
                   showQty={false}
                   disabled={membershipLocked}
+                  sameDaySaleVnd={
+                    sameDayMembership
+                      ? sameDayMembershipPriceVnd(p.priceVnd)
+                      : null
+                  }
                   {...voucherField}
                   onToggle={() => {
                     if (membershipLocked) return;

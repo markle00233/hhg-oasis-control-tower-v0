@@ -26,7 +26,7 @@ export const DESK_HHG_VOUCHERS: DeskHhgVoucher[] = [
   {
     id: "hhg-oly-mia-5",
     title: "Mía Ơi −5%",
-    subtitle: "Giảm 5% nước Mía Ơi · trong hạn gói hội viên",
+    subtitle: "Giảm 5% nước Mía Ơi · dùng 1 lần trong hạn gói",
     zoneCode: "MIA_OI",
     zoneLabel: "Mía Ơi",
     discountType: "percent",
@@ -35,7 +35,7 @@ export const DESK_HHG_VOUCHERS: DeskHhgVoucher[] = [
   {
     id: "hhg-oly-mia-10",
     title: "Mía Ơi −10%",
-    subtitle: "Giảm 10% nước Mía Ơi · trong hạn gói hội viên",
+    subtitle: "Giảm 10% nước Mía Ơi · dùng 1 lần trong hạn gói",
     zoneCode: "MIA_OI",
     zoneLabel: "Mía Ơi",
     discountType: "percent",
@@ -84,18 +84,54 @@ export function vouchersClaimableAtZone(deskZone: string): DeskHhgVoucher[] {
   return [];
 }
 
+/** Voucher áp vào bill tại quầy (Mía % / Spa / LN). */
+export function vouchersUsableAtZone(deskZone: string): DeskHhgVoucher[] {
+  const z = deskZone.toUpperCase();
+  if (z === "MIA_OI") {
+    return DESK_HHG_VOUCHERS.filter((v) => v.zoneCode === "MIA_OI");
+  }
+  if (z === "OLYMPIC_POOL" || z === "OLYMPIC") {
+    return DESK_HHG_VOUCHERS.filter((v) => v.zoneCode === "OLYMPIC_POOL");
+  }
+  return vouchersClaimableAtZone(z);
+}
+
 export function offerMatchesDeskZone(offerId: string, deskZone: string) {
   const v = getDeskHhgVoucher(offerId);
   if (!v) return false;
   const z = deskZone.toUpperCase();
   if (z === "SAUNA" || z === "SPA") return v.zoneCode === "SPA";
   if (z === "LONG_NUONG") return v.zoneCode === "LONG_NUONG";
+  if (z === "MIA_OI") return v.zoneCode === "MIA_OI";
+  if (z === "OLYMPIC_POOL" || z === "OLYMPIC") {
+    return v.zoneCode === "OLYMPIC_POOL";
+  }
   return false;
+}
+
+export function deskVoucherCut(
+  baseVnd: number,
+  v: {
+    discountType?: string;
+    discountVnd?: number;
+    discountPercent?: number;
+  } | null
+) {
+  const base = Math.max(0, Math.round(Number(baseVnd) || 0));
+  if (!v || base <= 0) return 0;
+  if (v.discountType === "amount") {
+    return Math.min(base, Math.max(0, Math.round(Number(v.discountVnd) || 0)));
+  }
+  if (v.discountType === "percent") {
+    const p = Math.min(100, Math.max(0, Number(v.discountPercent) || 0));
+    return Math.round((base * p) / 100);
+  }
+  return 0;
 }
 
 /**
  * Số lần kèm theo từng gói tháng.
- * `null` = không giới hạn trong hạn gói (vd Mía %).
+ * `null` = không giới hạn trong hạn gói.
  */
 export function qtyForOlympicVoucher(
   packageId: string,
@@ -104,22 +140,22 @@ export function qtyForOlympicVoucher(
   const map: Record<string, Record<string, number | null>> = {
     "oly-1m": {
       "hhg-oly-spa-goi": 1,
-      "hhg-oly-mia-5": null,
+      "hhg-oly-mia-5": 1,
     },
     "oly-3m": {
       "hhg-oly-spa-massage": 1,
       "hhg-oly-ln-100k": 1,
-      "hhg-oly-mia-5": null,
+      "hhg-oly-mia-5": 1,
     },
     "oly-6m": {
       "hhg-oly-spa-massage": 3,
       "hhg-oly-ln-100k": 3,
-      "hhg-oly-mia-10": null,
+      "hhg-oly-mia-10": 1,
     },
     "oly-12m": {
       "hhg-oly-spa-massage": 8,
       "hhg-oly-ln-100k": 8,
-      "hhg-oly-mia-10": null,
+      "hhg-oly-mia-10": 1,
     },
   };
   const row = map[packageId];
@@ -146,6 +182,13 @@ export function isLimitedMembershipVoucher(offerId: string) {
   return (
     offerId === "hhg-oly-spa-goi" ||
     offerId === "hhg-oly-spa-massage" ||
-    offerId === "hhg-oly-ln-100k"
+    offerId === "hhg-oly-ln-100k" ||
+    offerId === "hhg-oly-mia-5" ||
+    offerId === "hhg-oly-mia-10"
   );
+}
+
+/** Hết lượt thì gỡ khỏi ví. Spa / Lòng Nướng vẫn hiện 0/N. */
+export function voucherLeavesWalletWhenSpent(offerId: string) {
+  return offerId === "hhg-oly-mia-5" || offerId === "hhg-oly-mia-10";
 }

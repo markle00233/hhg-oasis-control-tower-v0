@@ -1,4 +1,5 @@
 import { getPoolItem, type PoolMenuItem } from "@/lib/olympic-pool-menu";
+import { sameDayMembershipDiscountVnd } from "@/lib/same-day-membership";
 
 export type PoolCartLine = { itemId: string; qty: number };
 
@@ -19,6 +20,9 @@ export type PoolPricingResult = {
   accessoryQty: number;
   /** −10% phần phụ kiện khi ≥2 món phụ kiện */
   accessoryDiscountVnd: number;
+  membershipSubtotalVnd: number;
+  /** −10% gói tháng khi đã có đơn vé bơi cùng ngày */
+  membershipDiscountVnd: number;
   /** Giảm tay (staff), ≥0 */
   manualDiscountVnd: number;
   totalVnd: number;
@@ -27,11 +31,12 @@ export type PoolPricingResult = {
 /** Mua ≥2 phụ kiện (category phu-kien) → −10% phần phụ kiện. */
 export function computePoolPricing(
   rawLines: PoolCartLine[],
-  opts?: { manualDiscountVnd?: number }
+  opts?: { manualDiscountVnd?: number; sameDayMembership?: boolean }
 ): PoolPricingResult {
   const lines: PoolPricedLine[] = [];
   let accessorySubtotalVnd = 0;
   let accessoryQty = 0;
+  let membershipSubtotalVnd = 0;
   let subtotalVnd = 0;
 
   for (const line of rawLines) {
@@ -44,6 +49,9 @@ export function computePoolPricing(
     if (item.category === "phu-kien") {
       accessorySubtotalVnd += lineSubtotalVnd;
       accessoryQty += qty;
+    }
+    if (item.category === "goi-thang") {
+      membershipSubtotalVnd += lineSubtotalVnd;
     }
     lines.push({
       itemId: item.id,
@@ -58,10 +66,16 @@ export function computePoolPricing(
 
   const accessoryDiscountVnd =
     accessoryQty >= 2 ? Math.round(accessorySubtotalVnd * 0.1) : 0;
-  const afterAccessory = Math.max(0, subtotalVnd - accessoryDiscountVnd);
+  const membershipDiscountVnd = opts?.sameDayMembership
+    ? sameDayMembershipDiscountVnd(membershipSubtotalVnd)
+    : 0;
+  const afterPromo = Math.max(
+    0,
+    subtotalVnd - accessoryDiscountVnd - membershipDiscountVnd
+  );
   const manualRaw = Math.max(0, Math.round(Number(opts?.manualDiscountVnd) || 0));
-  const manualDiscountVnd = Math.min(manualRaw, afterAccessory);
-  const totalVnd = Math.max(0, afterAccessory - manualDiscountVnd);
+  const manualDiscountVnd = Math.min(manualRaw, afterPromo);
+  const totalVnd = Math.max(0, afterPromo - manualDiscountVnd);
 
   return {
     lines,
@@ -69,6 +83,8 @@ export function computePoolPricing(
     accessorySubtotalVnd,
     accessoryQty,
     accessoryDiscountVnd,
+    membershipSubtotalVnd,
+    membershipDiscountVnd,
     manualDiscountVnd,
     totalVnd,
   };

@@ -10,7 +10,7 @@ import {
   VoucherPickerModal,
 } from "@/components/VoucherPicker";
 import { PointsBalanceBar } from "@/components/PointsBalanceBar";
-import { PointsRedeemControl } from "@/components/PointsRedeemControl";
+import { DrinkPointsRedeem } from "@/components/PointsRedeemControl";
 import {
   applyOffersDiscount,
   type HomeOffer,
@@ -25,6 +25,7 @@ import {
 import {
   computeGuestPointsRedeem,
   REDEEM_DRINK_MAX_VND,
+  REDEEM_TIER_DRINK,
 } from "@/lib/points-redeem";
 
 type CartLine = { itemId: string; qty: number; useAltPrice?: boolean };
@@ -44,7 +45,9 @@ export default function MiaOiOrderPage() {
   const [appliedOffers, setAppliedOffers] = useState<HomeOffer[]>([]);
   const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
   const [pointsBalance, setPointsBalance] = useState(0);
-  const [redeemTier, setRedeemTier] = useState<50 | 100 | null>(null);
+  const [redeemQtyByKey, setRedeemQtyByKey] = useState<Record<string, number>>(
+    {}
+  );
   const [success, setSuccess] = useState<{
     totalVnd: number;
     lines: string[];
@@ -114,32 +117,83 @@ export default function MiaOiOrderPage() {
           l.useAltPrice && item?.priceAltVnd
             ? item.priceAltVnd
             : item?.priceVnd || 0;
-        return { id: l.itemId, priceVnd: unit, qty: l.qty };
+        const key = lineKey(l.itemId, l.useAltPrice);
+        const eligible = unit > 0 && unit <= REDEEM_DRINK_MAX_VND;
+        const redeemQty = eligible
+          ? Math.min(l.qty, redeemQtyByKey[key] || 0)
+          : 0;
+        return {
+          id: l.itemId,
+          priceVnd: unit,
+          qty: l.qty,
+          redeemQty,
+          key,
+        };
       }),
-    [lines]
+    [lines, redeemQtyByKey]
   );
-  const redeemPreview = redeemTier
-    ? computeGuestPointsRedeem({
-        zoneCode: "MIA_OI",
-        tier: redeemTier,
-        items: cartItemsForRedeem,
-      })
-    : null;
-  const pointsDiscount =
-    redeemPreview?.ok ? redeemPreview.discountVnd : 0;
+  const redeemUnits = cartItemsForRedeem.reduce((s, i) => s + i.redeemQty, 0);
+  const redeemPreview =
+    redeemUnits > 0
+      ? computeGuestPointsRedeem({
+          zoneCode: "MIA_OI",
+          tier: REDEEM_TIER_DRINK,
+          items: cartItemsForRedeem,
+        })
+      : null;
+  const pointsDiscount = redeemPreview?.ok ? redeemPreview.discountVnd : 0;
+  const pointsCost = redeemPreview?.ok ? redeemPreview.cost : 0;
   const total = Math.max(0, priced.totalVnd - pointsDiscount);
-  const canRedeem50 =
-    pointsBalance >= 50 &&
-    cartItemsForRedeem.some((i) => i.priceVnd <= REDEEM_DRINK_MAX_VND);
-  const canRedeem100 = false;
+
+  function maxRedeemFor(key: string, orderQty: number, unit: number) {
+    if (orderQty <= 0 || unit <= 0 || unit > REDEEM_DRINK_MAX_VND) return 0;
+    const others = Object.entries(redeemQtyByKey).reduce(
+      (sum, [k, n]) => (k === key ? sum : sum + (n || 0)),
+      0
+    );
+    const byPoints = Math.floor(pointsBalance / REDEEM_TIER_DRINK) - others;
+    return Math.max(0, Math.min(orderQty, byPoints));
+  }
 
   function setQty(item: MiaOiMenuItem, qty: number, useAlt = false) {
     const key = lineKey(item.id, useAlt);
-    const q = Math.max(0, Math.min(99, qty));
+    const q = Math.max(0, Math.min(20, qty));
     setCart((prev) => {
       const next = { ...prev };
       if (q <= 0) delete next[key];
       else next[key] = { itemId: item.id, qty: q, useAltPrice: useAlt };
+      return next;
+    });
+    setRedeemQtyByKey((prev) => {
+      const cur = prev[key] || 0;
+      if (q <= 0) {
+        if (!cur) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      if (cur > q) return { ...prev, [key]: q };
+      return prev;
+    });
+  }
+
+  function setRedeemQty(item: MiaOiMenuItem, qty: number, useAlt = false) {
+    const key = lineKey(item.id, useAlt);
+    const orderQty = cart[key]?.qty || 0;
+    const unit =
+      useAlt && item.priceAltVnd ? item.priceAltVnd : item.priceVnd;
+    setRedeemQtyByKey((prev) => {
+      const others = Object.entries(prev).reduce(
+        (sum, [k, n]) => (k === key ? sum : sum + (n || 0)),
+        0
+      );
+      const byPoints = Math.floor(pointsBalance / REDEEM_TIER_DRINK) - others;
+      const max = Math.max(0, Math.min(orderQty, byPoints));
+      const q = Math.max(0, Math.min(max, qty));
+      if (unit <= 0 || unit > REDEEM_DRINK_MAX_VND) return prev;
+      const next = { ...prev };
+      if (q <= 0) delete next[key];
+      else next[key] = q;
       return next;
     });
   }
@@ -159,18 +213,29 @@ export default function MiaOiOrderPage() {
           l.useAltPrice && item?.priceAltVnd
             ? item.priceAltVnd
             : item?.priceVnd || 0;
+        const key = lineKey(l.itemId, l.useAltPrice);
+        const redeemQty =
+          unit > 0 && unit <= REDEEM_DRINK_MAX_VND
+            ? Math.min(l.qty, redeemQtyByKey[key] || 0)
+            : 0;
         return {
           id: l.itemId,
           nameVi: item?.nameVi || l.itemId,
           qty: l.qty,
           priceVnd: unit,
+          ...(redeemQty > 0 ? { pointsRedeemQty: redeemQty } : {}),
         };
       });
-      if (redeemTier) {
+      if (redeemUnits > 0) {
         const check = computeGuestPointsRedeem({
           zoneCode: "MIA_OI",
-          tier: redeemTier,
-          items: cartItems,
+          tier: REDEEM_TIER_DRINK,
+          items: cartItems.map((i) => ({
+            id: i.id,
+            priceVnd: i.priceVnd,
+            qty: i.qty,
+            redeemQty: i.pointsRedeemQty || 0,
+          })),
         });
         if (!check.ok) throw new Error(check.error || "Không đổi điểm được");
       }
@@ -184,7 +249,12 @@ export default function MiaOiOrderPage() {
           items: cartItems,
           offerIds: appliedOffers.map((o) => o.id),
           discountVnd: priced.discountVnd,
-          pointsRedeemTier: redeemTier,
+          ...(redeemUnits > 0
+            ? {
+                pointsRedeemTier: REDEEM_TIER_DRINK,
+                pointsRedeemUnits: redeemUnits,
+              }
+            : {}),
         }),
       });
       const cartData = await cartRes.json();
@@ -196,7 +266,7 @@ export default function MiaOiOrderPage() {
         setPointsBalance(cartData.pointsBalance);
       }
       setCart({});
-      setRedeemTier(null);
+      setRedeemQtyByKey({});
       setSuccess({
         totalVnd: paid,
         lines: [
@@ -206,8 +276,8 @@ export default function MiaOiOrderPage() {
               ? `Voucher ${l.offer.title} −${formatVnd(l.discountVnd)}`
               : `Voucher ${l.offer.title}`
           ),
-          ...(redeemTier
-            ? [`Đổi ${redeemTier} điểm (−${formatVnd(pointsDiscount)})`]
+          ...(pointsCost > 0
+            ? [`Đổi ${pointsCost} điểm (−${formatVnd(pointsDiscount)})`]
             : []),
           `Tổng ${formatVnd(paid)}`,
         ],
@@ -236,7 +306,7 @@ export default function MiaOiOrderPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu Mía Ơi"
-          subtitle="Chờ quầy duyệt → nhận QR → nhân viên quét QR xác nhận thanh toán rồi mới làm món."
+          subtitle="Chờ quầy duyệt → nhận QR → quầy xác nhận (không gọi thêm / gọi thêm) = chốt đơn."
           detailLines={success.lines}
           cartToken={success.cartToken}
           initialStatus={success.status}
@@ -318,8 +388,9 @@ export default function MiaOiOrderPage() {
                     <span className="w-6 text-center font-bold">{q}</span>
                     <button
                       type="button"
-                      className="grid h-9 w-9 place-items-center rounded-xl bg-oasis-deep text-oasis-sand font-bold"
+                      className="grid h-9 w-9 place-items-center rounded-xl bg-oasis-deep font-bold text-oasis-sand disabled:opacity-40"
                       onClick={() => setQty(item, q + 1)}
+                      disabled={q >= 20}
                     >
                       +
                     </button>
@@ -327,23 +398,22 @@ export default function MiaOiOrderPage() {
                 </div>
                 {selected ? (
                   <div className="mt-3 space-y-2 border-t border-oasis-line/50 pt-3">
-                    <div className="flex items-center gap-2">
-                      <VoucherApplyButton
-                        appliedOffers={appliedOffers}
-                        onOpen={() => setVoucherPickerOpen(true)}
-                        onClear={() => setAppliedOffers([])}
-                      />
-                      <span className="shrink-0 text-xs font-semibold text-oasis-mute">
-                        Số lượng
-                      </span>
-                    </div>
-                    <PointsRedeemControl
-                      pointsBalance={pointsBalance}
-                      redeemTier={redeemTier}
-                      canRedeem50={canRedeem50}
-                      canRedeem100={canRedeem100}
-                      onChange={setRedeemTier}
+                    <VoucherApplyButton
+                      appliedOffers={appliedOffers}
+                      onOpen={() => setVoucherPickerOpen(true)}
+                      onClear={() => setAppliedOffers([])}
                     />
+                    {item.priceVnd > 0 &&
+                    item.priceVnd <= REDEEM_DRINK_MAX_VND ? (
+                      <DrinkPointsRedeem
+                        pointsBalance={pointsBalance}
+                        orderQty={q}
+                        redeemQty={Math.min(q, redeemQtyByKey[lineKey(item.id)] || 0)}
+                        maxQty={maxRedeemFor(lineKey(item.id), q, item.priceVnd)}
+                        unitPriceVnd={item.priceVnd}
+                        onChange={(next) => setRedeemQty(item, next)}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -363,7 +433,7 @@ export default function MiaOiOrderPage() {
               {priced.discountVnd + pointsDiscount > 0
                 ? ` (−${formatVnd(priced.discountVnd + pointsDiscount)})`
                 : ""}
-              {redeemTier ? ` · đổi ${redeemTier}đ` : ""}
+              {pointsCost > 0 ? ` · đổi ${pointsCost} điểm` : ""}
             </p>
           </div>
           <button

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
+import { isFinalizedOrderStatus } from "@/lib/order-status";
 import { prisma } from "@/lib/prisma";
 import { settlePointsOnCancel } from "@/lib/points-refund";
 
@@ -79,6 +80,13 @@ export async function PATCH(
   let pointsBalance: number | null = null;
   let pointsRefunded = 0;
   let pointsClawed = 0;
+  if (status === "CANCELLED" && isFinalizedOrderStatus(existing.status)) {
+    return NextResponse.json(
+      { error: "Đơn đã xác nhận, không huỷ được." },
+      { status: 409 }
+    );
+  }
+
   if (status === "CANCELLED" && existing.status !== "CANCELLED") {
     const events = await prisma.appServiceEvent.findMany({
       where: {

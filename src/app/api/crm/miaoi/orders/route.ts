@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
+import {
+  applyDeskRedeemUnits,
+  earnableVnd,
+  type RedeemableLine,
+} from "@/lib/desk-point-redeem";
 import { getMiaOiItem } from "@/lib/miaoi-menu";
 import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/audit";
+import { redeemPoints } from "@/lib/points";
+import {
+  consumeDeskBillVoucher,
+  deskVoucherNote,
+  quoteDeskBillVoucher,
+  voucherErrorStatus,
+} from "@/lib/voucher-redeem";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +93,12 @@ export async function POST(req: NextRequest) {
     const customerId = String(body.customerId || "").trim();
     const lines = Array.isArray(body.items) ? (body.items as CartLine[]) : [];
     const note = String(body.note || "").trim().slice(0, 300);
+    const scanEventId = String(body.scanEventId || "").trim();
+    const pointsRedeemUnits = Math.max(
+      0,
+      Math.round(Number(body.pointsRedeemUnits) || 0)
+    );
+    const voucherOfferId = String(body.voucherOfferId || "").trim();
 
     if (!customerId) {
       return NextResponse.json({ error: "Thiếu customerId." }, { status: 400 });
@@ -100,13 +118,7 @@ export async function POST(req: NextRequest) {
       where: { serviceCode: "MIA_OI" },
     });
 
-    const orderItems: {
-      itemId: string;
-      nameVi: string;
-      nameEn: string | null;
-      unitPriceVnd: number;
-      qty: number;
-    }[] = [];
+    const orderItems: RedeemableLine[] = [];
 
     let totalVnd = 0;
     for (const line of lines) {
@@ -130,17 +142,66 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Giỏ hàng không hợp lệ." }, { status: 400 });
     }
 
+    const redeemed = applyDeskRedeemUnits(
+      orderItems,
+      pointsRedeemUnits,
+      "drink"
+    );
+    if (redeemed.cost > 0 && customer.pointsBalance < redeemed.cost) {
+      return NextResponse.json(
+        {
+          error: `Không đủ điểm (cần ${redeemed.cost}, đang có ${customer.pointsBalance}).`,
+        },
+        { status: 400 }
+      );
+    }
+    totalVnd = Math.max(0, totalVnd - redeemed.discountVnd);
+    const redeemNote =
+      redeemed.cost > 0
+        ? `Sử dụng ${redeemed.cost} điểm · ${redeemed.unitsApplied} đồ uống`
+        : "";
+    let voucherNote = "";
+    let voucherQuote = { offerId: "", title: "", discountVnd: 0 };
+    if (voucherOfferId) {
+      try {
+        voucherQuote = await quoteDeskBillVoucher({
+          customerId: customer.id,
+          offerId: voucherOfferId,
+          zone: "MIA_OI",
+          baseVnd: totalVnd,
+        });
+        totalVnd = Math.max(0, totalVnd - voucherQuote.discountVnd);
+        voucherNote = deskVoucherNote(voucherQuote);
+      } catch (err) {
+        return NextResponse.json(
+          {
+            error:
+              err instanceof Error ? err.message : "Không dùng được voucher.",
+          },
+          { status: voucherErrorStatus(err) }
+        );
+      }
+    }
+
     const order = await prisma.appOrder.create({
       data: {
         customerId: customer.id,
         serviceId: service?.id || null,
-        status: "ACCEPTED",
+        status: "CONFIRMED",
         totalVnd,
-        note: note || null,
+        note: [note, redeemNote, voucherNote].filter(Boolean).join(" · ") || null,
         createdByType: "STAFF",
         createdById: gate.user.id,
         source: "ZONE_DESK",
-        items: { create: orderItems },
+        items: {
+          create: redeemed.items.map((i) => ({
+            itemId: i.itemId,
+            nameVi: i.nameVi || "",
+            nameEn: i.nameEn ?? null,
+            unitPriceVnd: i.unitPriceVnd,
+            qty: i.qty,
+          })),
+        },
       },
       include: { items: true },
     });
@@ -156,14 +217,51 @@ export async function POST(req: NextRequest) {
             orderId: order.id,
             totalVnd,
             placedBy: "desk",
-            items: orderItems.map((i) => ({
+            items: redeemed.items.map((i) => ({
               name: i.nameVi,
               qty: i.qty,
               unitPriceVnd: i.unitPriceVnd,
+              itemId: i.itemId,
+              pointsDiscountVnd: i.pointsDiscountVnd || 0,
+              pointsRedeemTier: i.pointsRedeemTier || null,
             })),
+            pointsRedeemUnits: redeemed.unitsApplied,
+            pointsRedeemCost: redeemed.cost,
           },
         },
       });
+    }
+
+    if (scanEventId) {
+      const scan = await prisma.appServiceEvent.findFirst({
+        where: { id: scanEventId, customerId: customer.id },
+      });
+      if (scan) {
+        const prev =
+          scan.metadata && typeof scan.metadata === "object"
+            ? (scan.metadata as Record<string, unknown>)
+            : {};
+        await prisma.appServiceEvent.update({
+          where: { id: scan.id },
+          data: {
+            operationalStatus: "ACKNOWLEDGED",
+            metadata: {
+              ...prev,
+              ticketVerified: true,
+              orderId: order.id,
+              totalVnd,
+              items: redeemed.items.map((i) => ({
+                name: i.nameVi,
+                qty: i.qty,
+                unitPriceVnd: i.unitPriceVnd,
+                itemId: i.itemId,
+                pointsDiscountVnd: i.pointsDiscountVnd || 0,
+                pointsRedeemTier: i.pointsRedeemTier || null,
+              })),
+            },
+          },
+        });
+      }
     }
 
     await writeAudit({
@@ -176,13 +274,37 @@ export async function POST(req: NextRequest) {
       payload: { totalVnd, source: "ZONE_DESK" },
     });
 
+    if (voucherQuote.offerId) {
+      await consumeDeskBillVoucher({
+        customerId: customer.id,
+        offerId: voucherQuote.offerId,
+        zone: "MIA_OI",
+        staffUserId: gate.user.id,
+        staffName: gate.user.displayName || gate.user.username,
+        baseVnd: totalVnd + voucherQuote.discountVnd,
+        note: voucherNote,
+      }).catch((err) => {
+        console.error("[miaoi/orders voucher]", err);
+      });
+    }
+
+    if (redeemed.cost > 0) {
+      await redeemPoints({
+        customerId: customer.id,
+        cost: redeemed.cost,
+        refType: "APP_ORDER",
+        refId: `redeem:${order.id}`,
+        note: redeemNote,
+      });
+    }
+
     const { awardPurchasePoints } = await import("@/lib/points");
     const pts = await awardPurchasePoints({
       customerId: customer.id,
       refType: "APP_ORDER",
       refId: order.id,
-      subtotalVnd: totalVnd,
-      note: `Mía Ơi desk · ${totalVnd}đ trước giảm`,
+      subtotalVnd: earnableVnd(redeemed.items),
+      note: `Mía Ơi desk · ${earnableVnd(redeemed.items)}đ phần chưa đổi điểm`,
     }).catch((err) => {
       console.error("[miaoi/orders points]", err);
       return null;

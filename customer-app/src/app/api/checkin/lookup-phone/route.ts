@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { findCustomerByPhone } from "@/lib/account";
 import { maskedIdentityLabel } from "@/lib/names";
 import { isValidPhone, normalizePhone, phoneShortId } from "@/lib/phone";
 
@@ -18,20 +18,7 @@ export async function POST(req: NextRequest) {
       );
     }
     const phoneNormalized = normalizePhone(phoneRaw);
-    const customer = await prisma.appCustomer.findFirst({
-      where: {
-        status: "ACTIVE",
-        phoneNormalized,
-      },
-      select: {
-        id: true,
-        fullName: true,
-        phone: true,
-        phoneNormalized: true,
-        phoneLast4: true,
-        shortId: true,
-      },
-    });
+    const customer = await findCustomerByPhone(phoneRaw);
 
     if (!customer) {
       return NextResponse.json({

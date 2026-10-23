@@ -30,6 +30,8 @@ export const SPA_CATEGORIES: SpaCategory[] = [
 
 const k = (n: number) => n * 1000;
 
+export const SPA_GOI_BONUS_ID = "goi-30";
+
 export const SPA_MENU: SpaMenuItem[] = [
   // 00 GIỜ VÀNG — T2–T6 · 13:00–16:00 · 199K / suất
   {
@@ -79,6 +81,15 @@ export const SPA_MENU: SpaMenuItem[] = [
   },
 
   // 01 OASIS GỘI DƯỠNG
+  {
+    id: SPA_GOI_BONUS_ID,
+    category: "goi-duong",
+    nameVi: "Gội 30'",
+    nameEn: "Complimentary 30' wash",
+    durationMin: 30,
+    priceVnd: 0,
+    note: "1 lượt tự chọn của học viên",
+  },
   {
     id: "goi-sau-the-thao",
     category: "goi-duong",
@@ -232,6 +243,7 @@ export function formatVnd(n: number) {
 }
 
 export function formatSpaPrice(item: SpaMenuItem) {
+  if (item.id === SPA_GOI_BONUS_ID) return "0đ";
   if (item.priceVnd <= 0) return "Theo gói";
   const base = Math.round(item.priceVnd / 1000);
   if (item.priceAltVnd) {

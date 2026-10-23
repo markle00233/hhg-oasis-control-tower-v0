@@ -32,11 +32,19 @@ export async function POST(req: NextRequest) {
             useAltPrice?: boolean;
           })
         : null;
+    const pointsRedeemUnits = Math.max(
+      0,
+      Math.round(Number(body.pointsRedeemUnits) || 0)
+    );
+    const voucherOfferId = String(body.voucherOfferId || "").trim();
     const result = await confirmMiaOiCartPayment({
       token,
       staffUserId: gate.user.id,
+      staffName: gate.user.displayName || gate.user.username,
       extraItems,
       pointsRedeem,
+      pointsRedeemUnits,
+      voucherOfferId,
     });
     if (!result.ok) {
       return NextResponse.json(

@@ -34,9 +34,10 @@ function mapDeskZoneToService(zone: string) {
 }
 
 /**
- * Quầy + Member / khách lẻ:
- * - Tạo AppCustomer = tài khoản My Oasis (đăng nhập bằng SĐT)
- * - Mật khẩu tạm = số điện thoại (khách đổi sau trên app)
+ * Quầy tạo đơn walk-in:
+ * - Chưa có TK → tạo AppCustomer, mật khẩu = SĐT
+ * - Luôn Khách lẻ (VIP chỉ khi khách đăng ký gói)
+ * - Mở 1 lần quét chưa xác thực để NV chọn món / vé
  */
 export async function POST(req: NextRequest) {
   try {
@@ -47,60 +48,65 @@ export async function POST(req: NextRequest) {
 
     const fullName = String(body.fullName || "").trim().slice(0, 120);
     const phoneRaw = String(body.phone || "").trim();
-    const wantSegment =
-      String(body.segment || "WALK_IN").trim().toUpperCase() === "MEMBER"
-        ? "MEMBER"
-        : "WALK_IN";
-    /** Staff có thể cấp lại mật khẩu tạm = SĐT cho tài khoản đã có */
-    const reissuePassword = body.reissuePassword === true;
-    const phoneNormalized = normalizePhone(phoneRaw);
+    const phoneNormalizedRaw = normalizePhone(phoneRaw);
     if (!fullName) {
       return NextResponse.json({ error: "Nhập tên khách." }, { status: 400 });
     }
-    if (phoneNormalized.length < 9 || phoneNormalized.length > 11) {
+    if (phoneNormalizedRaw.length < 9 || phoneNormalizedRaw.length > 11) {
       return NextResponse.json(
         { error: "SĐT không hợp lệ (9–11 số)." },
         { status: 400 }
       );
     }
-    const phoneDisplay = phoneNormalized.startsWith("0")
-      ? phoneNormalized
-      : `0${phoneNormalized}`;
+    const phoneDisplay = phoneNormalizedRaw.startsWith("0")
+      ? phoneNormalizedRaw
+      : `0${phoneNormalizedRaw}`;
+    const phoneNormalized = phoneDisplay;
+    const phoneKeys = Array.from(
+      new Set(
+        [phoneNormalizedRaw, phoneDisplay, phoneNormalizedRaw.replace(/^0+/, "")]
+          .map((p) => p.trim())
+          .filter((p) => p.length >= 9)
+      )
+    );
     const shortId = phoneShortId(phoneDisplay);
-    /** Mật khẩu tạm ≥8 ký tự (hashPassword) — dùng SĐT đầy đủ */
-    const temporaryPassword =
+    /** Mật khẩu đăng nhập app = số điện thoại (≥8 ký tự). */
+    const password =
       phoneDisplay.length >= 8
         ? phoneDisplay
         : `Oasis${phoneDisplay}`.padEnd(8, "0");
+    const passwordHash = await hashPassword(password);
 
     let customer = await prisma.appCustomer.findFirst({
-      where: { phoneNormalized },
+      where: {
+        OR: [
+          { phoneNormalized: { in: phoneKeys } },
+          { phone: { in: phoneKeys } },
+          { username: { in: phoneKeys } },
+        ],
+      },
+      orderBy: { createdAt: "asc" },
     });
     let created = false;
-    let issuedPassword: string | null = null;
 
     if (customer) {
+      const keepVip =
+        String(customer.segment || "").toUpperCase() === "VIP" &&
+        (!customer.vipExpiresAt ||
+          customer.vipExpiresAt.getTime() > Date.now());
       const patch: Prisma.AppCustomerUpdateInput = {
-        fullName,
-        phone: phoneDisplay,
-        phoneLast4: shortId,
-        shortId,
+        fullName: customer.fullName || fullName,
         status: "ACTIVE",
-        segment: customer.segment === "VIP" ? "VIP" : wantSegment,
+        segment: keepVip ? "VIP" : customer.segment,
         ...(!customer.identityToken
           ? { identityToken: `oq_${randomBytes(18).toString("base64url")}` }
           : {}),
       };
-      if (reissuePassword) {
-        patch.passwordHash = await hashPassword(temporaryPassword);
-        issuedPassword = temporaryPassword;
-      }
       customer = await prisma.appCustomer.update({
         where: { id: customer.id },
         data: patch,
       });
     } else {
-      const passwordHash = await hashPassword(temporaryPassword);
       for (let i = 0; i < 6; i++) {
         const customerCode = generateCustomerCode();
         try {
@@ -116,14 +122,13 @@ export async function POST(req: NextRequest) {
               phoneNormalized,
               phoneLast4: shortId,
               shortId,
-              segment: wantSegment,
+              segment: "WALK_IN",
               identityToken: `oq_${randomBytes(18).toString("base64url")}`,
               adminConfirmedAt: new Date(),
-              adminNote: `Tạo tại quầy ${zone} · tài khoản app`,
+              adminNote: `Tạo đơn walk-in tại quầy ${zone}`,
             },
           });
           created = true;
-          issuedPassword = temporaryPassword;
           break;
         } catch (e) {
           if (
@@ -155,48 +160,30 @@ export async function POST(req: NextRequest) {
 
     let scanEventId: string | null = null;
     if (service) {
-      const recent = await prisma.appServiceEvent.findFirst({
-        where: {
+      const scan = await prisma.appServiceEvent.create({
+        data: {
           customerId: customer.id,
           serviceId: service.id,
           eventType: "SERVICE_USE",
-          createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
-        },
-        orderBy: { createdAt: "desc" },
-      });
-      if (recent) {
-        scanEventId = recent.id;
-      } else {
-        const scan = await prisma.appServiceEvent.create({
-          data: {
-            customerId: customer.id,
-            serviceId: service.id,
-            eventType: "SERVICE_USE",
-            operationalStatus: "ACKNOWLEDGED",
-            metadata: {
-              source: "desk_create_guest",
-              createdByStaffId: gate.user.id,
-            },
+          operationalStatus: "NEW",
+          metadata: {
+            source: "desk_walkin_order",
+            createdByStaffId: gate.user.id,
           },
-        });
-        scanEventId = scan.id;
-      }
+        },
+      });
+      scanEventId = scan.id;
     }
 
-    const segment =
-      customer.segment === "MEMBER" || customer.segment === "VIP"
-        ? customer.segment
-        : "WALK_IN";
+    const keepVip =
+      String(customer.segment || "").toUpperCase() === "VIP" &&
+      (!customer.vipExpiresAt || customer.vipExpiresAt.getTime() > Date.now());
+    const segment = keepVip ? "VIP" : "WALK_IN";
 
     return NextResponse.json({
       ok: true,
       created,
       scanEventId,
-      /** Chỉ trả khi vừa cấp — NV đọc cho khách đăng nhập app */
-      temporaryPassword: issuedPassword,
-      loginHint: issuedPassword
-        ? `Đăng nhập app: SĐT ${phoneDisplay} · mật khẩu tạm = số điện thoại`
-        : `SĐT đã có tài khoản — khách đăng nhập app bằng SĐT + mật khẩu đã cấp`,
       customer: {
         id: customer.id,
         customerCode: customer.customerCode,
@@ -205,18 +192,11 @@ export async function POST(req: NextRequest) {
         phone: customer.phone,
         shortId: customer.shortId || customer.phoneLast4,
         segment,
-        segmentLabel:
-          segment === "VIP"
-            ? "VIP"
-            : segment === "MEMBER"
-              ? "Member"
-              : "Khách lẻ",
+        segmentLabel: segment === "VIP" ? "VIP" : "Khách lẻ",
       },
       message: created
-        ? "Đã tạo tài khoản app + hiện trên dashboard khu."
-        : issuedPassword
-          ? "Đã cấp lại mật khẩu tạm (= SĐT) và mở khách."
-          : "SĐT đã có tài khoản — cập nhật tên và mở khách.",
+        ? "Đã tạo khách lẻ. Chọn món / vé rồi xác thực đơn."
+        : "Đã mở khách. Chọn món / vé rồi xác thực đơn.",
     });
   } catch (e) {
     console.error("[desk/create-guest]", e);

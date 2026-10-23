@@ -8,6 +8,8 @@ export type CartItemInput = {
   qty: number;
   priceVnd: number;
   note?: string;
+  /** Số ly của dòng này đã đổi điểm (50 điểm / ly). */
+  pointsRedeemQty?: number;
 };
 
 /** PENDING_APPROVAL → desk duyệt → OPEN → USED | REJECTED | NO_SHOW | CANCELLED */
@@ -38,16 +40,26 @@ export async function createServiceCart(opts: {
   offerIds?: string[];
   /** 50 | 100 — đổi điểm ngay khi tạo QR (trừ điểm sau khi tạo cart) */
   pointsRedeemTier?: number | null;
+  /** Số ly / vé đổi. 50 điểm mỗi ly. Mặc định 1. */
+  pointsRedeemUnits?: number;
   pointsRedeemDiscountVnd?: number;
 }) {
   const items = opts.items
-    .map((i) => ({
-      id: String(i.id || "").trim(),
-      nameVi: String(i.nameVi || "").trim().slice(0, 200),
-      qty: Math.min(Math.max(Number(i.qty) || 1, 1), 20),
-      priceVnd: Math.max(0, Math.round(Number(i.priceVnd) || 0)),
-      note: i.note ? String(i.note).slice(0, 200) : undefined,
-    }))
+    .map((i) => {
+      const qty = Math.min(Math.max(Number(i.qty) || 1, 1), 20);
+      const pointsRedeemQty = Math.min(
+        qty,
+        Math.max(0, Math.round(Number(i.pointsRedeemQty) || 0))
+      );
+      return {
+        id: String(i.id || "").trim(),
+        nameVi: String(i.nameVi || "").trim().slice(0, 200),
+        qty,
+        priceVnd: Math.max(0, Math.round(Number(i.priceVnd) || 0)),
+        note: i.note ? String(i.note).slice(0, 200) : undefined,
+        ...(pointsRedeemQty > 0 ? { pointsRedeemQty } : {}),
+      };
+    })
     .filter((i) => i.id && i.nameVi);
 
   if (!items.length) {
@@ -87,6 +99,11 @@ export async function createServiceCart(opts: {
   }
 
   const redeemTier = Math.round(Number(opts.pointsRedeemTier) || 0);
+  const redeemUnits =
+    redeemTier === 50 || redeemTier === 100
+      ? Math.max(1, Math.round(Number(opts.pointsRedeemUnits) || 1))
+      : 0;
+  const redeemCost = redeemTier * redeemUnits;
   const redeemDiscount = Math.max(
     0,
     Math.round(Number(opts.pointsRedeemDiscountVnd) || 0)
@@ -97,13 +114,13 @@ export async function createServiceCart(opts: {
     discountVnd = Math.min(subtotal, discountVnd + ptsDisc);
     items.push({
       id: `points-redeem-${redeemTier}`,
-      nameVi: `Đổi ${redeemTier} điểm`,
-      qty: 1,
+      nameVi: `Đổi ${redeemCost} điểm`,
+      qty: redeemUnits,
       priceVnd: 0,
       note:
         ptsDisc > 0
-          ? `−${ptsDisc}đ · chờ quầy xác nhận`
-          : `−${redeemTier} điểm · chờ quầy xác nhận`,
+          ? `−${ptsDisc}đ · ${redeemUnits} món`
+          : `−${redeemCost} điểm · chờ quầy xác nhận`,
     });
   }
 
@@ -132,6 +149,7 @@ export async function createServiceCart(opts: {
         discountVnd,
         offerIds,
         pointsRedeemTier: redeemTier === 50 || redeemTier === 100 ? redeemTier : null,
+        pointsRedeemCost: redeemCost,
       };
     } catch {
       // unique collision

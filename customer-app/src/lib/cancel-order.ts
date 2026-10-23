@@ -4,6 +4,42 @@ import { settlePointsOnCancel } from "./points";
 
 const CANCELLABLE_ZONES = new Set(["MIA_OI", "OLYMPIC_POOL", "OLYMPIC"]);
 
+/** Only before staff confirms the transaction. ACCEPTED+ is finalized. */
+export const CUSTOMER_CANCELLABLE_ORDER_STATUSES = new Set([
+  "PENDING",
+  "SUBMITTED",
+]);
+
+/** Staff-confirmed / paid — same as Olympic CONFIRMED: history, no reverse. */
+export const FINALIZED_ORDER_STATUSES = new Set([
+  "ACCEPTED",
+  "READY",
+  "SERVED",
+  "DONE",
+  "CONFIRMED",
+]);
+
+export function isFinalizedOrderStatus(status: string) {
+  return FINALIZED_ORDER_STATUSES.has(status);
+}
+
+export function isHistoryOrderStatus(status: string) {
+  return status === "CANCELLED" || isFinalizedOrderStatus(status);
+}
+
+export function customerCanCancelOrder(opts: {
+  status: string;
+  zone: string;
+  createdAt: Date;
+  now?: Date;
+}) {
+  return (
+    CUSTOMER_CANCELLABLE_ORDER_STATUSES.has(opts.status) &&
+    CANCELLABLE_ZONES.has(String(opts.zone || "").toUpperCase()) &&
+    vnDayKey(opts.createdAt) === vnDayKey(opts.now ?? new Date())
+  );
+}
+
 const STRIP_KEYS = [
   "ticketVerified",
   "verifiedAt",
@@ -53,7 +89,7 @@ export class CancelOrderError extends Error {
   }
 }
 
-/** Khách huỷ đơn Mía Ơi / Hồ Olympic đã xác nhận trong hôm nay. Hoàn điểm đã đổi, thu điểm đã cộng. */
+/** Khách huỷ đơn Mía Ơi / Hồ Olympic chưa được NV xác nhận (hôm nay). */
 export async function cancelCustomerOrder(customerId: string, orderId: string) {
   const order = await prisma.appOrder.findFirst({
     where: { id: orderId, customerId },
@@ -83,6 +119,12 @@ export async function cancelCustomerOrder(customerId: string, orderId: string) {
   }
   if (vnDayKey(order.createdAt) !== vnDayKey(new Date())) {
     throw new CancelOrderError("Chỉ huỷ được đơn trong hôm nay.", 400);
+  }
+  if (!CUSTOMER_CANCELLABLE_ORDER_STATUSES.has(order.status)) {
+    throw new CancelOrderError(
+      "Đơn đã được nhân viên xác nhận, không huỷ được.",
+      409
+    );
   }
 
   const events = await prisma.appServiceEvent.findMany({

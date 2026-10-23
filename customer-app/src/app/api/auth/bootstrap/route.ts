@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { createCustomerAccount } from "@/lib/account";
 import { getSessionCustomer } from "@/lib/session";
 
-/** Auto-create account when device has no session. */
+/** No anonymous accounts. Signup is họ tên + SĐT at /login?mode=signup. */
 export async function POST() {
   try {
     const existing = await getSessionCustomer();
@@ -19,19 +18,13 @@ export async function POST() {
       });
     }
 
-    const { customer, tempPassword } = await createCustomerAccount();
-    return NextResponse.json({
-      ok: true,
-      created: true,
-      message: "Your Oasis Account has been created.",
-      customer: {
-        id: customer.id,
-        customerCode: customer.customerCode,
-        username: customer.username,
-        createdAt: customer.createdAt,
+    return NextResponse.json(
+      {
+        error: "Nhập họ tên và số điện thoại để tạo tài khoản.",
+        needRegister: true,
       },
-      temporaryPassword: tempPassword,
-    });
+      { status: 400 }
+    );
   } catch (e) {
     console.error("[customer bootstrap]", e);
     return NextResponse.json(

@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const zoneCode = String(body.zoneCode || "").trim().toUpperCase();
     const zoneName = String(body.zoneName || "").trim() || undefined;
-    const items = Array.isArray(body.items)
+    let items = Array.isArray(body.items)
       ? (body.items as CartItemInput[])
       : [];
     const offerIds = Array.from(
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
           .filter(Boolean)
       )
     );
-    const discountVnd = Math.max(0, Math.round(Number(body.discountVnd) || 0));
+    let discountVnd = Math.max(0, Math.round(Number(body.discountVnd) || 0));
     const pointsRedeemTierRaw = Math.round(
       Number(body.pointsRedeemTier) || 0
     );
@@ -239,14 +239,17 @@ export async function POST(req: NextRequest) {
     }
 
     let pointsRedeemDiscountVnd = 0;
+    let pointsRedeemUnits = 0;
     if (pointsRedeemTier) {
       const check = computeGuestPointsRedeem({
         zoneCode,
         tier: pointsRedeemTier,
+        units: Math.max(0, Math.round(Number(body.pointsRedeemUnits) || 0)) || undefined,
         items: items.map((i) => ({
           id: String(i.id || ""),
           priceVnd: Math.max(0, Math.round(Number(i.priceVnd) || 0)),
           qty: Math.max(0, Math.round(Number(i.qty) || 0)),
+          redeemQty: Math.max(0, Math.round(Number(i.pointsRedeemQty) || 0)),
         })),
       });
       if (!check.ok) {
@@ -265,6 +268,64 @@ export async function POST(req: NextRequest) {
         );
       }
       pointsRedeemDiscountVnd = check.discountVnd;
+      pointsRedeemUnits = check.units;
+      if (pointsRedeemTier === 50 || pointsRedeemTier === 100) {
+        items = items.map((item, index) => {
+          const alloc = check.allocations.find((a) => a.index === index);
+          const redeemQty = alloc?.redeemQty || 0;
+          if (redeemQty <= 0) {
+            const rest = { ...item };
+            delete rest.pointsRedeemQty;
+            return rest;
+          }
+          return { ...item, pointsRedeemQty: redeemQty };
+        });
+      }
+    }
+
+    if (isMembershipUpgrade) {
+      const { OLYMPIC_MONTHLY } = await import("@/lib/service-catalogs");
+      const { isOlympicMembershipPackageId } = await import(
+        "@/lib/membership-theme"
+      );
+      const {
+        isSameDayMembershipEligible,
+        sameDayMembershipDiscountVnd,
+      } = await import("@/lib/same-day-membership");
+      items = items.map((i) => {
+        if (!isOlympicMembershipPackageId(i.id)) return i;
+        const pkg = OLYMPIC_MONTHLY.find((p) => p.id === i.id);
+        if (!pkg) return i;
+        return { ...i, priceVnd: pkg.priceVnd, qty: 1 };
+      });
+      const eligible = await isSameDayMembershipEligible(prisma, {
+        id: customerRecord.id,
+      });
+      if (eligible) {
+        const membershipSubtotal = items
+          .filter((i) => isOlympicMembershipPackageId(i.id))
+          .reduce(
+            (s, i) =>
+              s +
+              Math.max(0, Math.round(Number(i.priceVnd) || 0)) *
+                Math.max(0, Math.round(Number(i.qty) || 0)),
+            0
+          );
+        const extra = sameDayMembershipDiscountVnd(membershipSubtotal);
+        if (extra > 0) {
+          discountVnd += extra;
+          items = [
+            ...items,
+            {
+              id: "disc-same-day-membership",
+              nameVi: "Giảm 10% gói tháng (cùng ngày với đơn bơi)",
+              qty: 1,
+              priceVnd: 0,
+              note: `−${extra.toLocaleString("vi-VN")}đ`,
+            },
+          ];
+        }
+      }
     }
 
     const {
@@ -273,6 +334,7 @@ export async function POST(req: NextRequest) {
       discountVnd: applied,
       offerIds: savedOfferIds,
       pointsRedeemTier: savedTier,
+      pointsRedeemCost: savedCost,
     } = await createServiceCart({
       customerId: customerRecord.id,
       zoneCode,
@@ -281,6 +343,7 @@ export async function POST(req: NextRequest) {
       discountVnd,
       offerIds,
       pointsRedeemTier,
+      pointsRedeemUnits,
       pointsRedeemDiscountVnd,
     });
 
@@ -345,12 +408,13 @@ export async function POST(req: NextRequest) {
 
     let pointsBalance = customerRecord.pointsBalance ?? 0;
     if (savedTier) {
+      const burned = savedCost || savedTier;
       const pts = await redeemPoints({
         customerId: customerRecord.id,
-        cost: savedTier,
+        cost: burned,
         refType: "SERVICE_CART",
         refId: cart.id,
-        note: `Đổi ${savedTier} điểm · ${zoneCode} · QR ${cart.token.slice(-6)}`,
+        note: `Đổi ${burned} điểm · ${zoneCode} · QR ${cart.token.slice(-6)}`,
       });
       pointsBalance = pts.balance;
     }

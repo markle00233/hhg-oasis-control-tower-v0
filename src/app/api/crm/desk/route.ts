@@ -8,6 +8,11 @@ import {
 import { parseCartPromo } from "@/lib/cart-promo";
 import { CART_STATUS, isPastVnCutOff } from "@/lib/cart-status";
 import { DESK_ZONES, deskZoneAliases, getDeskZone } from "@/lib/desk-zones";
+import {
+  isOlympicPackageId,
+  OLYMPIC_PACKAGE_IDS,
+} from "@/lib/olympic-membership";
+import { phoneKeys } from "@/lib/swim-goi-bonus";
 import { prisma } from "@/lib/prisma";
 
 /** Quầy — mỗi yêu cầu QR = 1 dòng (không ghi đè cùng khách). */
@@ -235,6 +240,7 @@ export async function GET(req: NextRequest) {
         pointsBalance: true,
         vipPlanLabel: true,
         vipExpiresAt: true,
+        vipStartedAt: true,
         intendedServices: true,
         adminConfirmedAt: true,
         adminNote: true,
@@ -255,7 +261,7 @@ export async function GET(req: NextRequest) {
                 ? [
                     {
                       eventType: "MIA_OI_ORDER" as const,
-                      service: { serviceCode: "MIA_OI" },
+                      service: { serviceCode: { in: aliases } },
                     },
                   ]
                 : []),
@@ -263,7 +269,15 @@ export async function GET(req: NextRequest) {
                 ? [
                     {
                       eventType: "SPA_ORDER" as const,
-                      service: { serviceCode: "SAUNA" },
+                      service: { serviceCode: { in: aliases } },
+                    },
+                  ]
+                : []),
+              ...(zone === "OLYMPIC_POOL"
+                ? [
+                    {
+                      eventType: "POOL_ORDER" as const,
+                      service: { serviceCode: { in: aliases } },
                     },
                   ]
                 : []),
@@ -286,17 +300,10 @@ export async function GET(req: NextRequest) {
               gte: dayStart,
               ...(dayEnd ? { lt: dayEnd } : {}),
             },
-            ...(zone === "MIA_OI" ||
-            zone === "SAUNA" ||
-            zone === "OLYMPIC_POOL"
-              ? { service: { serviceCode: zone } }
-              : { id: "__none__" }),
+            service: { serviceCode: { in: aliases } },
           },
           orderBy: { createdAt: "desc" },
-          take:
-            zone === "MIA_OI" || zone === "SAUNA" || zone === "OLYMPIC_POOL"
-              ? 40
-              : 0,
+          take: 40,
           select: {
             id: true,
             status: true,
@@ -304,6 +311,7 @@ export async function GET(req: NextRequest) {
             createdAt: true,
             items: {
               select: {
+                itemId: true,
                 nameVi: true,
                 qty: true,
                 unitPriceVnd: true,
@@ -330,6 +338,7 @@ export async function GET(req: NextRequest) {
             totalVnd: true,
             status: true,
             adminNote: true,
+            billPhotoAt: true,
             createdAt: true,
             expiresAt: true,
           },
@@ -347,7 +356,7 @@ export async function GET(req: NextRequest) {
     const memberPhones = new Set<string>();
     const membershipByPhone = new Map<
       string,
-      { planLabel: string | null; expiresAt: Date | null }
+      { planLabel: string | null; expiresAt: Date | null; startDate: Date | null }
     >();
     if (phones.length) {
       try {
@@ -371,6 +380,7 @@ export async function GET(req: NextRequest) {
               orderBy: { expiryDate: "desc" },
               take: 1,
               select: {
+                startDate: true,
                 expiryDate: true,
                 plan: { select: { name: true, planCode: true } },
               },
@@ -384,6 +394,7 @@ export async function GET(req: NextRequest) {
             membershipByPhone.set(m.phoneNormalized, {
               planLabel: mem.plan?.name || mem.plan?.planCode || "Hội viên",
               expiresAt: mem.expiryDate,
+              startDate: mem.startDate,
             });
           }
         }
@@ -392,7 +403,122 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const arrivals = rows
+    const packageStart = new Map<string, Date>();
+    const vipMissingStart = rows.filter(
+      (c) =>
+        String(c.segment || "").toUpperCase() === "VIP" && !c.vipStartedAt
+    );
+    if (vipMissingStart.length) {
+      const orders = await prisma.appOrder.findMany({
+        where: {
+          customerId: { in: vipMissingStart.map((c) => c.id) },
+          status: { not: "CANCELLED" },
+          items: { some: { itemId: { in: [...OLYMPIC_PACKAGE_IDS] } } },
+        },
+        select: { customerId: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      });
+      for (const order of orders) {
+        if (!packageStart.has(order.customerId)) {
+          packageStart.set(order.customerId, order.createdAt);
+        }
+      }
+      const missingAfterOrders = vipMissingStart
+        .map((c) => c.id)
+        .filter((id) => !packageStart.has(id));
+      if (missingAfterOrders.length) {
+        const carts = await prisma.appServiceCart.findMany({
+          where: {
+            customerId: { in: missingAfterOrders },
+            status: { notIn: ["CANCELLED", "REJECTED"] },
+          },
+          select: { customerId: true, createdAt: true, items: true },
+          orderBy: { createdAt: "desc" },
+        });
+        for (const cart of carts) {
+          if (packageStart.has(cart.customerId)) continue;
+          const items = Array.isArray(cart.items) ? cart.items : [];
+          const bought = items.some((row) => {
+            if (!row || typeof row !== "object") return false;
+            return isOlympicPackageId(String((row as { id?: string }).id || ""));
+          });
+          if (bought) packageStart.set(cart.customerId, cart.createdAt);
+        }
+      }
+      const missingAfterCarts = vipMissingStart
+        .map((c) => c.id)
+        .filter((id) => !packageStart.has(id));
+      if (missingAfterCarts.length) {
+        const offers = await prisma.appCollectedOffer.findMany({
+          where: {
+            customerId: { in: missingAfterCarts },
+            offerId: { startsWith: "hhg-oly-" },
+          },
+          select: { customerId: true, collectedAt: true },
+          orderBy: { collectedAt: "desc" },
+        });
+        for (const offer of offers) {
+          if (!packageStart.has(offer.customerId)) {
+            packageStart.set(offer.customerId, offer.collectedAt);
+          }
+        }
+      }
+      await Promise.all(
+        vipMissingStart.map(async (c) => {
+          const crm = c.phoneNormalized
+            ? membershipByPhone.get(c.phoneNormalized)?.startDate
+            : null;
+          const start = packageStart.get(c.id) || crm || null;
+          if (!start) return;
+          packageStart.set(c.id, start);
+          await prisma.appCustomer.update({
+            where: { id: c.id },
+            data: { vipStartedAt: start },
+          });
+        })
+      );
+    }
+
+      const bonusByPhone = new Map<string, number>();
+      if (zone === "SAUNA") {
+        const phones = [
+          ...new Set(
+            rows.flatMap((c) => [
+              ...phoneKeys(c.phoneNormalized),
+              ...phoneKeys(c.phone),
+            ])
+          ),
+        ];
+        if (phones.length) {
+          const students = await prisma.appSwimStudent.findMany({
+            where: {
+              status: "ACTIVE",
+              bonusVisitsTotal: { gt: 0 },
+              OR: [
+                { phoneNormalized: { in: phones } },
+                { phone: { in: phones } },
+              ],
+            },
+            select: { phone: true, phoneNormalized: true, bonusVisitsLeft: true },
+          });
+          for (const student of students) {
+            for (const key of [
+              ...phoneKeys(student.phoneNormalized),
+              ...phoneKeys(student.phone),
+            ]) {
+              const prev = bonusByPhone.get(key);
+              bonusByPhone.set(
+                key,
+                prev == null
+                  ? student.bonusVisitsLeft
+                  : Math.max(prev, student.bonusVisitsLeft)
+              );
+            }
+          }
+        }
+      }
+
+      const arrivals = rows
       .map((c) => {
         const crmMember = !!(
           c.phoneNormalized && memberPhones.has(c.phoneNormalized)
@@ -423,10 +549,11 @@ export async function GET(req: NextRequest) {
             ? (meta.items as { name?: string; qty?: number }[])
             : [];
           const ticketVerified =
-            (e.eventType === "SERVICE_USE" &&
-              (meta.ticketVerified === true || !!meta.orderId)) ||
-            (e.eventType === "MIA_OI_ORDER" &&
-              (meta.ticketVerified === true || !!meta.orderId));
+            meta.ticketVerified === true ||
+            !!meta.orderId ||
+            e.eventType === "MIA_OI_ORDER" ||
+            e.eventType === "SPA_ORDER" ||
+            e.eventType === "POOL_ORDER";
           const orderSummary =
             e.eventType === "MIA_OI_ORDER" ||
             e.eventType === "SPA_ORDER" ||
@@ -493,6 +620,7 @@ export async function GET(req: NextRequest) {
           status: o.status,
           totalVnd: o.totalVnd,
           items: o.items.map((i) => ({
+            itemId: i.itemId,
             nameVi: i.nameVi,
             qty: i.qty,
             unitPriceVnd: i.unitPriceVnd,
@@ -515,6 +643,7 @@ export async function GET(req: NextRequest) {
             totalVnd: row.totalVnd,
             status: row.status,
             adminNote: row.adminNote,
+            hasBillPhoto: Boolean(row.billPhotoAt),
             createdAt: row.createdAt,
             expiresAt: row.expiresAt,
             billText: menuItems.length
@@ -574,7 +703,15 @@ export async function GET(req: NextRequest) {
               : segment === "MEMBER"
                 ? "Member"
                 : "Khách lẻ",
+          vipStartedAt: c.vipStartedAt || packageStart.get(c.id) || null,
           pointsBalance: c.pointsBalance ?? 0,
+          swimBonusLeft: (() => {
+            const keys = [...phoneKeys(c.phoneNormalized), ...phoneKeys(c.phone)];
+            for (const key of keys) {
+              if (bonusByPhone.has(key)) return bonusByPhone.get(key) ?? 0;
+            }
+            return null;
+          })(),
           packageLabel,
           packageExpiresAt,
           intendedServices: c.intendedServices
@@ -645,16 +782,22 @@ function parseCartItems(raw: unknown): {
   nameVi: string;
   qty: number;
   priceVnd: number;
+  pointsRedeemQty?: number;
 }[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .map((i) => {
       const row = i as Record<string, unknown>;
+      const pointsRedeemQty = Math.max(
+        0,
+        Math.round(Number(row.pointsRedeemQty) || 0)
+      );
       return {
         id: String(row.id || "").trim(),
         nameVi: String(row.nameVi || "").trim(),
         qty: Math.max(1, Number(row.qty) || 1),
         priceVnd: Math.max(0, Number(row.priceVnd) || 0),
+        ...(pointsRedeemQty > 0 ? { pointsRedeemQty } : {}),
       };
     })
     .filter((i) => i.id && i.nameVi);

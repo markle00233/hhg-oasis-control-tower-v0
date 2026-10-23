@@ -8,6 +8,10 @@ import {
   packageIdFromTier,
   type MembershipTier,
 } from "@/lib/membership-theme";
+import {
+  formatMembershipPayLabel,
+  sameDayMembershipPriceVnd,
+} from "@/lib/same-day-membership";
 
 const TIERS: MembershipTier[] = [1, 3, 6, 12];
 
@@ -37,6 +41,7 @@ export function MembershipUpgrade({
   const [profileBusy, setProfileBusy] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftPhone, setDraftPhone] = useState("");
+  const [sameDayDiscount, setSameDayDiscount] = useState(false);
   const [success, setSuccess] = useState<{
     token: string;
     status: string;
@@ -57,6 +62,7 @@ export function MembershipUpgrade({
         const shortId = String(
           data.customer.phoneLast4 || data.customer.shortId || ""
         ).trim();
+        setSameDayDiscount(!!data.customer.sameDayMembershipDiscount);
         if (fullName && phone) {
           setProfile({ fullName, phone, shortId });
           setDraftName(fullName);
@@ -141,6 +147,10 @@ export function MembershipUpgrade({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không gửi được yêu cầu");
+      const payVnd = sameDayDiscount
+        ? sameDayMembershipPriceVnd(pkg.priceVnd)
+        : pkg.priceVnd;
+      const payLabel = formatMembershipPayLabel(payVnd);
       setSuccess({
         token: data.token || data.cart?.token,
         status: data.status || "PENDING_APPROVAL",
@@ -150,7 +160,9 @@ export function MembershipUpgrade({
           `${ready.fullName} · ${ready.phone}${
             ready.shortId ? ` · ID ${ready.shortId}` : ""
           }`,
-          `Thanh toán 1 lần: ${copy.payOnce}`,
+          sameDayDiscount
+            ? `Thanh toán 1 lần: ${payLabel} (−10% cùng ngày với đơn bơi, giá gốc ${copy.payOnce})`
+            : `Thanh toán 1 lần: ${copy.payOnce}`,
           ...copy.perks.map((p) => `· ${p}`),
           "Voucher kèm gói dùng trong hạn hội viên (không hết theo lượt)",
           "Chờ quầy duyệt → nhận QR → mang quầy quét",
@@ -190,7 +202,9 @@ export function MembershipUpgrade({
           <p className="mt-0.5 text-xs text-oasis-mute">
             {isLocked
               ? "Đang dùng gói — hết hạn mới chọn lại"
-              : "1 gói / lần · hết hạn về khách thường · mới chọn tiếp"}
+              : sameDayDiscount
+                ? "Đã bơi hôm nay · đăng ký gói được −10%"
+                : "1 gói / lần · hết hạn về khách thường · mới chọn tiếp"}
           </p>
         </div>
         {currentTier ? (
@@ -268,6 +282,12 @@ export function MembershipUpgrade({
       >
         {TIERS.map((t) => {
           const c = MEMBERSHIP_UPGRADE_COPY[t];
+          const pkg = OLYMPIC_MONTHLY.find((p) => p.id === packageIdFromTier(t));
+          const listVnd = pkg?.priceVnd || 0;
+          const payVnd = sameDayDiscount
+            ? sameDayMembershipPriceVnd(listVnd)
+            : listVnd;
+          const payLabel = formatMembershipPayLabel(payVnd);
           const busy = busyTier === t;
           const isCurrent = isLocked && currentTier === t;
           return (
@@ -290,9 +310,23 @@ export function MembershipUpgrade({
                 </span>
               </p>
               <p className="mt-1 text-center text-xs text-slate-600">
-                1 lần: <strong className="text-[#1e3a8a]">{c.payOnce}</strong>
+                1 lần:{" "}
+                {sameDayDiscount && listVnd > 0 ? (
+                  <>
+                    <span className="mr-1 text-slate-400 line-through">
+                      {c.payOnce}
+                    </span>
+                    <strong className="text-[#1e3a8a]">{payLabel}</strong>
+                  </>
+                ) : (
+                  <strong className="text-[#1e3a8a]">{c.payOnce}</strong>
+                )}
               </p>
-              {c.save ? (
+              {sameDayDiscount ? (
+                <p className="mt-3 rounded-full bg-[#fef08a] py-1.5 text-center text-[11px] font-bold text-[#1e3a8a]">
+                  −10% cùng ngày với đơn bơi
+                </p>
+              ) : c.save ? (
                 <p className="mt-3 rounded-full bg-[#fef08a] py-1.5 text-center text-[11px] font-bold text-[#1e3a8a]">
                   {c.save}
                 </p>

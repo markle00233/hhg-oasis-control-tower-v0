@@ -1,9 +1,151 @@
 import { prisma } from "./prisma";
 import {
+  deskVoucherCut,
+  getDeskHhgVoucher,
   isDurationMembershipVoucher,
   isLimitedMembershipVoucher,
+  offerMatchesDeskZone,
 } from "./hhg-vouchers";
 import { consumeMembershipVoucherUse } from "./membership-voucher-qty";
+import { isOlympicMembershipActive } from "./olympic-membership";
+
+export function voucherErrorStatus(err: unknown, fallback = 500) {
+  if (err && typeof err === "object" && "status" in err) {
+    const n = Number((err as { status: number }).status);
+    if (Number.isFinite(n) && n >= 400 && n < 600) return n;
+  }
+  return fallback;
+}
+
+export type DeskBillVoucherQuote = {
+  offerId: string;
+  title: string;
+  discountVnd: number;
+};
+
+export function deskVoucherNote(q: DeskBillVoucherQuote) {
+  if (!q.offerId || q.discountVnd <= 0) return "";
+  return `Voucher ${q.title} (−${q.discountVnd.toLocaleString("vi-VN")}đ)`;
+}
+
+/** Kiểm tra voucher áp bill, chưa trừ lượt. */
+export async function quoteDeskBillVoucher(opts: {
+  customerId: string;
+  offerId: string;
+  zone: string;
+  baseVnd: number;
+}): Promise<DeskBillVoucherQuote> {
+  const offerId = opts.offerId.trim();
+  if (!offerId) {
+    return { discountVnd: 0, title: "", offerId: "" };
+  }
+  if (!offerMatchesDeskZone(offerId, opts.zone)) {
+    throw Object.assign(new Error("Voucher không dùng tại khu này."), {
+      status: 400,
+    });
+  }
+  const meta = getDeskHhgVoucher(offerId);
+  if (!meta || (meta.discountType !== "amount" && meta.discountType !== "percent")) {
+    throw Object.assign(new Error("Voucher không áp vào bill."), {
+      status: 400,
+    });
+  }
+  const row = await prisma.appCollectedOffer.findUnique({
+    where: {
+      customerId_offerId: {
+        customerId: opts.customerId,
+        offerId,
+      },
+    },
+  });
+  if (!row || row.status !== "COLLECTED") {
+    throw Object.assign(
+      new Error("Khách không có voucher này (chưa thu thập hoặc đã dùng)."),
+      { status: 404 }
+    );
+  }
+  if (
+    row.qtyTotal != null &&
+    (row.qtyRemaining == null || row.qtyRemaining <= 0)
+  ) {
+    throw Object.assign(new Error("Đã hết lượt voucher này."), { status: 409 });
+  }
+  if (isDurationMembershipVoucher(offerId)) {
+    const customer = await prisma.appCustomer.findUnique({
+      where: { id: opts.customerId },
+      select: { segment: true, vipExpiresAt: true },
+    });
+    if (
+      !isOlympicMembershipActive({
+        segment: customer?.segment,
+        vipExpiresAt: customer?.vipExpiresAt,
+      })
+    ) {
+      const exp = customer?.vipExpiresAt
+        ? customer.vipExpiresAt.toLocaleDateString("vi-VN")
+        : null;
+      throw Object.assign(
+        new Error(
+          exp
+            ? `Voucher hội viên hết hạn cùng gói (đã hết ${exp}).`
+            : "Voucher hội viên chỉ dùng trong thời hạn gói."
+        ),
+        { status: 409 }
+      );
+    }
+  }
+  return {
+    discountVnd: deskVoucherCut(opts.baseVnd, meta),
+    title: meta.title,
+    offerId,
+  };
+}
+
+/** Trừ lượt / ghi log sau khi đơn đã tạo. */
+export async function consumeDeskBillVoucher(opts: {
+  customerId: string;
+  offerId: string;
+  zone: string;
+  staffUserId: string;
+  staffName: string;
+  baseVnd: number;
+  note?: string;
+}) {
+  const quoted = await quoteDeskBillVoucher(opts);
+  if (!quoted.offerId) return quoted;
+
+  const offerId = quoted.offerId;
+  if (isDurationMembershipVoucher(offerId)) {
+    await consumeMembershipVoucherUse(prisma, {
+      customerId: opts.customerId,
+      offerId,
+    });
+  } else {
+    await prisma.appCollectedOffer.update({
+      where: {
+        customerId_offerId: {
+          customerId: opts.customerId,
+          offerId,
+        },
+      },
+      data: { status: "USED", usedAt: new Date() },
+    });
+  }
+
+  await prisma.appOfferClaimLog.create({
+    data: {
+      customerId: opts.customerId,
+      offerId,
+      offerTitle: quoted.title,
+      zoneCode: opts.zone.toUpperCase(),
+      claimedByUserId: opts.staffUserId,
+      claimedByName: opts.staffName,
+      note: opts.note || `Dùng voucher trên bill quầy ${opts.zone}`,
+    },
+  });
+
+  return quoted;
+}
 
 export function voucherTokenFromScan(raw: string) {
   const text = String(raw || "").trim();

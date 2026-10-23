@@ -69,7 +69,7 @@ const styles = {
     borderRadius: 20,
     padding: 20,
     boxShadow: "0 8px 30px rgba(15,23,42,.06)",
-    overflow: "hidden",
+    overflow: "visible",
   } as const,
   h1: { margin: 0, fontSize: 26, fontWeight: 800, color: "#0f172a" } as const,
   mute: { margin: "6px 0 0", fontSize: 13, color: "#64748b" } as const,
@@ -163,6 +163,7 @@ export function DeskSwimStudents({
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [packageId, setPackageId] = useState(SWIM_PACKAGES[0]?.id || "");
+  const [packageOpen, setPackageOpen] = useState(false);
   const [note, setNote] = useState("");
   const [billPhoto, setBillPhoto] = useState("");
   const [billName, setBillName] = useState("");
@@ -327,7 +328,7 @@ export function DeskSwimStudents({
             width: "100%",
             minWidth: 0,
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(100%, 11rem), 1fr))",
+              "minmax(9rem, 1fr) minmax(8rem, 0.9fr) 20rem auto",
           }}
         >
           <input
@@ -343,21 +344,102 @@ export function DeskSwimStudents({
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
           />
-          <select
-            style={styles.select}
-            value={packageId}
-            onChange={(e) => setPackageId(e.target.value)}
-          >
-            {Object.entries(pkgGroups).map(([label, pkgs]) => (
-              <optgroup key={label} label={label}>
-                {pkgs.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {formatSwimPrice(p)}
-                  </option>
+          <div style={{ position: "relative", minWidth: 0 }}>
+            <button
+              type="button"
+              aria-expanded={packageOpen}
+              onClick={() => setPackageOpen((open) => !open)}
+              style={{
+                ...styles.select,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                textAlign: "left",
+                cursor: "pointer",
+                color: "#0f172a",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                {(() => {
+                  const current = SWIM_PACKAGES.find((p) => p.id === packageId);
+                  return current
+                    ? `${current.name} · ${formatSwimPrice(current)}`
+                    : "Chọn gói";
+                })()}
+              </span>
+              <span aria-hidden style={{ color: "#64748b", flex: "0 0 auto" }}>
+                ▾
+              </span>
+            </button>
+            {packageOpen ? (
+              <div
+                style={{
+                  position: "absolute",
+                  zIndex: 30,
+                  top: "calc(100% + 4px)",
+                  left: 0,
+                  right: 0,
+                  background: "#fff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 12,
+                  boxShadow: "0 12px 32px rgba(15,23,42,.14)",
+                  maxHeight: 320,
+                  overflowY: "auto",
+                  padding: 6,
+                }}
+              >
+                {Object.entries(pkgGroups).map(([label, pkgs]) => (
+                  <div key={label}>
+                    <div
+                      style={{
+                        padding: "8px 10px 4px",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        color: "#64748b",
+                      }}
+                    >
+                      {label}
+                    </div>
+                    {pkgs.map((p) => {
+                      const on = p.id === packageId;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setPackageId(p.id);
+                            setPackageOpen(false);
+                          }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            border: "none",
+                            borderRadius: 8,
+                            padding: "8px 10px",
+                            cursor: "pointer",
+                            background: on ? "#fff7ed" : "transparent",
+                            color: "#0f172a",
+                            fontWeight: on ? 800 : 600,
+                            fontSize: 13,
+                            lineHeight: 1.35,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {on ? "✓ " : ""}
+                          {p.name} · {formatSwimPrice(p)}
+                        </button>
+                      );
+                    })}
+                  </div>
                 ))}
-              </optgroup>
-            ))}
-          </select>
+              </div>
+            ) : null}
+          </div>
           <button
             type="submit"
             style={{
@@ -564,23 +646,6 @@ export function DeskSwimStudents({
                             }
                           >
                             −1 buổi
-                          </button>
-                        ) : null}
-                        {s.bonusVisitsTotal > 0 ? (
-                          <button
-                            type="button"
-                            style={{
-                              ...styles.btn,
-                              height: 34,
-                              fontSize: 12,
-                              background: "#0f766e",
-                            }}
-                            disabled={busy || s.bonusVisitsLeft <= 0}
-                            onClick={() =>
-                              void patch(s.id, { action: "use-bonus" })
-                            }
-                          >
-                            −1 lượt
                           </button>
                         ) : null}
                         {s.hasBillPhoto ? (

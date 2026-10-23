@@ -36,10 +36,65 @@ function redeemTierOf(item: PointsBillLine) {
   return 0;
 }
 
-/** Product lines only. Point rows are removed and applied to one unit of the matching item. */
+/** Cart lines → bill lines. Per-drink `pointsRedeemQty` wins over the summary row. */
+export function previewCartPointLines(
+  items: {
+    id?: string;
+    nameVi: string;
+    qty: number;
+    priceVnd?: number;
+    unitPriceVnd?: number;
+    pointsRedeemQty?: number;
+    pointsDiscountVnd?: number;
+    pointsRedeemTier?: number | null;
+  }[]
+): PointsBillLine[] {
+  const list = items.filter((i) => i?.nameVi);
+  const explicit = list.some((i) => {
+    const id = String(i.id || "");
+    if (id.startsWith("points-redeem-") || id.startsWith("voucher-")) return false;
+    return Math.round(Number(i.pointsRedeemQty) || 0) > 0;
+  });
+  return list.flatMap((i) => {
+    const id = String(i.id || "");
+    if (explicit && id.startsWith("points-redeem-")) return [];
+    const unit = Math.max(
+      0,
+      Math.round(Number(i.unitPriceVnd ?? i.priceVnd) || 0)
+    );
+    const qty = Math.max(1, Math.round(Number(i.qty) || 1));
+    const redeemQty =
+      id.startsWith("points-redeem-") || id.startsWith("voucher-")
+        ? 0
+        : Math.min(qty, Math.max(0, Math.round(Number(i.pointsRedeemQty) || 0)));
+    const fromRedeem = redeemQty > 0 ? redeemQty * unit : 0;
+    return [
+      {
+        id,
+        nameVi: i.nameVi,
+        qty,
+        unitPriceVnd: unit,
+        pointsDiscountVnd: Math.max(
+          fromRedeem,
+          Math.max(0, Math.round(Number(i.pointsDiscountVnd) || 0))
+        ),
+        pointsRedeemTier:
+          redeemQty > 0
+            ? /^pool-(u13|o13)-(90|unlimited)$/.test(id)
+              ? 100
+              : 50
+            : i.pointsRedeemTier === 50 || i.pointsRedeemTier === 100
+              ? i.pointsRedeemTier
+              : null,
+      },
+    ];
+  });
+}
+
+/** Product lines only. Point rows are removed and applied onto the drinks they pay for. */
 export function foldPointsOntoItems(items: PointsBillLine[]): PointsBillView[] {
   const products: PointsBillLine[] = [];
-  const redeems: { tier: number; discountVnd: number }[] = [];
+  const redeems: { tier: number; units: number; discountVnd: number }[] = [];
 
   for (const item of items) {
     if (!item?.nameVi) continue;
@@ -49,6 +104,7 @@ export function foldPointsOntoItems(items: PointsBillLine[]): PointsBillView[] {
     if (tier === 50 || tier === 100) {
       redeems.push({
         tier,
+        units: Math.max(1, Math.round(Number(item.qty) || 1)),
         discountVnd: Math.max(0, Math.round(Number(item.pointsDiscountVnd) || 0)),
       });
       continue;
@@ -73,20 +129,43 @@ export function foldPointsOntoItems(items: PointsBillLine[]): PointsBillView[] {
   );
 
   for (const redeem of redeems) {
-    const idx = products.findIndex((p, i) => {
-      const unit = p.unitPriceVnd;
-      const room = unit * p.qty - covered[i];
-      if (unit <= 0 || room <= 0) return false;
-      if (redeem.tier === 50 && unit > REDEEM_DRINK_MAX_VND) return false;
-      return true;
-    });
-    if (idx < 0) continue;
-    const unit = products[idx].unitPriceVnd;
-    const add = redeem.discountVnd > 0 ? redeem.discountVnd : unit;
-    const line = unit * products[idx].qty;
-    covered[idx] = Math.min(line, covered[idx] + add);
-    if (!products[idx].pointsRedeemTier) {
-      products[idx].pointsRedeemTier = redeem.tier;
+    if (redeem.discountVnd > 0 && redeem.units <= 1) {
+      const idx = products.findIndex((p, i) => {
+        const unit = p.unitPriceVnd;
+        const room = unit * p.qty - covered[i];
+        if (unit <= 0 || room <= 0) return false;
+        if (redeem.tier === 50 && unit > REDEEM_DRINK_MAX_VND) return false;
+        return true;
+      });
+      if (idx < 0) continue;
+      const line = products[idx].unitPriceVnd * products[idx].qty;
+      covered[idx] = Math.min(line, covered[idx] + redeem.discountVnd);
+      if (!products[idx].pointsRedeemTier) {
+        products[idx].pointsRedeemTier = redeem.tier;
+      }
+      continue;
+    }
+    let left = redeem.units;
+    while (left > 0) {
+      const idx = products.findIndex((p, i) => {
+        const unit = p.unitPriceVnd;
+        const room = unit * p.qty - covered[i];
+        if (unit <= 0 || room < unit) return false;
+        if (redeem.tier === 50 && unit > REDEEM_DRINK_MAX_VND) return false;
+        return true;
+      });
+      if (idx < 0) break;
+      const unit = products[idx].unitPriceVnd;
+      const roomUnits = Math.floor(
+        (unit * products[idx].qty - covered[idx]) / unit
+      );
+      const take = Math.min(roomUnits, left);
+      if (take <= 0) break;
+      covered[idx] += take * unit;
+      if (!products[idx].pointsRedeemTier) {
+        products[idx].pointsRedeemTier = redeem.tier;
+      }
+      left -= take;
     }
   }
 
