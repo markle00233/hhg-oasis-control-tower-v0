@@ -2799,7 +2799,20 @@ export default function DeskAdministrationPage() {
     }
     if (isMiaOlympic) {
       const parts: string[] = [];
-      if (pool.qty > 0) parts.push(`hồ ${formatVnd(pool.sum)}`);
+      if (pool.qty > 0) {
+        const cutBits: string[] = [];
+        if (pool.accessoryDiscount > 0) {
+          cutBits.push(`−${formatVnd(pool.accessoryDiscount)} PK`);
+        }
+        if (pool.membershipDiscount > 0) {
+          cutBits.push(`−${formatVnd(pool.membershipDiscount)} gói`);
+        }
+        parts.push(
+          `hồ ${formatVnd(pool.sum)}${
+            cutBits.length ? ` (đã ${cutBits.join(", ")})` : ""
+          }`
+        );
+      }
       if (miaQty > 0) parts.push(`mía ${formatVnd(deskMiaPayable())}`);
       const prefix = isMiaOi && miaCartOpen() ? "Gọi thêm " : "";
       return `${prefix}${totalQty} món · ${formatVnd(totalVnd)}${
@@ -2815,6 +2828,36 @@ export default function DeskAdministrationPage() {
         ? ` · −${deskRedeemPreview().extraUnits * DESK_REDEEM_DRINK_STEP} điểm`
         : ""
     }${selectedDeskVoucher() ? ` · ${selectedDeskVoucher()?.title}` : ""}`;
+  }
+
+  /** Dòng ghi rõ được giảm / không giảm trên board gộp. */
+  function boardDiscountNotes(): string[] {
+    if (!isMiaOlympic) return [];
+    const pool = boardPoolTotals();
+    const notes: string[] = [];
+    if (pool.accessoryDiscount > 0) {
+      notes.push(
+        `✓ Phụ kiện ≥2 món: −10% phụ kiện (−${formatVnd(pool.accessoryDiscount)})`
+      );
+    } else if (pool.qty > 0) {
+      notes.push("Phụ kiện: chọn ≥2 món mới −10% (chỉ phần phụ kiện)");
+    }
+    if (pool.membershipDiscount > 0) {
+      notes.push(
+        `✓ Gói tháng cùng ngày vé bơi: −10% (−${formatVnd(pool.membershipDiscount)})`
+      );
+    }
+    notes.push("Không giảm: vé bơi lẻ · đồ uống Mía (trừ khi dùng điểm/voucher)");
+    const redeem = deskRedeemPreview();
+    if (redeem.extraUnits > 0) {
+      notes.push(
+        `✓ Điểm Mía: −${redeem.extraUnits * DESK_REDEEM_DRINK_STEP} điểm (−${formatVnd(redeem.extraOff)})`
+      );
+    }
+    if (selectedDeskVoucher()) {
+      notes.push(`✓ Voucher Mía: ${selectedDeskVoucher()?.title}`);
+    }
+    return notes;
   }
 
   function renderDeskVoucherButton(disabled?: boolean) {
@@ -4935,7 +4978,19 @@ export default function DeskAdministrationPage() {
                         fontSize: 15,
                       }}
                     >
-                      1 · Hồ Olympic — Vé
+                      1 · Hồ Olympic — Vé / phụ kiện
+                    </p>
+                    <p
+                      style={{
+                        margin: "0 0 8px",
+                        fontSize: 12,
+                        color: "#0c4a6e",
+                        lineHeight: 1.45,
+                        fontWeight: 600,
+                      }}
+                    >
+                      Giảm: phụ kiện ≥2 món → −10% phần phụ kiện · gói tháng
+                      cùng ngày vé bơi → −10% gói. Không giảm: vé bơi lẻ.
                     </p>
                     {!focusedPoolScanId ? (
                       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b" }}>
@@ -5252,6 +5307,31 @@ export default function DeskAdministrationPage() {
                     <div style={{ fontWeight: 800, lineHeight: 1.35 }}>
                       {boardSummaryLabel()}
                     </div>
+                    {isMiaOlympic && boardDiscountNotes().length ? (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          display: "grid",
+                          gap: 2,
+                        }}
+                      >
+                        {boardDiscountNotes().map((note) => (
+                          <div
+                            key={note}
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: note.startsWith("✓")
+                                ? "#047857"
+                                : "#64748b",
+                              lineHeight: 1.35,
+                            }}
+                          >
+                            {note}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     {orderMsg ? (
                       <div
                         style={{
