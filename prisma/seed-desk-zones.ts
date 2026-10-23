@@ -115,6 +115,33 @@ async function main() {
     (admin === "created" ? created : updated).push(adminUser);
   }
 
+  // Acc GYM / ADMINISTRATIONGYM → cùng quầy Mía·Olympic (QR gộp)
+  for (const u of [
+    {
+      username: "GYM",
+      displayName: "Mía Ơi · Hồ Olympic",
+      deskZone: "MIA_OLYMPIC",
+      hash: staffHash,
+      forceReset: reset,
+    },
+    {
+      username: "ADMINISTRATIONGYM",
+      displayName: "Admin Mía Ơi · Hồ Olympic",
+      deskZone: "MIA_OLYMPIC",
+      hash: adminHash,
+      forceReset: true,
+    },
+  ] as const) {
+    const r = await upsertDeskUser({
+      username: u.username,
+      displayName: u.displayName,
+      deskZone: u.deskZone,
+      passwordHash: u.hash,
+      reset: u.forceReset,
+    });
+    (r === "created" ? created : updated).push(u.username);
+  }
+
   const administrationHash = await hashPassword(ADMIN_PANEL_PASSWORD);
   const administration = await prisma.user.findUnique({
     where: { username: "ADMINISTRATION" },

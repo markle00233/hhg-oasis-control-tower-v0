@@ -30,7 +30,6 @@ import { printDayBillsPdf, type DayBill } from "@/lib/day-bills-print";
 import {
   DESK_ZONES,
   MIA_OLYMPIC_LABEL,
-  MIA_OLYMPIC_SECTOR,
   dashboardTitle,
   getDeskZone,
   isSwimLessonDesk,
@@ -873,11 +872,13 @@ export default function DeskAdministrationPage() {
   const zoneRef = useRef(zone);
   zoneRef.current = zone;
   const zoneName = picked?.name || "";
-  const isMiaOi = zone === "MIA_OI";
+  /** Quầy gộp Mía + Hồ — 1 dashboard, menu order 2 section */
+  const isMiaOlympic = !!zone && miaOlympicSector(zone);
+  const isMiaOi = zone === "MIA_OI" || isMiaOlympic;
   const isSpa = zone === "SAUNA";
-  const isPool = zone === "OLYMPIC_POOL";
+  const isPool = zone === "OLYMPIC_POOL" || isMiaOlympic;
   const isLongNuong = zone === "LONG_NUONG";
-  /** Menu phía trên — pool bán vé dưới từng lần quét */
+  /** Menu phía trên — gộp Mía+Hồ hoặc Spa */
   const hasCatalog = isMiaOi || isSpa;
   const title = dashboardTitle(zoneName || "…");
   const catalogCategories = isSpa ? SPA_CATEGORIES : MIAOI_CATEGORIES;
@@ -921,6 +922,15 @@ export default function DeskAdministrationPage() {
       guestTickets.find((t) => t.orderStatus === "pending") || guestTickets[0]
     );
   }, [guestTickets, selectedTicketKey]);
+
+  /** Lần quét hồ đang focus — vé trên board gộp gắn vào đây */
+  const focusedPoolScanId =
+    isPool &&
+    focusedTicket?.scan?.id &&
+    !focusedTicket.scan.ticketVerified &&
+    !focusedTicket.scan.orderId
+      ? focusedTicket.scan.id
+      : null;
 
   const guestCartLines = useMemo(
     () => approvedCartPoolLines(),
@@ -1322,27 +1332,6 @@ export default function DeskAdministrationPage() {
     } finally {
       setRejectBusy(false);
     }
-  }
-
-  function switchMiaOlympic(nextCode: (typeof MIA_OLYMPIC_SECTOR)[number]) {
-    if (!zone || zone === nextCode || !miaOlympicSector(zone)) return;
-    const next = getDeskZone(nextCode);
-    if (!next) return;
-    setPicked(next);
-    setArrivals([]);
-    setSelected(null);
-    setSelectedTicketKey(null);
-    setCart({});
-    setScanCarts({});
-    setGuestCart(null);
-    setOrderMsg("");
-    setError("");
-    setScanOpen(false);
-    setCreateGuestOpen(false);
-    setDeskRedeemUnits(0);
-    setDeskVoucherOfferId("");
-    setVoucherPickerOpen(false);
-    if (nextCode === "MIA_OI") setCategory(MIAOI_CATEGORIES[0]?.id || "mia");
   }
 
   function chooseAdmin() {
@@ -2989,7 +2978,7 @@ export default function DeskAdministrationPage() {
               gap: 10,
             }}
           >
-            {DESK_ZONES.filter((z) => z.code !== "OLYMPIC_POOL").map((z) => (
+            {DESK_ZONES.map((z) => (
               <button
                 key={z.code}
                 type="button"
@@ -2997,7 +2986,7 @@ export default function DeskAdministrationPage() {
                 style={{
                   ...styles.zoneBtn,
                   borderColor:
-                    z.code === "MIA_OI"
+                    z.code === "MIA_OLYMPIC"
                       ? "#b45309"
                       : z.code === "SAUNA"
                         ? "#1b3022"
@@ -3005,7 +2994,7 @@ export default function DeskAdministrationPage() {
                           ? "#0369a1"
                           : "#e2e8f0",
                   background:
-                    z.code === "MIA_OI"
+                    z.code === "MIA_OLYMPIC"
                       ? "#fff7ed"
                       : z.code === "SAUNA"
                         ? "#eef5f0"
@@ -3014,9 +3003,7 @@ export default function DeskAdministrationPage() {
                           : "#f1f5f9",
                 }}
               >
-                <strong style={{ fontSize: 15 }}>
-                  {z.code === "MIA_OI" ? MIA_OLYMPIC_LABEL : z.name}
-                </strong>
+                <strong style={{ fontSize: 15 }}>{z.name}</strong>
               </button>
             ))}
             <button
@@ -3175,34 +3162,6 @@ export default function DeskAdministrationPage() {
         <div>
           <p style={styles.eyebrow}>adminAllplace · Quầy phân khu</p>
           <h1 style={styles.h1}>{title}</h1>
-          {zone && miaOlympicSector(zone) ? (
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              {MIA_OLYMPIC_SECTOR.map((code) => {
-                const on = zone === code;
-                const label = getDeskZone(code)?.name || code;
-                return (
-                  <button
-                    key={code}
-                    type="button"
-                    onClick={() => switchMiaOlympic(code)}
-                    style={{
-                      border: on ? "1px solid #1e3a5f" : "1px solid #cbd5e1",
-                      background: on ? "#1e3a5f" : "#fff",
-                      color: on ? "#fff" : "#0f172a",
-                      borderRadius: 999,
-                      height: 34,
-                      padding: "0 14px",
-                      fontWeight: 800,
-                      fontSize: 13,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
           <p style={styles.mute}>
             {hasCatalog
               ? `${deskTickets.length} dòng · ${openOrderCount} chưa order · ${pendingApprovalCount} chờ duyệt`
@@ -3210,11 +3169,10 @@ export default function DeskAdministrationPage() {
             {pendingApprovalCount > 0
               ? " · bấm Xác nhận để mở QR cho khách"
               : ""}
-            {isMiaOi
-              ? " · duyệt QR → mở khách → Xác nhận, không gọi thêm / Xác nhận và gọi thêm"
+            {isMiaOlympic
+              ? " · 1 quầy Mía+Hồ · menu order 2 phần (vé / đồ uống)"
               : ""}
             {isSpa ? " · bấm dòng để chọn spa" : ""}
-            {isPool ? " · sau duyệt: Quét QR → Xác thực, không mua thêm / Xác thực và mua thêm" : ""}
             {zone === "PICKLEBALL"
               ? " · duyệt đặt sân online · ghi khách tại quầy trên lịch · Kết thúc = reset sân"
               : ""}
@@ -4823,12 +4781,172 @@ export default function DeskAdministrationPage() {
 
             {miaOrderLocked() || (isSpa && guestCart && !spaCartEditable()) ? null : hasCatalog ? (
               <>
-                <p style={{ marginTop: 18, marginBottom: 8, fontWeight: 800 }}>
-                  {isMiaOi && miaCartOpen()
-                    ? "Gọi thêm — tuỳ chọn"
-                    : spaCartEditable()
-                      ? "Sửa đơn gốc"
-                      : catalogTitle()}
+                {isMiaOlympic ? (
+                  <div
+                    style={{
+                      marginTop: 18,
+                      marginBottom: 14,
+                      padding: 14,
+                      borderRadius: 16,
+                      border: "1px solid #bae6fd",
+                      background: "#f0f9ff",
+                    }}
+                  >
+                    <p
+                      style={{
+                        margin: "0 0 6px",
+                        fontWeight: 800,
+                        color: "#0c4a6e",
+                        fontSize: 15,
+                      }}
+                    >
+                      1 · Hồ Olympic — Vé
+                    </p>
+                    {!focusedPoolScanId ? (
+                      <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b" }}>
+                        Chọn dòng quét / yêu cầu hồ bên trên để gắn vé, rồi +/−
+                        bên dưới.
+                      </p>
+                    ) : (
+                      <p style={{ margin: "0 0 8px", fontSize: 12, color: "#0369a1" }}>
+                        Đang gắn vé vào lần quét{" "}
+                        {formatTime(focusedTicket?.scanAt || "")}.
+                      </p>
+                    )}
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        maxHeight: 220,
+                        overflow: "auto",
+                        opacity: focusedPoolScanId ? 1 : 0.55,
+                        pointerEvents: focusedPoolScanId ? "auto" : "none",
+                      }}
+                    >
+                      {POOL_CATEGORIES.map((cat) => {
+                        const items = POOL_MENU.filter(
+                          (item) => item.category === cat.id
+                        );
+                        if (!items.length) return null;
+                        const membershipHeld =
+                          cat.id === "goi-thang" && olympicMembershipLocked();
+                        return (
+                          <div key={cat.id} style={{ display: "grid", gap: 6 }}>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: 11,
+                                fontWeight: 800,
+                                color: "#0c4a6e",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.04em",
+                              }}
+                            >
+                              {cat.nameVi}
+                            </p>
+                            {membershipHeld ? (
+                              <p
+                                style={{
+                                  margin: 0,
+                                  fontSize: 12,
+                                  color: "#9a3412",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                Đang dùng gói hội viên — hết hạn mới chọn gói mới.
+                              </p>
+                            ) : null}
+                            {items.map((item) => {
+                              const q = focusedPoolScanId
+                                ? scanQty(focusedPoolScanId, item.id)
+                                : 0;
+                              return (
+                                <div
+                                  key={item.id}
+                                  style={{
+                                    ...styles.menuRow,
+                                    opacity: membershipHeld ? 0.5 : 1,
+                                  }}
+                                >
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 700 }}>
+                                      {item.nameVi}
+                                    </div>
+                                    <div
+                                      style={{ fontSize: 12, color: "#64748b" }}
+                                    >
+                                      {formatPoolPrice(item)}
+                                      {item.durationMin
+                                        ? ` · ${item.durationMin}'`
+                                        : ""}
+                                    </div>
+                                  </div>
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      style={styles.qtyBtn}
+                                      disabled={!focusedPoolScanId || q <= 0}
+                                      onClick={() =>
+                                        focusedPoolScanId &&
+                                        setScanQty(
+                                          focusedPoolScanId,
+                                          item.id,
+                                          q - 1
+                                        )
+                                      }
+                                    >
+                                      −
+                                    </button>
+                                    <span
+                                      style={{
+                                        width: 22,
+                                        textAlign: "center",
+                                        fontWeight: 800,
+                                      }}
+                                    >
+                                      {q}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      style={styles.qtyBtn}
+                                      disabled={
+                                        !focusedPoolScanId || membershipHeld
+                                      }
+                                      onClick={() =>
+                                        focusedPoolScanId &&
+                                        setScanQty(
+                                          focusedPoolScanId,
+                                          item.id,
+                                          q + 1
+                                        )
+                                      }
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                <p style={{ marginTop: isMiaOlympic ? 8 : 18, marginBottom: 8, fontWeight: 800 }}>
+                  {isMiaOlympic
+                    ? "2 · Mía Ơi — Đồ uống"
+                    : isMiaOi && miaCartOpen()
+                      ? "Gọi thêm — tuỳ chọn"
+                      : spaCartEditable()
+                        ? "Sửa đơn gốc"
+                        : catalogTitle()}
                 </p>
                 {isMiaOi && miaCartOpen() ? (
                   <p style={{ margin: "0 0 8px", fontSize: 12, color: "#334155" }}>
@@ -5287,7 +5405,7 @@ export default function DeskAdministrationPage() {
                         </span>
                       </div>
 
-                      {isPool && !locked && isFocus && s ? (
+                      {isPool && !isMiaOlympic && !locked && isFocus && s ? (
                         <div
                           style={{
                             marginTop: 10,

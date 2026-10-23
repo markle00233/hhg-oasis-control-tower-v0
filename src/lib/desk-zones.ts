@@ -10,15 +10,25 @@ export type DeskZone = {
 };
 
 export const DESK_ZONES: DeskZone[] = [
-  { code: "MIA_OI", name: "Mía Ơi", username: "MIAOI" },
+  /** 1 quầy · 1 QR · menu order 2 section (Mía + Hồ) */
+  {
+    code: "MIA_OLYMPIC",
+    name: "Mía Ơi · Hồ Olympic",
+    username: "MIAOI",
+  },
   { code: "VIP_RESORT", name: "VIP", username: "VIP" },
   { code: "PICKLEBALL", name: "Pickleball", username: "PICKLEBALL" },
   { code: "SAUNA", name: "HHG Oasis Spa", username: "SPA" },
-  { code: "OLYMPIC_POOL", name: "Hồ Olympic", username: "GYM" },
   { code: "JACUZZI", name: "Jacuzzi", username: "JACUZZI" },
   { code: "LONG_NUONG", name: "Lòng Nướng Chí Phèo", username: "LONGNUONG" },
   { code: "SWIM_LESSON", name: "Khách học bơi", username: "HOCBOI" },
 ];
+
+/** Acc GYM vẫn vào cùng quầy Mía·Olympic (không hiện ô riêng). */
+export const LEGACY_DESK_USERNAMES: Record<string, string> = {
+  GYM: "MIA_OLYMPIC",
+  MIAOI: "MIA_OLYMPIC",
+};
 
 /** Quầy danh sách học viên — không dùng bảng duyệt QR thông thường. */
 export function isSwimLessonDesk(code: string) {
@@ -33,6 +43,9 @@ export function zoneHasResources(code: string) {
 
 export function getDeskZone(code: string): DeskZone | null {
   const c = code.trim().toUpperCase();
+  if (c === "MIA_OI" || c === "OLYMPIC_POOL" || c === "OLYMPIC") {
+    return DESK_ZONES.find((z) => z.code === "MIA_OLYMPIC") || null;
+  }
   return DESK_ZONES.find((z) => z.code === c) || null;
 }
 
@@ -46,6 +59,7 @@ export function parseZoneAdminUsername(username: string): DeskZone | null {
   if (!u.startsWith("ADMINISTRATION")) return null;
   const rest = u.slice("ADMINISTRATION".length);
   if (!rest) return null;
+  if (rest === "GYM" || rest === "MIAOI") return getDeskZone("MIA_OLYMPIC");
   return DESK_ZONES.find((z) => z.username === rest) || null;
 }
 
@@ -63,17 +77,31 @@ export function isZoneDeskAdmin(
 
 export function deskZoneByUsername(username: string): DeskZone | null {
   const u = username.trim().toUpperCase();
+  const legacyCode = LEGACY_DESK_USERNAMES[u];
+  if (legacyCode) return getDeskZone(legacyCode);
   const direct = DESK_ZONES.find((z) => z.username === u);
   if (direct) return direct;
   return parseZoneAdminUsername(u);
+}
+
+/** Resolve old MIA_OI / OLYMPIC_POOL codes to the merged desk tile. */
+export function resolveDeskZone(code: string): DeskZone | null {
+  const c = code.trim().toUpperCase();
+  if (miaOlympicSector(c)) return getDeskZone("MIA_OLYMPIC");
+  return getDeskZone(c);
 }
 
 export function dashboardTitle(zoneName: string) {
   return `Dashboard ${zoneName}`;
 }
 
-/** Mía Ơi và Hồ Olympic dùng chung một quầy: đổi chỗ không cần đăng xuất. */
-export const MIA_OLYMPIC_SECTOR = ["MIA_OI", "OLYMPIC_POOL"] as const;
+/** Mía Ơi + Hồ Olympic = 1 quầy / 1 dashboard / 1 QR. */
+export const MIA_OLYMPIC_SECTOR = [
+  "MIA_OLYMPIC",
+  "MIA_OI",
+  "OLYMPIC_POOL",
+  "OLYMPIC",
+] as const;
 export const MIA_OLYMPIC_LABEL = "Mía Ơi · Hồ Olympic";
 
 export function miaOlympicSector(code: string) {
@@ -91,11 +119,12 @@ export function sameDeskSector(a: string, b: string) {
 /** Zone codes that map to the same desk counter (customer QR may use SPA vs SAUNA). */
 export function deskZoneAliases(zone: string): string[] {
   const z = zone.trim().toUpperCase();
+  if (miaOlympicSector(z)) {
+    return ["MIA_OLYMPIC", "MIA_OI", "OLYMPIC_POOL", "OLYMPIC"];
+  }
   const map: Record<string, string[]> = {
     SAUNA: ["SAUNA", "SPA"],
     SPA: ["SPA", "SAUNA"],
-    OLYMPIC_POOL: ["OLYMPIC_POOL", "OLYMPIC"],
-    OLYMPIC: ["OLYMPIC", "OLYMPIC_POOL"],
     VIP_RESORT: ["VIP_RESORT", "VIP"],
     VIP: ["VIP", "VIP_RESORT"],
     RESORT_POOL: ["RESORT_POOL", "RESORT"],
