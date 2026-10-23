@@ -55,6 +55,41 @@ async function olympicService() {
   });
 }
 
+/** Đơn gộp có thể thêm vé khi dòng đang chọn không phải lần quét hồ. */
+async function ensureOpenOlympicScan(customerId: string, scanEventId: string) {
+  const service = await olympicService();
+  if (!service) return null;
+  if (scanEventId) {
+    const named = await prisma.appServiceEvent.findFirst({
+      where: { id: scanEventId, customerId, eventType: "SERVICE_USE" },
+    });
+    if (named && !scanAlreadyVerified(asMeta(named.metadata))) return named.id;
+  }
+  const opens = await prisma.appServiceEvent.findMany({
+    where: {
+      customerId,
+      serviceId: service.id,
+      eventType: "SERVICE_USE",
+      operationalStatus: "NEW",
+      createdAt: { gte: new Date(Date.now() - 18 * 60 * 60 * 1000) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 6,
+  });
+  const open = opens.find((scan) => !scanAlreadyVerified(asMeta(scan.metadata)));
+  if (open) return open.id;
+  const created = await prisma.appServiceEvent.create({
+    data: {
+      customerId,
+      serviceId: service.id,
+      eventType: "SERVICE_USE",
+      operationalStatus: "NEW",
+      metadata: { source: "desk_shared_bill" },
+    },
+  });
+  return created.id;
+}
+
 /**
  * Xác thực vé Hồ Olympic gắn vào 1 lần quét (SERVICE_USE).
  * Không tạo thêm dòng lịch sử — cập nhật metadata của scan đó.
@@ -76,11 +111,8 @@ export async function POST(req: NextRequest) {
     const voucherOfferId = String(body.voucherOfferId || "").trim();
     const deskBundleId = String(body.deskBundleId || "").trim().slice(0, 40);
 
-    if (!customerId || !scanEventId) {
-      return NextResponse.json(
-        { error: "Thiếu customerId hoặc lần quét." },
-        { status: 400 }
-      );
+    if (!customerId) {
+      return NextResponse.json({ error: "Thiếu khách." }, { status: 400 });
     }
     if (!lines.length) {
       return NextResponse.json(
@@ -89,9 +121,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const resolvedScanId = await ensureOpenOlympicScan(customerId, scanEventId);
+    if (!resolvedScanId) {
+      return NextResponse.json(
+        { error: "Chưa cấu hình dịch vụ OLYMPIC_POOL." },
+        { status: 500 }
+      );
+    }
+
     const result = await confirmOlympicPoolScan({
       customerId,
-      scanEventId,
+      scanEventId: resolvedScanId,
       items: lines,
       staffUserId: gate.user.id,
       note,
