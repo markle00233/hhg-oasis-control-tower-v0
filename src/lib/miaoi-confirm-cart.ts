@@ -1,6 +1,14 @@
 import { CART_STATUS } from "@/lib/cart-status";
-import { applyDeskRedeemUnits, earnableVnd } from "@/lib/desk-point-redeem";
+import {
+  applyDeskRedeemUnits,
+  coverDrinkCartPoints,
+  earnableVnd,
+} from "@/lib/desk-point-redeem";
 import { getMiaOiItem } from "@/lib/miaoi-menu";
+import {
+  cartHasMiaMembershipDiscount,
+  quoteMiaOiVipDiscount,
+} from "@/lib/olympic-membership";
 import {
   REDEEM_DRINK_MAX_VND,
   REDEEM_TIER_DRINK,
@@ -14,6 +22,7 @@ import {
   quoteDeskBillVoucher,
   voucherErrorStatus,
 } from "@/lib/voucher-redeem";
+import { isMiaOiMembershipVoucher } from "@/lib/hhg-vouchers";
 
 type CartItem = {
   id?: string;
@@ -48,6 +57,8 @@ export async function confirmMiaOiCartPayment(opts: {
   pointsRedeemUnits?: number;
   voucherOfferId?: string;
   staffName?: string;
+  /** Cùng id với vé hồ khi quầy lưu một lần. */
+  deskBundleId?: string;
 }) {
   const token = opts.token.trim().replace(/^.*\/q\//, "");
   const cart = await prisma.appServiceCart.findUnique({
@@ -61,6 +72,9 @@ export async function confirmMiaOiCartPayment(opts: {
           phoneLast4: true,
           shortId: true,
           customerCode: true,
+          segment: true,
+          vipExpiresAt: true,
+          vipPlanLabel: true,
         },
       },
     },
@@ -284,13 +298,48 @@ export async function confirmMiaOiCartPayment(opts: {
     }
   }
 
+  // Safety net: ensure QR đổi điểm (pointsRedeemQty / points-redeem-50) is on lines
+  // before total / metadata / cộng điểm — phần đổi điểm không được cộng điểm.
+  {
+    const covered = coverDrinkCartPoints(finalItems, rawItems);
+    finalItems.length = 0;
+    finalItems.push(...covered);
+  }
+
   const subtotalBeforeDiscount =
     orderItems.reduce((s, i) => s + i.unitPriceVnd * i.qty, 0) + extraTotal;
   let totalVnd = Math.max(0, cart.totalVnd + extraTotal - extraPointsOff);
+
+  // Giỏ đã có dòng giảm gói → chỉ áp thêm trên gọi thêm; QR cũ → áp trên phần còn trả sau đổi điểm.
+  const cartMemberDisc = cartHasMiaMembershipDiscount(rawItems);
+  const memberBase = cartMemberDisc
+    ? Math.max(0, extraTotal)
+    : Math.max(
+        0,
+        subtotalBeforeDiscount -
+          finalItems.reduce(
+            (s, i) =>
+              s + Math.min(i.unitPriceVnd * i.qty, i.pointsDiscountVnd || 0),
+            0
+          )
+      );
+  const memberQuote = quoteMiaOiVipDiscount({
+    segment: cart.customer.segment,
+    vipExpiresAt: cart.customer.vipExpiresAt,
+    vipPlanLabel: cart.customer.vipPlanLabel,
+    baseVnd: memberBase,
+    noteSuffix: cartMemberDisc ? "gọi thêm" : undefined,
+  });
+  if (memberQuote.discountVnd > 0) {
+    totalVnd = Math.max(0, totalVnd - memberQuote.discountVnd);
+  }
+  const membershipNote = memberQuote.note;
+
   let voucherNote = "";
   let voucherQuote = { offerId: "", title: "", discountVnd: 0 };
   const voucherOfferId = String(opts.voucherOfferId || "").trim();
-  if (voucherOfferId) {
+  // Bỏ qua voucher Mía % cũ — quyền giảm đã gắn gói VIP.
+  if (voucherOfferId && !isMiaOiMembershipVoucher(voucherOfferId)) {
     try {
       voucherQuote = await quoteDeskBillVoucher({
         customerId: cart.customerId,
@@ -322,6 +371,7 @@ export async function confirmMiaOiCartPayment(opts: {
         note: [
           `Thanh toán QR ${cart.token.slice(0, 12)}…`,
           deskRedeemNote,
+          membershipNote,
           voucherNote,
         ]
           .filter(Boolean)
@@ -357,6 +407,7 @@ export async function confirmMiaOiCartPayment(opts: {
             totalVnd,
             subtotalBeforeDiscount,
             paidAt: new Date().toISOString(),
+            ...(opts.deskBundleId ? { deskBundleId: opts.deskBundleId } : {}),
             items: finalItems.map((i) => ({
               name: i.nameVi,
               qty: i.qty,
@@ -443,18 +494,8 @@ export async function confirmMiaOiCartPayment(opts: {
     }
   }
 
-  const pts = await awardPurchasePoints({
-    customerId: cart.customerId,
-    refType: "SERVICE_CART",
-    refId: cart.id,
-    subtotalVnd: earnableVnd(finalItems),
-    note: `Mía Ơi · ${earnableVnd(finalItems)}đ phần chưa đổi điểm`,
-  }).catch((err) => {
-    console.error("[miaoi-confirm points]", err);
-    return null;
-  });
-
-  let pointsBalance = pts?.balance ?? null;
+  // Burn redeem first, then award only on unpaid remainder (đổi điểm không cộng điểm).
+  let pointsBalance: number | null = null;
   if (deskRedeemCost > 0) {
     const burned = await redeemPoints({
       customerId: cart.customerId,
@@ -473,6 +514,27 @@ export async function confirmMiaOiCartPayment(opts: {
       note: `Đổi 50 điểm · món gọi thêm · ${redeemItemId}`,
     });
     pointsBalance = burned.balance;
+  }
+
+  const earnable = earnableVnd(finalItems);
+  const pts = await awardPurchasePoints({
+    customerId: cart.customerId,
+    refType: "SERVICE_CART",
+    refId: cart.id,
+    subtotalVnd: earnable,
+    note: `Mía Ơi · ${earnable}đ phần chưa đổi điểm`,
+  }).catch((err) => {
+    console.error("[miaoi-confirm points]", err);
+    return null;
+  });
+  if (pts && typeof pts.balance === "number") {
+    pointsBalance = pts.balance;
+  } else if (pointsBalance == null) {
+    const c = await prisma.appCustomer.findUnique({
+      where: { id: cart.customerId },
+      select: { pointsBalance: true },
+    });
+    pointsBalance = c?.pointsBalance ?? null;
   }
 
   return {

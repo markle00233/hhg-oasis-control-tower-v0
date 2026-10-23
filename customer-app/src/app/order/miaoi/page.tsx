@@ -16,6 +16,11 @@ import {
   type HomeOffer,
 } from "@/lib/home-services";
 import {
+  miaOiDiscountPercentForTier,
+  miaOiMembershipDiscountVnd,
+  type MembershipTier,
+} from "@/lib/membership-theme";
+import {
   MIAOI_CATEGORIES,
   MIAOI_MENU,
   formatMenuPrice,
@@ -45,6 +50,9 @@ export default function MiaOiOrderPage() {
   const [appliedOffers, setAppliedOffers] = useState<HomeOffer[]>([]);
   const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
   const [pointsBalance, setPointsBalance] = useState(0);
+  const [membershipTier, setMembershipTier] = useState<MembershipTier | null>(
+    null
+  );
   const [redeemQtyByKey, setRedeemQtyByKey] = useState<Record<string, number>>(
     {}
   );
@@ -68,6 +76,12 @@ export default function MiaOiOrderPage() {
       }
       if (!cancelled) {
         setPointsBalance(Number(data.customer?.pointsBalance) || 0);
+        const tier = Number(data.customer?.membershipTier) || 0;
+        setMembershipTier(
+          tier === 1 || tier === 3 || tier === 6 || tier === 12
+            ? (tier as MembershipTier)
+            : null
+        );
       }
       const offerRes = await fetch("/api/me/offers", { cache: "no-store" });
       if (offerRes.ok) {
@@ -109,6 +123,7 @@ export default function MiaOiOrderPage() {
     return s;
   }, [lines]);
   const priced = applyOffersDiscount(subtotal, appliedOffers);
+  const membershipPct = miaOiDiscountPercentForTier(membershipTier);
   const cartItemsForRedeem = useMemo(
     () =>
       lines.map((l) => {
@@ -143,7 +158,14 @@ export default function MiaOiOrderPage() {
       : null;
   const pointsDiscount = redeemPreview?.ok ? redeemPreview.discountVnd : 0;
   const pointsCost = redeemPreview?.ok ? redeemPreview.cost : 0;
-  const total = Math.max(0, priced.totalVnd - pointsDiscount);
+  const membershipDiscount = miaOiMembershipDiscountVnd(
+    Math.max(0, subtotal - pointsDiscount),
+    membershipPct
+  );
+  const total = Math.max(
+    0,
+    priced.totalVnd - pointsDiscount - membershipDiscount
+  );
 
   function maxRedeemFor(key: string, orderQty: number, unit: number) {
     if (orderQty <= 0 || unit <= 0 || unit > REDEEM_DRINK_MAX_VND) return 0;
@@ -278,6 +300,11 @@ export default function MiaOiOrderPage() {
           ),
           ...(pointsCost > 0
             ? [`Đổi ${pointsCost} điểm (−${formatVnd(pointsDiscount)})`]
+            : []),
+          ...(membershipDiscount > 0
+            ? [
+                `Hội viên −${membershipPct}% (−${formatVnd(membershipDiscount)})`,
+              ]
             : []),
           `Tổng ${formatVnd(paid)}`,
         ],
@@ -430,9 +457,10 @@ export default function MiaOiOrderPage() {
             <p className="text-xs text-oasis-mute">Giỏ hàng</p>
             <p className="font-bold text-oasis-ink">
               {lines.reduce((n, l) => n + l.qty, 0)} món · {formatVnd(total)}
-              {priced.discountVnd + pointsDiscount > 0
-                ? ` (−${formatVnd(priced.discountVnd + pointsDiscount)})`
+              {priced.discountVnd + pointsDiscount + membershipDiscount > 0
+                ? ` (−${formatVnd(priced.discountVnd + pointsDiscount + membershipDiscount)})`
                 : ""}
+              {membershipPct > 0 ? ` · gói −${membershipPct}%` : ""}
               {pointsCost > 0 ? ` · đổi ${pointsCost} điểm` : ""}
             </p>
           </div>

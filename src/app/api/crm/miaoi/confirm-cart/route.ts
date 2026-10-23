@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
       Math.round(Number(body.pointsRedeemUnits) || 0)
     );
     const voucherOfferId = String(body.voucherOfferId || "").trim();
+    const deskBundleId = String(body.deskBundleId || "").trim().slice(0, 40);
     const result = await confirmMiaOiCartPayment({
       token,
       staffUserId: gate.user.id,
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
       pointsRedeem,
       pointsRedeemUnits,
       voucherOfferId,
+      deskBundleId: deskBundleId || undefined,
     });
     if (!result.ok) {
       return NextResponse.json(

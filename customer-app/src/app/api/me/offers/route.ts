@@ -6,6 +6,7 @@ import { isVipActive, vipExpiryLabel } from "@/lib/vip";
 import {
   isDurationMembershipVoucher,
   isLimitedMembershipVoucher,
+  isMiaOiMembershipVoucher,
 } from "@/lib/hhg-vouchers";
 import {
   consumeMembershipVoucherUse,
@@ -82,6 +83,8 @@ export async function GET() {
     // Voucher hội viên: hiệu lực từ ngày nâng cấp → hết hạn gói
     const wallet = fresh
       .filter((r) => r.status === "COLLECTED")
+      // Mía % là quyền gói VIP, không còn thẻ voucher trong ví.
+      .filter((r) => !isMiaOiMembershipVoucher(r.offerId))
       .map((r) => {
         const o = getOfferById(r.offerId);
         if (!o) return null;

@@ -106,6 +106,28 @@ export function packageIdFromTier(tier: MembershipTier) {
   return `oly-${tier}m` as const;
 }
 
+/** Cart line id for auto VIP Mía discount (must match desk confirm). */
+export const MIA_MEMBERSHIP_DISC_PREFIX = "disc-mia-membership";
+
+/** Giảm Mía Ơi theo gói VIP (trong hạn) — không phải voucher. */
+export function miaOiDiscountPercentForTier(
+  tier: MembershipTier | null | undefined
+): number {
+  if (tier === 1 || tier === 3) return 5;
+  if (tier === 6 || tier === 12) return 10;
+  return 0;
+}
+
+export function miaOiMembershipDiscountVnd(
+  baseVnd: number,
+  percent: number
+): number {
+  const base = Math.max(0, Math.round(Number(baseVnd) || 0));
+  const p = Math.min(100, Math.max(0, Math.round(Number(percent) || 0)));
+  if (base <= 0 || p <= 0) return 0;
+  return Math.round((base * p) / 100);
+}
+
 export function isOlympicMembershipPackageId(id: string | null | undefined) {
   return /^oly-\d+m$/i.test(String(id || "").trim());
 }

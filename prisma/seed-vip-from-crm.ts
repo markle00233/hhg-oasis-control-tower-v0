@@ -76,10 +76,10 @@ function olympicPackageFromPlan(planName: string, planCode: string) {
 function vouchersForPackage(pkg?: string) {
   if (!pkg) return [] as string[];
   const map: Record<string, string[]> = {
-    "oly-1m": ["hhg-oly-spa-goi", "hhg-oly-mia-5"],
-    "oly-3m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k", "hhg-oly-mia-5"],
-    "oly-6m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k", "hhg-oly-mia-10"],
-    "oly-12m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k", "hhg-oly-mia-10"],
+    "oly-1m": ["hhg-oly-spa-goi"],
+    "oly-3m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k"],
+    "oly-6m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k"],
+    "oly-12m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k"],
   };
   return map[pkg] || [];
 }

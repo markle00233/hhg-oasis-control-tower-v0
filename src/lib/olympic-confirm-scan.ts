@@ -132,6 +132,7 @@ export async function confirmOlympicPoolScan(opts: {
   redeemUnits?: number;
   voucherOfferId?: string;
   staffName?: string;
+  deskBundleId?: string;
 }): Promise<OlympicConfirmOk | OlympicConfirmFail> {
   const customerId = opts.customerId.trim();
   const scanEventId = opts.scanEventId.trim();
@@ -417,6 +418,7 @@ export async function confirmOlympicPoolScan(opts: {
             manualDiscountVnd: priced.manualDiscountVnd,
             placedBy: "desk",
             verifiedByUserId: opts.staffUserId,
+            ...(opts.deskBundleId ? { deskBundleId: opts.deskBundleId } : {}),
             items: metaItems,
           },
         },
@@ -445,6 +447,7 @@ export async function confirmOlympicPoolScan(opts: {
               orderId: order.id,
               totalVnd,
               items: metaItems,
+              ...(opts.deskBundleId ? { deskBundleId: opts.deskBundleId } : {}),
             },
           },
         });

@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
       Math.round(Number(body.pointsRedeemUnits) || 0)
     );
     const voucherOfferId = String(body.voucherOfferId || "").trim();
+    const deskBundleId = String(body.deskBundleId || "").trim().slice(0, 40);
 
     if (!customerId || !scanEventId) {
       return NextResponse.json(
@@ -97,6 +98,7 @@ export async function POST(req: NextRequest) {
       redeemUnits,
       voucherOfferId,
       staffName: gate.user.displayName || gate.user.username,
+      deskBundleId: deskBundleId || undefined,
     });
     if (!result.ok) {
       return NextResponse.json(
@@ -209,6 +211,9 @@ export async function DELETE(req: NextRequest) {
         "manualDiscountVnd",
         "placedBy",
         "verifiedByUserId",
+        "deskBundleId",
+        "pointsRedeemUnits",
+        "pointsRedeemCost",
         "items",
         "mergedIntoScanId",
         "usedCartIds",

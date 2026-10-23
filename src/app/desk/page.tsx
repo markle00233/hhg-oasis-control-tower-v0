@@ -21,7 +21,10 @@ import {
   formatPoolPrice,
 } from "@/lib/olympic-pool-menu";
 import {
+  MIA_MEMBERSHIP_DISC_PREFIX,
   isOlympicMembershipActive,
+  miaOiDiscountPercentForPlanLabel,
+  miaOiMembershipDiscountVnd,
   segmentAtTime,
 } from "@/lib/olympic-membership";
 import { computePoolPricing } from "@/lib/pool-pricing";
@@ -59,6 +62,7 @@ import {
 } from "@/lib/order-status";
 import {
   REDEEM_DRINK_MAX_VND,
+  earnableVndFromPointLines,
   foldPointsOntoItems,
   previewCartPointLines,
 } from "@/lib/bill-points";
@@ -66,6 +70,7 @@ import {
   DESK_REDEEM_DRINK_STEP,
   DESK_REDEEM_SWIM_STEP,
   applyDeskRedeemUnits,
+  coverDrinkCartPoints,
   isDeskRedeemDrink,
   isDeskRedeemEligible,
   isDeskRedeemTicket,
@@ -101,6 +106,8 @@ type Scan = {
   orderId?: string | null;
   cartToken?: string | null;
   ticketItems?: ScanTicketItem[];
+  /** Set when staff saved hồ + mía in one click. */
+  deskBundleId?: string | null;
 };
 
 type DayOrder = {
@@ -213,35 +220,67 @@ type DeskTicket = {
   hasPointsRedeem: boolean;
   /** Điểm cộng từ đơn này (10.000đ trước giảm = 1 điểm) */
   pointsEarned: number;
+  /** both = một lần lưu hồ + mía. */
+  orderKind?: "both" | "mia" | "olympic" | "other";
+  /** Đơn đồ uống khi dòng là hồ + mía. Undo vẫn dùng scan hồ. */
+  miaOrderId?: string | null;
 };
 
 function pointsEarnedFromLines(
   items: {
     id?: string;
+    nameVi?: string;
     qty: number;
     priceVnd?: number;
     unitPriceVnd?: number;
+    pointsRedeemQty?: number;
     pointsDiscountVnd?: number;
+    pointsRedeemTier?: number | null;
   }[]
 ) {
-  const subtotal = items.reduce((s, i) => {
-    const id = String(i.id || "");
-    if (
-      id.startsWith("voucher-") ||
-      id.startsWith("points-redeem-") ||
-      id.startsWith("disc-")
-    ) {
-      return s;
-    }
-    const unit = Math.max(0, Number(i.unitPriceVnd ?? i.priceVnd) || 0);
-    const qty = Math.max(0, Number(i.qty) || 0);
-    const disc = Math.min(
-      unit * qty,
-      Math.max(0, Number(i.pointsDiscountVnd) || 0)
-    );
-    return s + unit * qty - disc;
-  }, 0);
-  return pointsFromSubtotal(subtotal);
+  // Fold points-redeem rows / pointsRedeemQty onto drinks so redeemed cups earn 0.
+  return pointsFromSubtotal(earnableVndFromPointLines(items));
+}
+
+/** Overlay QR đổi điểm onto order lines when ticket metadata lost the discount. */
+function withCartPointCover<
+  T extends {
+    id?: string;
+    nameVi: string;
+    qty: number;
+    unitPriceVnd: number;
+    pointsDiscountVnd?: number;
+    pointsRedeemTier?: number | null;
+  },
+>(
+  orderLines: T[],
+  cartItems: GuestCartPreview["items"] | undefined,
+  zoneCode?: string | null
+): T[] {
+  if (!cartItems?.length || !orderLines.length) return orderLines;
+  if (orderLines.some((l) => (l.pointsDiscountVnd || 0) > 0)) return orderLines;
+  const z = String(zoneCode || "").toUpperCase();
+  const kind = z === "OLYMPIC_POOL" || z === "OLYMPIC" ? "ticket" : "drink";
+  const covered = coverDrinkCartPoints(
+    orderLines.map((l) => ({
+      itemId: String(l.id || ""),
+      qty: l.qty,
+      unitPriceVnd: l.unitPriceVnd,
+      pointsDiscountVnd: l.pointsDiscountVnd || 0,
+      pointsRedeemTier: l.pointsRedeemTier ?? null,
+    })),
+    cartItems,
+    kind
+  );
+  return orderLines.map((line, i) => {
+    const hit = covered[i];
+    if (!hit || !(hit.pointsDiscountVnd > 0)) return line;
+    return {
+      ...line,
+      pointsDiscountVnd: hit.pointsDiscountVnd,
+      pointsRedeemTier: hit.pointsRedeemTier ?? line.pointsRedeemTier,
+    };
+  });
 }
 
 function formatTime(iso: string) {
@@ -324,8 +363,122 @@ function poolTicketLocked(t: DeskTicket) {
   );
 }
 
+function poolHistoryTicket(t: DeskTicket) {
+  const code = String(t.scan?.serviceCode || t.cart?.zoneCode || "").toUpperCase();
+  return code === "OLYMPIC_POOL" || code === "OLYMPIC";
+}
+
+function ticketSide(t: DeskTicket): "mia" | "olympic" | "other" {
+  const text = `${t.billText || ""} ${t.billItems.map((i) => i.nameVi).join(" ")}`.trim();
+  const hasBill =
+    t.billItems.length > 0 || (text !== "" && text !== "—" && text !== "-");
+  if (!hasBill) return "other";
+  const code = String(t.scan?.serviceCode || t.cart?.zoneCode || "").toUpperCase();
+  const event = String(t.scan?.eventType || "").toUpperCase();
+  if (event === "POOL_ORDER" || code === "OLYMPIC_POOL" || code === "OLYMPIC") {
+    return "olympic";
+  }
+  if (event === "MIA_OI_ORDER" || code === "MIA_OI") return "mia";
+  const lower = text.toLowerCase();
+  const olympic = /vé bơi|bikini|kính|quần bơi|nón bơi|phao/.test(lower);
+  const mia = /mía|mia |cà phê|trà |matcha|sinh tố|đá xay|topping/.test(lower);
+  if (olympic && !mia) return "olympic";
+  if (mia && !olympic) return "mia";
+  return "other";
+}
+
+function ticketTime(t: DeskTicket) {
+  const raw = t.scanAt || "";
+  const n = raw ? new Date(raw).getTime() : 0;
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Gộp vé hồ + đồ uống đã lưu cùng một lần thành 1 dòng. */
+function mergeOrderPair(a: DeskTicket, b: DeskTicket): DeskTicket {
+  const primary = ticketTime(a) >= ticketTime(b) ? a : b;
+  const pool = ticketSide(a) === "olympic" ? a : b;
+  const items = [...a.billItems, ...b.billItems];
+  const total = (a.billTotal || 0) + (b.billTotal || 0);
+  return {
+    ...primary,
+    key: `bundle-${a.key}-${b.key}`,
+    scan: pool.scan || primary.scan,
+    billItems: items,
+    billTotal: total,
+    billText: items.length
+      ? `${items.map((i) => `${i.qty}× ${i.nameVi}`).join(", ")} · ${formatVnd(total)}`
+      : [a.billText, b.billText].filter((x) => x && x !== "—").join(" · "),
+    pointsEarned: (a.pointsEarned || 0) + (b.pointsEarned || 0),
+    hasVoucher: a.hasVoucher || b.hasVoucher,
+    hasPointsRedeem: a.hasPointsRedeem || b.hasPointsRedeem,
+    promoLabel:
+      [a.promoLabel, b.promoLabel].filter((p) => p && p !== "—").join(" · ") ||
+      "—",
+    orderKind: "both",
+    miaOrderId:
+      a.miaOrderId ||
+      b.miaOrderId ||
+      (ticketSide(a) === "mia" ? a.orderId : ticketSide(b) === "mia" ? b.orderId : null),
+    orderStatus: "ordered",
+    orderLabel: "Đã order",
+  };
+}
+
+function miaHistoryOrderId(t: DeskTicket) {
+  if (t.orderKind === "both") return t.miaOrderId || null;
+  if (ticketSide(t) !== "mia") return null;
+  return t.orderId;
+}
+
+function groupMiaOlympicOrders(tickets: DeskTicket[]): DeskTicket[] {
+  const byGuest = new Map<string, DeskTicket[]>();
+  for (const t of tickets) {
+    const id = t.arrival?.id || "";
+    const list = byGuest.get(id) || [];
+    list.push(t);
+    byGuest.set(id, list);
+  }
+  const out: DeskTicket[] = [];
+  for (const list of byGuest.values()) {
+    const used = new Set<string>();
+    const byBundle = new Map<string, DeskTicket[]>();
+    for (const t of list) {
+      if (ticketSide(t) === "other") continue;
+      const id = String(t.scan?.deskBundleId || "").trim();
+      if (!id) continue;
+      const group = byBundle.get(id) || [];
+      group.push(t);
+      byBundle.set(id, group);
+    }
+    for (const [id, group] of byBundle) {
+      if (group.length < 2) continue;
+      const merged = group.slice(1).reduce((acc, t) => mergeOrderPair(acc, t), group[0]);
+      merged.key = `bundle-${id}`;
+      merged.orderKind = "both";
+      out.push(merged);
+      group.forEach((t) => used.add(t.key));
+    }
+    for (const t of list) {
+      if (used.has(t.key)) continue;
+      out.push({ ...t, orderKind: t.orderKind || ticketSide(t) });
+    }
+  }
+  return out.sort((a, b) => ticketTime(b) - ticketTime(a));
+}
+
 function scanForOrderId(scans: Scan[], orderId: string) {
   return scans.find((s) => s.orderId === orderId) || null;
+}
+
+function billScanScore(s: Scan) {
+  const items = s.ticketItems || [];
+  const hasDisc = items.some((i) => (i.pointsDiscountVnd || 0) > 0);
+  return (
+    (hasDisc ? 1000 : 0) +
+    items.length * 10 +
+    (s.cartToken ? 1 : 0) +
+    (s.eventType === "MIA_OI_ORDER" || s.eventType === "POOL_ORDER" ? 5 : 0)
+  );
 }
 
 /** One confirmed visit per order, even if several scans were merged. */
@@ -334,7 +487,9 @@ function confirmedPoolBills(scans: Scan[]): Scan[] {
   for (const s of scans) {
     if (!s.orderId || !scanLooksFinalized(s)) continue;
     const prev = byOrder.get(s.orderId);
-    if (!prev || (!prev.cartToken && s.cartToken)) byOrder.set(s.orderId, s);
+    if (!prev || billScanScore(s) > billScanScore(prev)) {
+      byOrder.set(s.orderId, s);
+    }
   }
   return [...byOrder.values()];
 }
@@ -486,20 +641,29 @@ function buildDeskTickets(
         }
       }
       const sourceItems = confirmed
-        ? (confirmed.ticketItems || []).map((i) => ({
-            id: i.itemId,
-            nameVi: i.nameVi,
-            qty: i.qty,
-            unitPriceVnd: i.unitPriceVnd,
-            pointsDiscountVnd: i.pointsDiscountVnd,
-            pointsRedeemTier: i.pointsRedeemTier,
-          }))
-        : claimed
-          ? claimed.items.map((i) => ({
+        ? withCartPointCover(
+            (confirmed.ticketItems || []).map((i) => ({
+              id: i.itemId,
               nameVi: i.nameVi,
               qty: i.qty,
               unitPriceVnd: i.unitPriceVnd,
-            }))
+              pointsDiscountVnd: i.pointsDiscountVnd,
+              pointsRedeemTier: i.pointsRedeemTier,
+            })),
+            cart.items,
+            cart.zoneCode || zoneCode
+          )
+        : claimed
+          ? withCartPointCover(
+              claimed.items.map((i) => ({
+                id: i.itemId,
+                nameVi: i.nameVi,
+                qty: i.qty,
+                unitPriceVnd: i.unitPriceVnd,
+              })),
+              cart.items,
+              cart.zoneCode || zoneCode
+            )
           : previewCartPointLines(cart.items || []);
       const billItems = billItemsFromPoints(sourceItems);
       const promo = parseCartPromo(cart.items);
@@ -801,6 +965,9 @@ export default function DeskAdministrationPage() {
     Record<string, Record<string, number>>
   >({});
   const [orderMsg, setOrderMsg] = useState("");
+  const [orderFilter, setOrderFilter] = useState<
+    "all" | "both" | "mia" | "olympic"
+  >("all");
   const [ordering, setOrdering] = useState(false);
   const [billViewer, setBillViewer] = useState<string | null>(null);
   const [billBusyToken, setBillBusyToken] = useState<string | null>(null);
@@ -872,13 +1039,13 @@ export default function DeskAdministrationPage() {
   const zoneRef = useRef(zone);
   zoneRef.current = zone;
   const zoneName = picked?.name || "";
-  /** Quầy gộp Mía + Hồ — 1 dashboard, menu order 2 section */
+  /** Quầy gộp Mía + Hồ — 1 dashboard, vé hồ và đồ uống trên cùng một đơn. */
   const isMiaOlympic = !!zone && miaOlympicSector(zone);
   const isMiaOi = zone === "MIA_OI" || isMiaOlympic;
   const isSpa = zone === "SAUNA";
   const isPool = zone === "OLYMPIC_POOL" || isMiaOlympic;
   const isLongNuong = zone === "LONG_NUONG";
-  /** Menu phía trên — gộp Mía+Hồ hoặc Spa */
+  /** Menu phía trên — gộp Mía+Hồ hoặc Spa. Hồ riêng vẫn bán vé dưới từng lần quét. */
   const hasCatalog = isMiaOi || isSpa;
   const title = dashboardTitle(zoneName || "…");
   const catalogCategories = isSpa ? SPA_CATEGORIES : MIAOI_CATEGORIES;
@@ -894,10 +1061,20 @@ export default function DeskAdministrationPage() {
     [arrivals, zone, hasCatalog]
   );
 
+  const groupedTickets = useMemo(
+    () => (isMiaOlympic ? groupMiaOlympicOrders(deskTickets) : deskTickets),
+    [deskTickets, isMiaOlympic]
+  );
+
+  const visibleTickets = useMemo(() => {
+    if (!isMiaOlympic || orderFilter === "all") return groupedTickets;
+    return groupedTickets.filter((t) => t.orderKind === orderFilter);
+  }, [groupedTickets, isMiaOlympic, orderFilter]);
+
   const guestTickets = useMemo(() => {
     if (!selected) return [];
-    return deskTickets.filter((t) => t.arrival.id === selected.id);
-  }, [deskTickets, selected]);
+    return groupedTickets.filter((t) => t.arrival.id === selected.id);
+  }, [groupedTickets, selected]);
 
   const focusedTicket = useMemo(() => {
     if (!guestTickets.length) return null;
@@ -923,14 +1100,19 @@ export default function DeskAdministrationPage() {
     );
   }, [guestTickets, selectedTicketKey]);
 
-  /** Lần quét hồ đang focus — vé trên board gộp gắn vào đây */
-  const focusedPoolScanId =
-    isPool &&
-    focusedTicket?.scan?.id &&
-    !focusedTicket.scan.ticketVerified &&
-    !focusedTicket.scan.orderId
-      ? focusedTicket.scan.id
-      : null;
+  /** Lần quét hồ đang chọn — vé trên đơn gộp gắn vào đây. */
+  const focusedPoolScanId = (() => {
+    if (!isMiaOlympic) return null;
+    const open = (scan: Scan | null | undefined) =>
+      !!scan?.id &&
+      !scan.ticketVerified &&
+      !scan.orderId &&
+      (scan.serviceCode === "OLYMPIC_POOL" || scan.serviceCode === "OLYMPIC");
+    if (open(focusedTicket?.scan)) return focusedTicket!.scan!.id;
+    if (!poolCartOpen()) return null;
+    const pending = guestTickets.filter((t) => open(t.scan));
+    return pending.length === 1 ? pending[0].scan!.id : null;
+  })();
 
   const guestCartLines = useMemo(
     () => approvedCartPoolLines(),
@@ -1527,8 +1709,8 @@ export default function DeskAdministrationPage() {
             at: new Date().toISOString(),
             eventType: "SERVICE_USE",
             operationalStatus: "NEW",
-            serviceCode: zone,
-            serviceName: zoneName || zone,
+            serviceCode: isMiaOlympic ? "OLYMPIC_POOL" : zone,
+            serviceName: isMiaOlympic ? "Hồ Olympic" : zoneName || zone,
             orderSummary: null,
             ticketVerified: false,
           }
@@ -2249,7 +2431,7 @@ export default function DeskAdministrationPage() {
   function exportTodayBillsPdf() {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    const todayTickets = deskTickets.filter((t) => {
+    const todayTickets = (isMiaOlympic ? groupedTickets : deskTickets).filter((t) => {
       if (!t.scanAt) return false;
       return new Date(t.scanAt).getTime() >= start.getTime();
     });
@@ -2321,6 +2503,38 @@ export default function DeskAdministrationPage() {
   }
 
   function sendPoolTicketBill(t: DeskTicket) {
+    if (t.orderKind === "both" && t.billItems.length) {
+      const at = t.scanAt || t.scan?.at || new Date().toISOString();
+      const items: ScanTicketItem[] = t.billItems
+        .filter((i) => i.nameVi && i.qty > 0)
+        .map((i) => ({
+          nameVi: i.nameVi,
+          qty: i.qty,
+          unitPriceVnd:
+            i.lineVnd != null && i.qty
+              ? Math.round(i.lineVnd / i.qty)
+              : i.priceVnd || 0,
+        }));
+      if (!items.length) {
+        setError("Chưa có món để in bill.");
+        return;
+      }
+      try {
+        printPoolBill({
+          customerName: selected?.fullName || "Khách",
+          phone: selected?.phone,
+          shortId: selected?.shortId,
+          entryAt: at,
+          totalVnd: t.billTotal || 0,
+          items,
+          orderId: t.scan?.orderId || t.orderId,
+        });
+        setOrderMsg(`Đã gửi in bill · ${formatTime(at)}`);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Không mở được máy in");
+      }
+      return;
+    }
     if (t.scan && (t.scan.ticketItems?.length || t.scan.orderSummary)) {
       sendPoolBill(t.scan);
       return;
@@ -2471,10 +2685,19 @@ export default function DeskAdministrationPage() {
     ) {
       return false;
     }
-    return guestCart.items.some(
-      (it) =>
-        !it.id.startsWith("voucher-") && !it.id.startsWith("points-redeem-")
-    );
+    return guestCart.items.some((it) => {
+      const id = String(it.id || "");
+      if (
+        !id ||
+        id.startsWith("voucher-") ||
+        id.startsWith("points-redeem-") ||
+        id.startsWith("disc-") ||
+        id.startsWith(MIA_MEMBERSHIP_DISC_PREFIX)
+      ) {
+        return false;
+      }
+      return !getPoolItemById(id);
+    });
   }
 
   function poolCartOpen() {
@@ -2753,26 +2976,79 @@ export default function DeskAdministrationPage() {
     return deskWallet.find((v) => v.offerId === deskVoucherOfferId) || null;
   }
 
+  function deskMiaMembershipPercent() {
+    if (!isMiaOi || !selected) return 0;
+    if (
+      !isOlympicMembershipActive({
+        segment: selected.segment,
+        vipExpiresAt: selected.packageExpiresAt,
+      })
+    ) {
+      return 0;
+    }
+    return miaOiDiscountPercentForPlanLabel(selected.packageLabel);
+  }
+
+  function focusedPoolScan() {
+    if (!focusedPoolScanId) return null;
+    if (focusedTicket?.scan?.id === focusedPoolScanId) return focusedTicket.scan;
+    return (
+      guestTickets.find((t) => t.scan?.id === focusedPoolScanId)?.scan ||
+      selected?.todayScans?.find((s) => s.id === focusedPoolScanId) ||
+      null
+    );
+  }
+
+  /** Vé trên lần quét đang chọn: giỏ khách đã duyệt cộng vé quầy vừa thêm. */
+  function focusedPoolLines() {
+    if (!isMiaOlympic || !focusedPoolScanId) return [];
+    const row = scanCarts[focusedPoolScanId] || {};
+    const added = Object.entries(row)
+      .filter(([, q]) => q > 0)
+      .map(([itemId, qty]) => ({ itemId, qty }));
+    return mergePoolLines(approvedCartPoolLines(), added);
+  }
+
+  function boardPoolTotals() {
+    const lines = focusedPoolLines();
+    if (!lines.length) {
+      return { sum: 0, qty: 0, accessoryDiscount: 0, membershipDiscount: 0 };
+    }
+    const priced = computePoolPricing(lines, {
+      sameDayMembership: guestHasSameDayOlympicOrder(),
+    });
+    return {
+      sum: priced.totalVnd,
+      qty: priced.lines.reduce((s, l) => s + l.qty, 0),
+      accessoryDiscount: priced.accessoryDiscountVnd,
+      membershipDiscount: priced.membershipDiscountVnd,
+    };
+  }
+
+  function boardSaveLabel() {
+    const pool = boardPoolTotals().qty > 0;
+    const mia = cartLines.length > 0;
+    if (pool && mia) return "Lưu đơn (hồ + mía)";
+    if (pool) return "Xác thực";
+    return "Lưu đơn";
+  }
+
   function deskVoucherPreviewCut(baseVnd: number) {
     const v = selectedDeskVoucher();
     if (!v) return 0;
     return deskVoucherCut(baseVnd, v);
   }
 
-  /** Tổng vé/phụ kiện hồ đang chọn trên board (scan focus). */
-  function boardPoolTotals() {
-    if (!isMiaOlympic || !focusedPoolScanId) {
-      return { sum: 0, qty: 0, accessoryDiscount: 0, membershipDiscount: 0 };
-    }
-    return scanCartTotal(focusedPoolScanId);
-  }
-
-  /** Tiền Mía (đã trừ điểm/voucher) — chưa gồm hồ. */
+  /** Tiền Mía sau điểm, % hội viên, rồi voucher — cùng thứ tự với API. */
   function deskMiaPayable() {
     const pointsOff = isMiaOi ? deskRedeemPreview().extraOff : 0;
     const afterPoints = Math.max(0, cartTotal - pointsOff);
-    const voucherOff = isMiaOi ? deskVoucherPreviewCut(afterPoints) : 0;
-    return Math.max(0, afterPoints - voucherOff);
+    const memberOff = isMiaOi
+      ? miaOiMembershipDiscountVnd(afterPoints, deskMiaMembershipPercent())
+      : 0;
+    const afterMember = Math.max(0, afterPoints - memberOff);
+    const voucherOff = isMiaOi ? deskVoucherPreviewCut(afterMember) : 0;
+    return Math.max(0, afterMember - voucherOff);
   }
 
   /** Tổng phải thu trên board: hồ + mía (gộp). */
@@ -2815,15 +3091,23 @@ export default function DeskAdministrationPage() {
       }
       if (miaQty > 0) parts.push(`mía ${formatVnd(deskMiaPayable())}`);
       const prefix = isMiaOi && miaCartOpen() ? "Gọi thêm " : "";
+      const memberBit =
+        miaQty > 0 && deskMiaMembershipPercent() > 0
+          ? ` · hội viên −${deskMiaMembershipPercent()}%`
+          : "";
       return `${prefix}${totalQty} món · ${formatVnd(totalVnd)}${
         parts.length ? ` (${parts.join(" + ")})` : ""
-      }${
+      }${memberBit}${
         isMiaOi && deskRedeemPreview().extraUnits
           ? ` · −${deskRedeemPreview().extraUnits * DESK_REDEEM_DRINK_STEP} điểm`
           : ""
       }${selectedDeskVoucher() ? ` · ${selectedDeskVoucher()?.title}` : ""}`;
     }
-    return `${isMiaOi && miaCartOpen() ? "Gọi thêm " : ""}${miaQty} ${catalogUnit()} · ${formatVnd(deskCatalogPayable())}${
+    const memberBit =
+      miaQty > 0 && deskMiaMembershipPercent() > 0
+        ? ` · hội viên −${deskMiaMembershipPercent()}%`
+        : "";
+    return `${isMiaOi && miaCartOpen() ? "Gọi thêm " : ""}${miaQty} ${catalogUnit()} · ${formatVnd(deskCatalogPayable())}${memberBit}${
       isMiaOi && deskRedeemPreview().extraUnits
         ? ` · −${deskRedeemPreview().extraUnits * DESK_REDEEM_DRINK_STEP} điểm`
         : ""
@@ -2847,7 +3131,14 @@ export default function DeskAdministrationPage() {
         `✓ Gói tháng cùng ngày vé bơi: −10% (−${formatVnd(pool.membershipDiscount)})`
       );
     }
-    notes.push("Không giảm: vé bơi lẻ · đồ uống Mía (trừ khi dùng điểm/voucher)");
+    const pct = deskMiaMembershipPercent();
+    const miaQty = cartLines.reduce((n, l) => n + l.qty, 0);
+    if (pct > 0 && miaQty > 0) {
+      notes.push(`✓ Hội viên Mía: −${pct}% đồ uống`);
+    }
+    notes.push(
+      "Không giảm: vé bơi lẻ · đồ uống Mía (trừ hội viên trong hạn, điểm hoặc voucher)"
+    );
     const redeem = deskRedeemPreview();
     if (redeem.extraUnits > 0) {
       notes.push(
@@ -2950,10 +3241,35 @@ export default function DeskAdministrationPage() {
       setError("Chọn món gọi thêm, hoặc bấm xác nhận giỏ.");
       return;
     }
+    const poolLines = focusedPoolLines();
+    const poolScan = focusedPoolScan();
+    const bundleId =
+      poolLines.length > 0 && poolScan ? `b${Date.now().toString(36)}` : "";
     setOrdering(true);
     setOrderMsg("");
     setError("");
+    const notes: string[] = [];
     try {
+      if (poolLines.length && poolScan && focusedPoolScanId) {
+        const poolRes = await fetch("/api/crm/pool/orders", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            customerId: selected.id,
+            scanEventId: poolScan.id,
+            items: poolLines,
+            ...(bundleId ? { deskBundleId: bundleId } : {}),
+          }),
+        });
+        const poolData = await poolRes.json();
+        if (!poolRes.ok) throw new Error(poolData.error || "Không xác thực được vé hồ");
+        notes.push(`hồ ${formatVnd(poolData.order?.totalVnd || 0)}`);
+        setScanCarts((prev) => {
+          const next = { ...prev };
+          delete next[focusedPoolScanId];
+          return next;
+        });
+      }
       const res = await fetch("/api/crm/miaoi/confirm-cart", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -2963,6 +3279,7 @@ export default function DeskAdministrationPage() {
           extraItems: extras,
           pointsRedeemUnits: deskRedeemUnits,
           voucherOfferId: deskVoucherOfferId || undefined,
+          ...(bundleId ? { deskBundleId: bundleId } : {}),
         }),
       });
       const data = await res.json();
@@ -2978,9 +3295,8 @@ export default function DeskAdministrationPage() {
           prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
         );
       }
-      setOrderMsg(
-        `Đã xác nhận · ${formatVnd(data.order?.totalVnd || guestCart.totalVnd)}`
-      );
+      notes.push(`mía ${formatVnd(data.order?.totalVnd || guestCart.totalVnd)}`);
+      setOrderMsg(`Đã xác nhận · ${notes.join(" + ")}`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không xác nhận được");
@@ -2989,15 +3305,16 @@ export default function DeskAdministrationPage() {
     }
   }
 
-  /** Lưu board gộp: xác thực vé hồ (nếu có) + lưu đơn Mía (nếu có). */
+  /** Lưu đơn gộp: xác thực vé hồ (nếu có) rồi lưu đồ uống Mía (nếu có). */
   async function saveMiaOlympicBoard() {
     if (!selected || !isMiaOlympic || ordering) return;
     const pool = boardPoolTotals();
     const miaPay = deskMiaPayable();
     const combined = pool.sum + miaPay;
     const hasMia = cartLines.length > 0;
-    const scan = focusedTicket?.scan;
-    const hasPool = pool.qty > 0 && !!scan && !!focusedPoolScanId;
+    const scan = focusedPoolScan();
+    const poolLines = focusedPoolLines();
+    const hasPool = poolLines.length > 0 && !!scan && !!focusedPoolScanId;
     if (!hasMia && !hasPool) {
       setError("Chọn vé hồ hoặc đồ uống Mía trước khi lưu.");
       return;
@@ -3006,13 +3323,11 @@ export default function DeskAdministrationPage() {
     setOrderMsg("");
     setError("");
     const notes: string[] = [];
+    const bundleId =
+      hasMia && hasPool ? `b${Date.now().toString(36)}` : "";
     try {
       if (hasPool && scan && focusedPoolScanId) {
-        const row = scanCarts[focusedPoolScanId] || {};
-        const added = Object.entries(row)
-          .filter(([, q]) => q > 0)
-          .map(([itemId, qty]) => ({ itemId, qty }));
-        const items = mergePoolLines(approvedCartPoolLines(), added);
+        const items = poolLines;
         if (!items.length) throw new Error("Chọn ít nhất 1 vé hồ trước khi lưu.");
         const res = await fetch("/api/crm/pool/orders", {
           method: "POST",
@@ -3021,6 +3336,7 @@ export default function DeskAdministrationPage() {
             customerId: selected.id,
             scanEventId: scan.id,
             items,
+            ...(bundleId ? { deskBundleId: bundleId } : {}),
           }),
         });
         const data = await res.json();
@@ -3041,6 +3357,7 @@ export default function DeskAdministrationPage() {
             items: cartLines,
             pointsRedeemUnits: deskRedeemUnits,
             voucherOfferId: deskVoucherOfferId || undefined,
+            ...(bundleId ? { deskBundleId: bundleId } : {}),
           }),
         });
         const data = await res.json();
@@ -3058,7 +3375,9 @@ export default function DeskAdministrationPage() {
         }
       }
       setOrderMsg(
-        `Đã lưu · ${notes.join(" + ")} · tổng ${formatVnd(combined)}`
+        `Đã lưu · ${notes.join(" + ")}${
+          combined > 0 ? ` · tổng ${formatVnd(combined)}` : ""
+        }`
       );
       await load();
     } catch (e) {
@@ -3164,7 +3483,7 @@ export default function DeskAdministrationPage() {
                 style={{
                   ...styles.zoneBtn,
                   borderColor:
-                    z.code === "MIA_OLYMPIC"
+                    miaOlympicSector(z.code)
                       ? "#b45309"
                       : z.code === "SAUNA"
                         ? "#1b3022"
@@ -3172,7 +3491,7 @@ export default function DeskAdministrationPage() {
                           ? "#0369a1"
                           : "#e2e8f0",
                   background:
-                    z.code === "MIA_OLYMPIC"
+                    miaOlympicSector(z.code)
                       ? "#fff7ed"
                       : z.code === "SAUNA"
                         ? "#eef5f0"
@@ -3342,15 +3661,18 @@ export default function DeskAdministrationPage() {
           <h1 style={styles.h1}>{title}</h1>
           <p style={styles.mute}>
             {hasCatalog
-              ? `${deskTickets.length} dòng · ${openOrderCount} chưa order · ${pendingApprovalCount} chờ duyệt`
+              ? `${visibleTickets.length} dòng · ${openOrderCount} chưa order · ${pendingApprovalCount} chờ duyệt`
               : `${arrivals.length} khách · ${pendingApprovalCount} chờ duyệt`}
             {pendingApprovalCount > 0
               ? " · bấm Xác nhận để mở QR cho khách"
               : ""}
             {isMiaOlympic
-              ? " · 1 quầy Mía+Hồ · menu order 2 phần (vé / đồ uống)"
-              : ""}
+              ? " · 1 quầy Mía+Hồ · Tạo đơn → chọn vé hồ và đồ uống → Lưu đơn (hồ + mía)"
+              : isMiaOi
+                ? " · duyệt QR → mở khách → Xác nhận, không gọi thêm / Xác nhận và gọi thêm"
+                : ""}
             {isSpa ? " · bấm dòng để chọn spa" : ""}
+            {isPool && !isMiaOlympic ? " · sau duyệt: Quét QR → Xác thực, không mua thêm / Xác thực và mua thêm" : ""}
             {zone === "PICKLEBALL"
               ? " · duyệt đặt sân online · ghi khách tại quầy trên lịch · Kết thúc = reset sân"
               : ""}
@@ -3482,6 +3804,48 @@ export default function DeskAdministrationPage() {
           </button>
         </div>
       </header>
+      {isMiaOlympic ? (
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            margin: "0 0 12px",
+          }}
+        >
+          {(
+            [
+              ["all", "All"],
+              ["both", "Mía Ơi + Olympic"],
+              ["mia", "Mía Ơi"],
+              ["olympic", "Olympic"],
+            ] as const
+          ).map(([id, label]) => {
+            const on = orderFilter === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setOrderFilter(id)}
+                style={{
+                  border: on ? "1px solid #1e3a5f" : "1px solid #cbd5e1",
+                  background: on ? "#1e3a5f" : "#fff",
+                  color: on ? "#fff" : "#0f172a",
+                  borderRadius: 999,
+                  height: 30,
+                  padding: "0 12px",
+                  fontWeight: 800,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {calendarOpen && zone ? (
         <DeskCalendar
@@ -4132,7 +4496,7 @@ export default function DeskAdministrationPage() {
         <div style={styles.sheetBar}>
           <h2 style={styles.sheetTitle}>Yêu cầu / duyệt mã</h2>
           <span style={styles.sheetCount}>
-            {pendingApprovalCount} chờ duyệt · {deskTickets.length} dòng
+            {pendingApprovalCount} chờ duyệt · {visibleTickets.length} dòng
             {zone === "LONG_NUONG" && SHOW_LONG_NUONG_TABLE_MAP
               ? " · mở «Sơ đồ bàn» trên header khi cần"
               : ""}
@@ -4155,7 +4519,7 @@ export default function DeskAdministrationPage() {
             </tr>
           </thead>
           <tbody>
-            {deskTickets.length === 0 ? (
+            {visibleTickets.length === 0 ? (
               <tr>
                 <td
                   colSpan={hasCatalog ? 10 : 9}
@@ -4163,11 +4527,13 @@ export default function DeskAdministrationPage() {
                 >
                   {viewDate
                     ? `Không có khách vào / yêu cầu tại ${zoneName} ngày ${viewDate.split("-").reverse().join("/")}.`
-                    : `Chưa có khách gửi yêu cầu / quét QR ${zoneName} trong 12 giờ.`}
+                    : orderFilter !== "all"
+                      ? "Không có đơn cho bộ lọc này."
+                      : `Chưa có khách gửi yêu cầu / quét QR ${zoneName} trong 12 giờ.`}
                 </td>
               </tr>
             ) : (
-              deskTickets.map((t) => {
+              visibleTickets.map((t) => {
                 const a = t.arrival;
                 const needApprove = t.needsApproval;
                 const cartTok = t.cart?.token || "";
@@ -4895,8 +5261,34 @@ export default function DeskAdministrationPage() {
                     : guestConfirmedBill
                       ? guestConfirmedBill.totalVnd || 0
                       : guestCart.totalVnd;
-                  const payable = Math.max(0, base - (preview?.mainOff || 0));
-                  if (base <= 0 && !(preview && preview.mainOff > 0)) return null;
+                  const afterDeskPoints = Math.max(
+                    0,
+                    base - (preview?.mainOff || 0)
+                  );
+                  const cartAlreadyMember = (guestCart.items || []).some((i) =>
+                    String(i.id || "").startsWith(MIA_MEMBERSHIP_DISC_PREFIX)
+                  );
+                  const memberPct = deskMiaMembershipPercent();
+                  const memberOff =
+                    isMiaOi &&
+                    !guestConfirmedBill &&
+                    !draft &&
+                    !cartAlreadyMember &&
+                    memberPct > 0
+                      ? miaOiMembershipDiscountVnd(afterDeskPoints, memberPct)
+                      : 0;
+                  const payable = Math.max(0, afterDeskPoints - memberOff);
+                  if (
+                    base <= 0 &&
+                    !(preview && preview.mainOff > 0) &&
+                    memberOff <= 0
+                  ) {
+                    return null;
+                  }
+                  const memberLabel =
+                    memberPct > 0 && (memberOff > 0 || cartAlreadyMember)
+                      ? ` · hội viên −${memberPct}%`
+                      : "";
                   return (
                     <p
                       style={{
@@ -4909,6 +5301,7 @@ export default function DeskAdministrationPage() {
                       {preview && preview.mainUnits > 0
                         ? ` · đổi ${preview.mainUnits * (isPool ? DESK_REDEEM_SWIM_STEP : DESK_REDEEM_DRINK_STEP)} điểm`
                         : ""}
+                      {memberLabel}
                     </p>
                   );
                 })()}
@@ -4994,13 +5387,14 @@ export default function DeskAdministrationPage() {
                     </p>
                     {!focusedPoolScanId ? (
                       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b" }}>
-                        Chọn dòng quét / yêu cầu hồ bên trên để gắn vé, rồi +/−
-                        bên dưới.
+                        Chọn dòng quét / yêu cầu hồ bên trên để gắn vé, rồi +/− bên dưới.
                       </p>
                     ) : (
                       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#0369a1" }}>
                         Đang gắn vé vào lần quét{" "}
-                        {formatTime(focusedTicket?.scanAt || "")}.
+                        {formatTime(
+                          focusedPoolScan()?.at || focusedTicket?.scanAt || ""
+                        )}.
                       </p>
                     )}
                     <div
@@ -5020,6 +5414,7 @@ export default function DeskAdministrationPage() {
                         if (!items.length) return null;
                         const membershipHeld =
                           cat.id === "goi-thang" && olympicMembershipLocked();
+                        const scanId = focusedPoolScanId || "";
                         return (
                           <div key={cat.id} style={{ display: "grid", gap: 6 }}>
                             <p
@@ -5047,9 +5442,7 @@ export default function DeskAdministrationPage() {
                               </p>
                             ) : null}
                             {items.map((item) => {
-                              const q = focusedPoolScanId
-                                ? scanQty(focusedPoolScanId, item.id)
-                                : 0;
+                              const q = scanId ? scanQty(scanId, item.id) : 0;
                               return (
                                 <div
                                   key={item.id}
@@ -5081,14 +5474,11 @@ export default function DeskAdministrationPage() {
                                     <button
                                       type="button"
                                       style={styles.qtyBtn}
-                                      disabled={!focusedPoolScanId || q <= 0}
+                                      disabled={
+                                        !scanId || q <= 0 || membershipHeld
+                                      }
                                       onClick={() =>
-                                        focusedPoolScanId &&
-                                        setScanQty(
-                                          focusedPoolScanId,
-                                          item.id,
-                                          q - 1
-                                        )
+                                        setScanQty(scanId, item.id, q - 1)
                                       }
                                     >
                                       −
@@ -5105,16 +5495,9 @@ export default function DeskAdministrationPage() {
                                     <button
                                       type="button"
                                       style={styles.qtyBtn}
-                                      disabled={
-                                        !focusedPoolScanId || membershipHeld
-                                      }
+                                      disabled={!scanId || membershipHeld}
                                       onClick={() =>
-                                        focusedPoolScanId &&
-                                        setScanQty(
-                                          focusedPoolScanId,
-                                          item.id,
-                                          q + 1
-                                        )
+                                        setScanQty(scanId, item.id, q + 1)
                                       }
                                     >
                                       +
@@ -5430,7 +5813,7 @@ export default function DeskAdministrationPage() {
                           : spaCartEditable()
                             ? "Xác nhận"
                             : isMiaOlympic
-                              ? "Lưu đơn (hồ + mía)"
+                              ? boardSaveLabel()
                               : "Lưu đơn"}
                       </button>
                     </div>
@@ -5536,7 +5919,7 @@ export default function DeskAdministrationPage() {
                               {t.orderLabel}
                             </p>
                           ) : null}
-                          {isPool && locked ? (
+                          {(isMiaOlympic ? poolHistoryTicket(t) : isPool) && locked ? (
                             <div
                               style={{
                                 marginTop: 8,
@@ -5583,10 +5966,10 @@ export default function DeskAdministrationPage() {
                             </div>
                           ) : null}
                           {isMiaOi &&
-                          t.orderId &&
+                          miaHistoryOrderId(t) &&
                           selected.todayOrders.some(
                             (o) =>
-                              o.id === t.orderId &&
+                              o.id === miaHistoryOrderId(t) &&
                               o.status !== "CANCELLED" &&
                               !isFinalizedOrderStatus(o.status)
                           ) ? (
@@ -5598,13 +5981,14 @@ export default function DeskAdministrationPage() {
                                   padding: "8px 12px",
                                   fontSize: 13,
                                 }}
-                                disabled={cancellingOrderId === t.orderId}
+                                disabled={cancellingOrderId === miaHistoryOrderId(t)}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  void cancelMiaOrder(t.orderId!);
+                                  const id = miaHistoryOrderId(t);
+                                  if (id) void cancelMiaOrder(id);
                                 }}
                               >
-                                {cancellingOrderId === t.orderId
+                                {cancellingOrderId === miaHistoryOrderId(t)
                                   ? "…"
                                   : "Huỷ đơn"}
                               </button>

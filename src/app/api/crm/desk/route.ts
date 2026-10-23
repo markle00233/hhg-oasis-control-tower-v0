@@ -7,7 +7,12 @@ import {
 } from "@/lib/auth";
 import { parseCartPromo } from "@/lib/cart-promo";
 import { CART_STATUS, isPastVnCutOff } from "@/lib/cart-status";
-import { DESK_ZONES, deskZoneAliases, getDeskZone } from "@/lib/desk-zones";
+import {
+  DESK_ZONES,
+  deskZoneAliases,
+  getDeskZone,
+  miaOlympicSector,
+} from "@/lib/desk-zones";
 import {
   isOlympicPackageId,
   OLYMPIC_PACKAGE_IDS,
@@ -257,7 +262,7 @@ export async function GET(req: NextRequest) {
                 eventType: "SERVICE_USE",
                 service: { serviceCode: { in: aliases } },
               },
-              ...(zone === "MIA_OI"
+              ...(zone === "MIA_OI" || miaOlympicSector(zone)
                 ? [
                     {
                       eventType: "MIA_OI_ORDER" as const,
@@ -273,7 +278,7 @@ export async function GET(req: NextRequest) {
                     },
                   ]
                 : []),
-              ...(zone === "OLYMPIC_POOL"
+              ...(zone === "OLYMPIC_POOL" || miaOlympicSector(zone)
                 ? [
                     {
                       eventType: "POOL_ORDER" as const,
@@ -577,6 +582,8 @@ export async function GET(req: NextRequest) {
             orderId: typeof meta.orderId === "string" ? meta.orderId : null,
             cartToken:
               typeof meta.cartToken === "string" ? meta.cartToken : null,
+            deskBundleId:
+              typeof meta.deskBundleId === "string" ? meta.deskBundleId : null,
             ticketItems: orderItems.map((i) => {
               const row = i as {
                 name?: string;
