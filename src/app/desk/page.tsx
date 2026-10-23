@@ -2759,11 +2759,62 @@ export default function DeskAdministrationPage() {
     return deskVoucherCut(baseVnd, v);
   }
 
-  function deskCatalogPayable() {
+  /** Tổng vé/phụ kiện hồ đang chọn trên board (scan focus). */
+  function boardPoolTotals() {
+    if (!isMiaOlympic || !focusedPoolScanId) {
+      return { sum: 0, qty: 0, accessoryDiscount: 0, membershipDiscount: 0 };
+    }
+    return scanCartTotal(focusedPoolScanId);
+  }
+
+  /** Tiền Mía (đã trừ điểm/voucher) — chưa gồm hồ. */
+  function deskMiaPayable() {
     const pointsOff = isMiaOi ? deskRedeemPreview().extraOff : 0;
     const afterPoints = Math.max(0, cartTotal - pointsOff);
     const voucherOff = isMiaOi ? deskVoucherPreviewCut(afterPoints) : 0;
     return Math.max(0, afterPoints - voucherOff);
+  }
+
+  /** Tổng phải thu trên board: hồ + mía (gộp). */
+  function deskCatalogPayable() {
+    return deskMiaPayable() + boardPoolTotals().sum;
+  }
+
+  function boardCombinedQty() {
+    const miaQty = cartLines.reduce((n, l) => n + l.qty, 0);
+    return miaQty + boardPoolTotals().qty;
+  }
+
+  function boardSummaryLabel() {
+    const pool = boardPoolTotals();
+    const miaQty = cartLines.reduce((n, l) => n + l.qty, 0);
+    const totalQty = miaQty + pool.qty;
+    const totalVnd = deskCatalogPayable();
+    if (totalQty <= 0) {
+      return isMiaOi && miaCartOpen()
+        ? "Không gọi thêm"
+        : isMiaOlympic
+          ? "Chưa chọn vé / đồ uống"
+          : `Chưa chọn ${catalogUnit()}`;
+    }
+    if (isMiaOlympic) {
+      const parts: string[] = [];
+      if (pool.qty > 0) parts.push(`hồ ${formatVnd(pool.sum)}`);
+      if (miaQty > 0) parts.push(`mía ${formatVnd(deskMiaPayable())}`);
+      const prefix = isMiaOi && miaCartOpen() ? "Gọi thêm " : "";
+      return `${prefix}${totalQty} món · ${formatVnd(totalVnd)}${
+        parts.length ? ` (${parts.join(" + ")})` : ""
+      }${
+        isMiaOi && deskRedeemPreview().extraUnits
+          ? ` · −${deskRedeemPreview().extraUnits * DESK_REDEEM_DRINK_STEP} điểm`
+          : ""
+      }${selectedDeskVoucher() ? ` · ${selectedDeskVoucher()?.title}` : ""}`;
+    }
+    return `${isMiaOi && miaCartOpen() ? "Gọi thêm " : ""}${miaQty} ${catalogUnit()} · ${formatVnd(deskCatalogPayable())}${
+      isMiaOi && deskRedeemPreview().extraUnits
+        ? ` · −${deskRedeemPreview().extraUnits * DESK_REDEEM_DRINK_STEP} điểm`
+        : ""
+    }${selectedDeskVoucher() ? ` · ${selectedDeskVoucher()?.title}` : ""}`;
   }
 
   function renderDeskVoucherButton(disabled?: boolean) {
@@ -2895,7 +2946,91 @@ export default function DeskAdministrationPage() {
     }
   }
 
+  /** Lưu board gộp: xác thực vé hồ (nếu có) + lưu đơn Mía (nếu có). */
+  async function saveMiaOlympicBoard() {
+    if (!selected || !isMiaOlympic || ordering) return;
+    const pool = boardPoolTotals();
+    const miaPay = deskMiaPayable();
+    const combined = pool.sum + miaPay;
+    const hasMia = cartLines.length > 0;
+    const scan = focusedTicket?.scan;
+    const hasPool = pool.qty > 0 && !!scan && !!focusedPoolScanId;
+    if (!hasMia && !hasPool) {
+      setError("Chọn vé hồ hoặc đồ uống Mía trước khi lưu.");
+      return;
+    }
+    setOrdering(true);
+    setOrderMsg("");
+    setError("");
+    const notes: string[] = [];
+    try {
+      if (hasPool && scan && focusedPoolScanId) {
+        const row = scanCarts[focusedPoolScanId] || {};
+        const added = Object.entries(row)
+          .filter(([, q]) => q > 0)
+          .map(([itemId, qty]) => ({ itemId, qty }));
+        const items = mergePoolLines(approvedCartPoolLines(), added);
+        if (!items.length) throw new Error("Chọn ít nhất 1 vé hồ trước khi lưu.");
+        const res = await fetch("/api/crm/pool/orders", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            customerId: selected.id,
+            scanEventId: scan.id,
+            items,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Không lưu được vé hồ");
+        notes.push(`hồ ${formatVnd(data.order?.totalVnd || pool.sum)}`);
+        setScanCarts((prev) => {
+          const next = { ...prev };
+          delete next[focusedPoolScanId];
+          return next;
+        });
+      }
+      if (hasMia) {
+        const res = await fetch("/api/crm/miaoi/orders", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            customerId: selected.id,
+            items: cartLines,
+            pointsRedeemUnits: deskRedeemUnits,
+            voucherOfferId: deskVoucherOfferId || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Không lưu được đơn Mía");
+        notes.push(`mía ${formatVnd(data.order?.totalVnd || miaPay)}`);
+        setCart({});
+        setDeskRedeemUnits(0);
+        setDeskVoucherOfferId("");
+        setVoucherPickerOpen(false);
+        void loadDeskWallet(selected.id);
+        if (typeof data.pointsBalance === "number") {
+          setSelected((prev) =>
+            prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
+          );
+        }
+      }
+      setOrderMsg(
+        `Đã lưu · ${notes.join(" + ")} · tổng ${formatVnd(combined)}`
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được");
+    } finally {
+      setOrdering(false);
+    }
+  }
+
   async function saveOrder(finalize = false) {
+    // Quầy gộp Mía+Hồ: dùng saveMiaOlympicBoard (isPool cũng true)
+    if (isMiaOlympic) {
+      await saveMiaOlympicBoard();
+      return;
+    }
     if (!selected || !hasCatalog || isPool || cartLines.length === 0) return;
     if (miaOrderLocked()) return;
     const revisingSpa = spaCartEditable();
@@ -5115,19 +5250,7 @@ export default function DeskAdministrationPage() {
                     ) : null}
                     <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 800, lineHeight: 1.35 }}>
-                      {cartLines.length
-                        ? `${isMiaOi && miaCartOpen() ? "Gọi thêm " : ""}${cartLines.reduce((n, l) => n + l.qty, 0)} ${catalogUnit()} · ${formatVnd(deskCatalogPayable())}${
-                            isMiaOi && deskRedeemPreview().extraUnits
-                              ? ` · −${deskRedeemPreview().extraUnits * DESK_REDEEM_DRINK_STEP} điểm`
-                              : ""
-                          }${
-                            selectedDeskVoucher()
-                              ? ` · ${selectedDeskVoucher()?.title}`
-                              : ""
-                          }`
-                        : isMiaOi && miaCartOpen()
-                          ? "Không gọi thêm"
-                          : `Chưa chọn ${catalogUnit()}`}
+                      {boardSummaryLabel()}
                     </div>
                     {orderMsg ? (
                       <div
@@ -5203,18 +5326,32 @@ export default function DeskAdministrationPage() {
                           ...styles.btn,
                           flex: "0 0 auto",
                           background: accentColor(),
-                          opacity: cartLines.length && !ordering ? 1 : 0.45,
+                          opacity:
+                            (isMiaOlympic
+                              ? boardCombinedQty() > 0
+                              : cartLines.length > 0) && !ordering
+                              ? 1
+                              : 0.45,
                         }}
-                        disabled={!cartLines.length || ordering}
+                        disabled={
+                          ordering ||
+                          (isMiaOlympic
+                            ? boardCombinedQty() <= 0
+                            : !cartLines.length)
+                        }
                         onClick={() =>
-                          void (spaCartEditable() ? saveOrder(true) : saveOrder(false))
+                          void (spaCartEditable()
+                            ? saveOrder(true)
+                            : saveOrder(false))
                         }
                       >
                         {ordering
                           ? "Đang lưu…"
                           : spaCartEditable()
                             ? "Xác nhận"
-                            : "Lưu đơn"}
+                            : isMiaOlympic
+                              ? "Lưu đơn (hồ + mía)"
+                              : "Lưu đơn"}
                       </button>
                     </div>
                   )}
