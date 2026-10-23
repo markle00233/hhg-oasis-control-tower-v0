@@ -14,26 +14,26 @@ const base =
   "https://huyhoanggiaoasis.vercel.app";
 
 /**
- * Danh sách QR hiện hành (2026-10-17)
- * - Khách: Olympic (upgrade hội viên trên Home) · Spa · Mía · Pickleball · Lòng Nướng
- * - Vật lý: Entrance / Exit (+ Resort / Jacuzzi nếu còn biển)
- * - Đã ẩn / không in mới: VIP_RESORT, GYM (ưu đãi Home đã tắt)
+ * QR in mới — Mía+Hồ gộp; bỏ Xông hơi / Jacuzzi → VIP
  */
 const zones = [
   ["ENTRANCE", "Entrance"],
-  ["OLYMPIC_POOL", "Olympic Pool"],
+  ["MIA_OLYMPIC", "Mía Ơi · Hồ Olympic"],
   ["SPA", "Spa"],
-  ["SAUNA", "Sauna (alias Spa)"],
-  ["MIA_OI", "Mía Ơi"],
+  ["VIP_RESORT", "VIP"],
   ["PICKLEBALL", "Pickleball"],
   ["LONG_NUONG", "Lòng Nướng"],
   ["RESORT_POOL", "Resort Pool"],
-  ["JACUZZI", "Jacuzzi"],
   ["EXIT", "Exit"],
 ];
 
 /** Deprecated — không in mới, giữ file cũ nếu cần */
-const deprecated = [["VIP_RESORT", "VIP Resort (ẩn Home)"]];
+const deprecated = [
+  ["OLYMPIC_POOL", "Olympic Pool (cũ — gộp vào MIA_OLYMPIC)"],
+  ["MIA_OI", "Mía Ơi (cũ — gộp vào MIA_OLYMPIC)"],
+  ["SAUNA", "Xông hơi (cũ — thay bằng VIP)"],
+  ["JACUZZI", "Jacuzzi (cũ — thay bằng VIP)"],
+];
 
 fs.mkdirSync(outPublic, { recursive: true });
 fs.mkdirSync(outZoneQrs, { recursive: true });
@@ -44,8 +44,7 @@ const lines = [
   `Base: ${base}`,
   `Gallery: ${base}/dev/qr`,
   ``,
-  `Home: không hiện Ưu đãi Collect · có Nâng cấp hội viên (1/3/6/12 tháng).`,
-  `Quét QR → check-in → Home (bản mới).`,
+  `Mía Ơi + Hồ Olympic = 1 QR (MIA_OLYMPIC) · 1 quầy · menu order 2 section.`,
   ``,
   `| Khu | URL quét |`,
   `|-----|----------|`,
@@ -68,34 +67,19 @@ for (const [code, name] of zones) {
       color: { dark: "#0C1F1A", light: "#FFFFFF" },
     });
   }
-  console.log(`${code.padEnd(14)} ${name.padEnd(22)} -> ${url}`);
+  console.log(`${code.padEnd(14)} ${name.padEnd(28)} -> ${url}`);
   lines.push(`| ${code} | ${url} |`);
   txt.push(`${code}\t${url}`);
 }
 
-lines.push(``, `## Không in mới (đã ẩn Home)`);
+lines.push(``, `## Không in mới (QR cũ vẫn quét được)`);
 txt.push(``, `# Deprecated`);
 for (const [code, name] of deprecated) {
   const url = `${base}/s/${code}`;
   lines.push(`| ${code} | ${url} · ${name} |`);
-  txt.push(`# ${code}\t${url}`);
-  // vẫn ghi PNG tới domain mới nếu ai còn biển cũ
-  for (const dir of [outPublic, outZoneQrs]) {
-    await QRCode.toFile(path.join(dir, `${code}.png`), url, {
-      width: 640,
-      margin: 2,
-      color: { dark: "#0C1F1A", light: "#FFFFFF" },
-    });
-  }
+  txt.push(`# ${code}\t${url}\t${name}`);
 }
-
-fs.copyFileSync(
-  path.join(outPublic, "ENTRANCE.png"),
-  path.join(root, "public", "qr-entrance.png")
-);
 
 fs.writeFileSync(path.join(outZoneQrs, "URLS.md"), lines.join("\n") + "\n");
 fs.writeFileSync(path.join(outZoneQrs, "URLS.txt"), txt.join("\n") + "\n");
-
-console.log(`\nWrote ${zones.length} active zone QRs → public/qr/ + zone-qrs/`);
-console.log(`Docs: zone-qrs/URLS.md`);
+console.log(`\nWrote ${path.join(outZoneQrs, "URLS.md")}`);

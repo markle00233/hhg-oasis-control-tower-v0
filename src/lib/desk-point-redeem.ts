@@ -12,6 +12,8 @@ export type RedeemableLine = {
   itemId: string;
   qty: number;
   unitPriceVnd: number;
+  nameVi?: string;
+  nameEn?: string | null;
   pointsDiscountVnd?: number;
   pointsRedeemTier?: number | null;
 };

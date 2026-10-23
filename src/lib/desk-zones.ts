@@ -10,7 +10,7 @@ export type DeskZone = {
 };
 
 export const DESK_ZONES: DeskZone[] = [
-  /** 1 quầy, menu 2 phần: vé hồ + đồ uống. Khách vẫn đặt từng khu. */
+  /** 1 quầy · 1 QR · menu 2 phần (vé hồ + đồ uống). Khách vẫn đặt từng khu. */
   {
     code: "MIA_OLYMPIC",
     name: "Mía Ơi · Hồ Olympic",
@@ -19,7 +19,6 @@ export const DESK_ZONES: DeskZone[] = [
   { code: "VIP_RESORT", name: "VIP", username: "VIP" },
   { code: "PICKLEBALL", name: "Pickleball", username: "PICKLEBALL" },
   { code: "SAUNA", name: "HHG Oasis Spa", username: "SPA" },
-  { code: "JACUZZI", name: "Jacuzzi", username: "JACUZZI" },
   { code: "LONG_NUONG", name: "Lòng Nướng Chí Phèo", username: "LONGNUONG" },
   { code: "SWIM_LESSON", name: "Khách học bơi", username: "HOCBOI" },
 ];
@@ -84,11 +83,18 @@ export function deskZoneByUsername(username: string): DeskZone | null {
   return parseZoneAdminUsername(u);
 }
 
+/** Resolve old MIA_OI / OLYMPIC_POOL codes to the merged desk tile. */
+export function resolveDeskZone(code: string): DeskZone | null {
+  const c = code.trim().toUpperCase();
+  if (miaOlympicSector(c)) return getDeskZone("MIA_OLYMPIC");
+  return getDeskZone(c);
+}
+
 export function dashboardTitle(zoneName: string) {
   return `Dashboard ${zoneName}`;
 }
 
-/** Mía Ơi + Hồ Olympic = 1 quầy nhân viên. Khách vẫn gửi từng khu. */
+/** Mía Ơi + Hồ Olympic = 1 quầy / 1 QR. Khách vẫn gửi từng khu. */
 export const MIA_OLYMPIC_SECTOR = [
   "MIA_OLYMPIC",
   "MIA_OI",

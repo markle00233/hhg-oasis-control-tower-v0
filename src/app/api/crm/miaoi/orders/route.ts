@@ -217,8 +217,8 @@ export async function POST(req: NextRequest) {
         items: {
           create: redeemed.items.map((i) => ({
             itemId: i.itemId,
-            nameVi: i.nameVi,
-            nameEn: i.nameEn,
+            nameVi: i.nameVi || "",
+            nameEn: i.nameEn ?? null,
             unitPriceVnd: i.unitPriceVnd,
             qty: i.qty,
           })),

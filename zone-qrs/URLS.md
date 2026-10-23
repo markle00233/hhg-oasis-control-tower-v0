@@ -1,23 +1,23 @@
-# Zone QR — HHG Oasis (cập nhật 2026-10-17)
+# Zone QR — HHG Oasis (cập nhật 2026-10-23)
 
 Base: https://huyhoanggiaoasis.vercel.app
 Gallery: https://huyhoanggiaoasis.vercel.app/dev/qr
 
-Home: không hiện Ưu đãi Collect · có Nâng cấp hội viên (1/3/6/12 tháng).
-Quét QR → check-in → Home (bản mới).
+Mía Ơi + Hồ Olympic = 1 QR (MIA_OLYMPIC). Bỏ Xông hơi / Jacuzzi → in VIP.
 
 | Khu | URL quét |
 |-----|----------|
 | ENTRANCE | https://huyhoanggiaoasis.vercel.app/s/ENTRANCE |
-| OLYMPIC_POOL | https://huyhoanggiaoasis.vercel.app/s/OLYMPIC_POOL |
+| MIA_OLYMPIC | https://huyhoanggiaoasis.vercel.app/s/MIA_OLYMPIC |
 | SPA | https://huyhoanggiaoasis.vercel.app/s/SPA |
-| SAUNA | https://huyhoanggiaoasis.vercel.app/s/SAUNA |
-| MIA_OI | https://huyhoanggiaoasis.vercel.app/s/MIA_OI |
+| VIP_RESORT | https://huyhoanggiaoasis.vercel.app/s/VIP_RESORT |
 | PICKLEBALL | https://huyhoanggiaoasis.vercel.app/s/PICKLEBALL |
 | LONG_NUONG | https://huyhoanggiaoasis.vercel.app/s/LONG_NUONG |
 | RESORT_POOL | https://huyhoanggiaoasis.vercel.app/s/RESORT_POOL |
-| JACUZZI | https://huyhoanggiaoasis.vercel.app/s/JACUZZI |
 | EXIT | https://huyhoanggiaoasis.vercel.app/s/EXIT |
 
-## Không in mới (đã ẩn Home)
-| VIP_RESORT | https://huyhoanggiaoasis.vercel.app/s/VIP_RESORT · VIP Resort (ẩn Home) |
+## Không in mới (QR cũ vẫn quét được)
+| OLYMPIC_POOL | https://huyhoanggiaoasis.vercel.app/s/OLYMPIC_POOL · Olympic Pool (cũ — gộp vào MIA_OLYMPIC) |
+| MIA_OI | https://huyhoanggiaoasis.vercel.app/s/MIA_OI · Mía Ơi (cũ — gộp vào MIA_OLYMPIC) |
+| SAUNA | https://huyhoanggiaoasis.vercel.app/s/SAUNA · Xông hơi (cũ — thay bằng VIP) |
+| JACUZZI | https://huyhoanggiaoasis.vercel.app/s/JACUZZI · Jacuzzi (cũ — thay bằng VIP) |

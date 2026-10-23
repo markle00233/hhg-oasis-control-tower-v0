@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
 import { getSpaItem } from "@/lib/spa-menu";
 import { consumeGoiBonus } from "@/lib/swim-goi-bonus";
@@ -66,7 +67,7 @@ async function reviseSpaGuestCart(args: {
       ...(menu?.note ? { note: menu.note } : {}),
     };
   });
-  const items = [...serviceLines, ...kept];
+  const items = [...serviceLines, ...kept] as Prisma.InputJsonValue;
   const keptTotal = kept.reduce((sum, row) => {
     const qty = Math.max(1, Number(row.qty) || 1);
     const price = Math.max(0, Number(row.priceVnd) || 0);

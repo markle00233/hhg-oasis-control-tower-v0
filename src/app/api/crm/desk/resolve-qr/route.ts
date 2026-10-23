@@ -520,7 +520,7 @@ function mapDeskZoneToService(zone: string) {
     PICKLEBALL: "PICKLEBALL",
     SPA: "SPA",
     MIA_OI: "MIA_OI",
-    /** Quầy gộp: check-in nhân viên gắn vào hồ để lưu vé. */
+    /** Quầy gộp: check-in gắn vào hồ để xác thực vé được. */
     MIA_OLYMPIC: "OLYMPIC_POOL",
     VIP: "VIP_RESORT",
     VIP_RESORT: "VIP_RESORT",

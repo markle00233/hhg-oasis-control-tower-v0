@@ -62,25 +62,12 @@ export function formatMembershipPayLabel(vnd: number) {
   return `${Math.round(n / 1000)}K`;
 }
 
+/** Minimal Prisma surface — keep loose so real PrismaClient assigns cleanly. */
 type OrderPrisma = {
-  appService: {
-    findUnique: (args: {
-      where: { serviceCode: string };
-      select: { id: true };
-    }) => Promise<{ id: string } | null>;
-  };
-  appOrder: {
-    findMany: (args: {
-      where: Record<string, unknown>;
-      select: Record<string, unknown>;
-      take: number;
-    }) => Promise<
-      {
-        status: string;
-        items: { itemId: string; nameVi: string }[];
-      }[]
-    >;
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  appService: { findUnique: (...args: any[]) => Promise<{ id: string } | null> };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  appOrder: { findMany: (...args: any[]) => Promise<any[]> };
 };
 
 /** Đã có đơn Hồ Olympic hoàn tất hôm nay (vé / phụ kiện / gói). */
