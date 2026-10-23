@@ -14,17 +14,16 @@ const base =
   "https://huyhoanggiaoasis.vercel.app";
 
 /**
- * QR in mới — Mía + Hồ gộp 1 mã MIA_OLYMPIC
+ * QR in mới — Mía+Hồ gộp; bỏ Xông hơi / Jacuzzi → VIP
  */
 const zones = [
   ["ENTRANCE", "Entrance"],
   ["MIA_OLYMPIC", "Mía Ơi · Hồ Olympic"],
   ["SPA", "Spa"],
-  ["SAUNA", "Sauna (alias Spa)"],
+  ["VIP_RESORT", "VIP"],
   ["PICKLEBALL", "Pickleball"],
   ["LONG_NUONG", "Lòng Nướng"],
   ["RESORT_POOL", "Resort Pool"],
-  ["JACUZZI", "Jacuzzi"],
   ["EXIT", "Exit"],
 ];
 
@@ -32,7 +31,8 @@ const zones = [
 const deprecated = [
   ["OLYMPIC_POOL", "Olympic Pool (cũ — gộp vào MIA_OLYMPIC)"],
   ["MIA_OI", "Mía Ơi (cũ — gộp vào MIA_OLYMPIC)"],
-  ["VIP_RESORT", "VIP Resort (ẩn Home)"],
+  ["SAUNA", "Xông hơi (cũ — thay bằng VIP)"],
+  ["JACUZZI", "Jacuzzi (cũ — thay bằng VIP)"],
 ];
 
 fs.mkdirSync(outPublic, { recursive: true });

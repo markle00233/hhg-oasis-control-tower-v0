@@ -5,15 +5,16 @@ export const SERVICE_CATALOG = [
   /** QR chung Mía Ơi + Hồ Olympic (in mới). */
   { serviceCode: "MIA_OLYMPIC", serviceName: "Mía Ơi · Hồ Olympic" },
   { serviceCode: "SPA", serviceName: "Spa" },
-  { serviceCode: "SAUNA", serviceName: "Sauna" },
+  { serviceCode: "VIP_RESORT", serviceName: "VIP" },
   { serviceCode: "PICKLEBALL", serviceName: "Pickleball" },
   { serviceCode: "LONG_NUONG", serviceName: "Lòng Nướng" },
   { serviceCode: "RESORT_POOL", serviceName: "Resort Pool" },
-  { serviceCode: "JACUZZI", serviceName: "Jacuzzi" },
   { serviceCode: "EXIT", serviceName: "Exit" },
   /** Giữ URL cũ vẫn quét được — không in mới */
   { serviceCode: "OLYMPIC_POOL", serviceName: "Olympic Pool (cũ)" },
   { serviceCode: "MIA_OI", serviceName: "Mía Ơi (cũ)" },
+  { serviceCode: "SAUNA", serviceName: "Xông hơi (cũ)" },
+  { serviceCode: "JACUZZI", serviceName: "Jacuzzi (cũ)" },
 ] as const;
 
 /** Zones shown on /dev/qr gallery (active — không gồm QR cũ tách riêng). */
@@ -21,20 +22,20 @@ export const ACTIVE_ZONE_QR_CODES: readonly string[] = [
   "ENTRANCE",
   "MIA_OLYMPIC",
   "SPA",
-  "SAUNA",
+  "VIP_RESORT",
   "PICKLEBALL",
   "LONG_NUONG",
   "RESORT_POOL",
-  "JACUZZI",
   "EXIT",
 ];
 
 /** Hidden from Home / không in QR mới. */
 export const DEPRECATED_ZONE_CODES = [
-  "VIP_RESORT",
   "GYM",
   "OLYMPIC_POOL",
   "MIA_OI",
+  "SAUNA",
+  "JACUZZI",
 ] as const;
 
 export type ServiceCode = (typeof SERVICE_CATALOG)[number]["serviceCode"];

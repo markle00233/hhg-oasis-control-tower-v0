@@ -19,7 +19,6 @@ export const DESK_ZONES: DeskZone[] = [
   { code: "VIP_RESORT", name: "VIP", username: "VIP" },
   { code: "PICKLEBALL", name: "Pickleball", username: "PICKLEBALL" },
   { code: "SAUNA", name: "HHG Oasis Spa", username: "SPA" },
-  { code: "JACUZZI", name: "Jacuzzi", username: "JACUZZI" },
   { code: "LONG_NUONG", name: "Lòng Nướng Chí Phèo", username: "LONGNUONG" },
   { code: "SWIM_LESSON", name: "Khách học bơi", username: "HOCBOI" },
 ];
