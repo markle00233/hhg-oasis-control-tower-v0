@@ -21,6 +21,8 @@ function mapDeskZoneToService(zone: string) {
     PICKLEBALL: "PICKLEBALL",
     SPA: "SPA",
     MIA_OI: "MIA_OI",
+    /** Quầy gộp: lần quét phải là hồ thì xác thực vé được. */
+    MIA_OLYMPIC: "OLYMPIC_POOL",
     VIP: "VIP_RESORT",
     VIP_RESORT: "VIP_RESORT",
     OLYMPIC: "OLYMPIC_POOL",

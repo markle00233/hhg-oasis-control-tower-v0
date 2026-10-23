@@ -5,7 +5,9 @@ import {
   earnableVnd,
   type RedeemableLine,
 } from "@/lib/desk-point-redeem";
+import { isMiaOiMembershipVoucher } from "@/lib/hhg-vouchers";
 import { getMiaOiItem } from "@/lib/miaoi-menu";
+import { quoteMiaOiVipDiscount } from "@/lib/olympic-membership";
 import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/audit";
 import { redeemPoints } from "@/lib/points";
@@ -93,6 +95,7 @@ export async function POST(req: NextRequest) {
     const customerId = String(body.customerId || "").trim();
     const lines = Array.isArray(body.items) ? (body.items as CartLine[]) : [];
     const note = String(body.note || "").trim().slice(0, 300);
+    const deskBundleId = String(body.deskBundleId || "").trim().slice(0, 40);
     const scanEventId = String(body.scanEventId || "").trim();
     const pointsRedeemUnits = Math.max(
       0,
@@ -118,7 +121,10 @@ export async function POST(req: NextRequest) {
       where: { serviceCode: "MIA_OI" },
     });
 
-    const orderItems: RedeemableLine[] = [];
+    const orderItems: (RedeemableLine & {
+      nameVi: string;
+      nameEn: string | null;
+    })[] = [];
 
     let totalVnd = 0;
     for (const line of lines) {
@@ -160,9 +166,21 @@ export async function POST(req: NextRequest) {
       redeemed.cost > 0
         ? `Sử dụng ${redeemed.cost} điểm · ${redeemed.unitsApplied} đồ uống`
         : "";
+
+    const memberQuote = quoteMiaOiVipDiscount({
+      segment: customer.segment,
+      vipExpiresAt: customer.vipExpiresAt,
+      vipPlanLabel: customer.vipPlanLabel,
+      baseVnd: totalVnd,
+    });
+    if (memberQuote.discountVnd > 0) {
+      totalVnd = Math.max(0, totalVnd - memberQuote.discountVnd);
+    }
+    const membershipNote = memberQuote.note;
+
     let voucherNote = "";
     let voucherQuote = { offerId: "", title: "", discountVnd: 0 };
-    if (voucherOfferId) {
+    if (voucherOfferId && !isMiaOiMembershipVoucher(voucherOfferId)) {
       try {
         voucherQuote = await quoteDeskBillVoucher({
           customerId: customer.id,
@@ -189,7 +207,10 @@ export async function POST(req: NextRequest) {
         serviceId: service?.id || null,
         status: "CONFIRMED",
         totalVnd,
-        note: [note, redeemNote, voucherNote].filter(Boolean).join(" · ") || null,
+        note:
+          [note, redeemNote, membershipNote, voucherNote]
+            .filter(Boolean)
+            .join(" · ") || null,
         createdByType: "STAFF",
         createdById: gate.user.id,
         source: "ZONE_DESK",
@@ -217,6 +238,7 @@ export async function POST(req: NextRequest) {
             orderId: order.id,
             totalVnd,
             placedBy: "desk",
+            ...(deskBundleId ? { deskBundleId } : {}),
             items: redeemed.items.map((i) => ({
               name: i.nameVi,
               qty: i.qty,

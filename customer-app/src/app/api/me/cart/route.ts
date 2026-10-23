@@ -328,6 +328,59 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Mía Ơi: giảm 5%/10% theo gói VIP trong hạn — không phải voucher.
+    if (zoneCode === "MIA_OI") {
+      const { isVipActive } = await import("@/lib/vip");
+      const {
+        MIA_MEMBERSHIP_DISC_PREFIX,
+        tierFromPlanLabel,
+        miaOiDiscountPercentForTier,
+        miaOiMembershipDiscountVnd,
+      } = await import("@/lib/membership-theme");
+      if (
+        isVipActive({
+          segment: customerRecord.segment,
+          vipExpiresAt: customerRecord.vipExpiresAt,
+        })
+      ) {
+        const pct = miaOiDiscountPercentForTier(
+          tierFromPlanLabel(customerRecord.vipPlanLabel)
+        );
+        const productSub = items.reduce((s, i) => {
+          const id = String(i.id || "");
+          if (
+            id.startsWith("voucher-") ||
+            id.startsWith("points-redeem-") ||
+            id.startsWith("disc-")
+          ) {
+            return s;
+          }
+          return (
+            s +
+            Math.max(0, Math.round(Number(i.priceVnd) || 0)) *
+              Math.max(0, Math.round(Number(i.qty) || 0))
+          );
+        }, 0);
+        const memberOff = miaOiMembershipDiscountVnd(
+          Math.max(0, productSub - pointsRedeemDiscountVnd),
+          pct
+        );
+        if (memberOff > 0) {
+          discountVnd += memberOff;
+          items = [
+            ...items,
+            {
+              id: `${MIA_MEMBERSHIP_DISC_PREFIX}-${pct}`,
+              nameVi: `Giảm ${pct}% hội viên Mía Ơi`,
+              qty: 1,
+              priceVnd: 0,
+              note: `−${memberOff.toLocaleString("vi-VN")}đ · trong hạn gói`,
+            },
+          ];
+        }
+      }
+    }
+
     const {
       cart,
       payload,

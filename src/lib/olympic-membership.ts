@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { packageIdFromVipPlanLabel } from "@/lib/hhg-vouchers";
 
 /** Số tháng cộng vào hạn gói (gồm tháng tặng theo menu). */
 export function monthsForOlympicPackage(packageId: string): number {
@@ -31,15 +32,94 @@ export function labelForOlympicPackage(packageId: string): string {
   }
 }
 
-/** Voucher HHG kèm gói tháng (đồng bộ seed-vip-from-crm). */
+/** Voucher HHG kèm gói tháng (đồng bộ seed-vip-from-crm).
+ * Mía Ơi −5%/−10% không còn là voucher — giảm tự động trong hạn gói. */
 export function vouchersForOlympicPackage(packageId: string): string[] {
   const map: Record<string, string[]> = {
-    "oly-1m": ["hhg-oly-spa-goi", "hhg-oly-mia-5"],
-    "oly-3m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k", "hhg-oly-mia-5"],
-    "oly-6m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k", "hhg-oly-mia-10"],
-    "oly-12m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k", "hhg-oly-mia-10"],
+    "oly-1m": ["hhg-oly-spa-goi"],
+    "oly-3m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k"],
+    "oly-6m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k"],
+    "oly-12m": ["hhg-oly-spa-massage", "hhg-oly-ln-100k"],
   };
   return map[packageId] || [];
+}
+
+/**
+ * Giảm Mía Ơi theo gói (trong suốt hạn VIP, không phải voucher rời).
+ * 1 & 3 tháng → 5% · 6 & 12 tháng → 10%.
+ */
+export function miaOiDiscountPercentForPackage(
+  packageId: string | null | undefined
+): number {
+  switch (String(packageId || "").trim()) {
+    case "oly-1m":
+    case "oly-3m":
+      return 5;
+    case "oly-6m":
+    case "oly-12m":
+      return 10;
+    default:
+      return 0;
+  }
+}
+
+export function miaOiDiscountPercentForPlanLabel(
+  label: string | null | undefined
+): number {
+  return miaOiDiscountPercentForPackage(packageIdFromVipPlanLabel(label));
+}
+
+export function miaOiMembershipDiscountVnd(
+  baseVnd: number,
+  percent: number
+): number {
+  const base = Math.max(0, Math.round(Number(baseVnd) || 0));
+  const p = Math.min(100, Math.max(0, Math.round(Number(percent) || 0)));
+  if (base <= 0 || p <= 0) return 0;
+  return Math.round((base * p) / 100);
+}
+
+/** Cart line id prefix for the auto membership Mía discount. */
+export const MIA_MEMBERSHIP_DISC_PREFIX = "disc-mia-membership";
+
+export function cartHasMiaMembershipDiscount(items: unknown): boolean {
+  if (!Array.isArray(items)) return false;
+  return items.some((row) => {
+    if (!row || typeof row !== "object") return false;
+    return String((row as { id?: string }).id || "").startsWith(
+      MIA_MEMBERSHIP_DISC_PREFIX
+    );
+  });
+}
+
+/** One-shot quote for VIP Mía Ơi % on a payable base. */
+export function quoteMiaOiVipDiscount(opts: {
+  segment?: string | null;
+  vipExpiresAt?: Date | string | null;
+  vipPlanLabel?: string | null;
+  baseVnd: number;
+  /** e.g. "gọi thêm" */
+  noteSuffix?: string;
+}): { percent: number; discountVnd: number; note: string } {
+  if (
+    !isOlympicMembershipActive({
+      segment: opts.segment,
+      vipExpiresAt: opts.vipExpiresAt,
+    })
+  ) {
+    return { percent: 0, discountVnd: 0, note: "" };
+  }
+  const percent = miaOiDiscountPercentForPlanLabel(opts.vipPlanLabel);
+  const discountVnd = miaOiMembershipDiscountVnd(opts.baseVnd, percent);
+  if (discountVnd <= 0) {
+    return { percent, discountVnd: 0, note: "" };
+  }
+  const suffix = opts.noteSuffix ? ` ${opts.noteSuffix}` : "";
+  return {
+    percent,
+    discountVnd,
+    note: `Hội viên −${percent}%${suffix} (−${discountVnd.toLocaleString("vi-VN")}đ)`,
+  };
 }
 
 export function pickPrimaryOlympicPackage(

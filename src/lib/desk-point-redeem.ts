@@ -119,3 +119,93 @@ export function earnableVnd(items: RedeemableLine[]) {
     return sum + (gross - disc);
   }, 0);
 }
+
+/**
+ * Gán đổi điểm từ giỏ QR (pointsRedeemQty / dòng points-redeem-*) lên món.
+ * Idempotent — không đè phần đã cover. Dùng trước khi cộng điểm mua hàng.
+ */
+export function coverDrinkCartPoints<T extends RedeemableLine>(
+  orderItems: T[],
+  cartItems: unknown,
+  kind: DeskRedeemKind = "drink"
+): T[] {
+  if (!Array.isArray(cartItems) || !orderItems.length) return orderItems;
+
+  const step = deskRedeemStep(kind);
+  const legacyPrefix =
+    kind === "ticket" ? "points-redeem-100" : "points-redeem-50";
+  const byId = new Map<string, number>();
+  let explicit = 0;
+  let legacyUnits = 0;
+
+  for (const row of cartItems) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as {
+      id?: string;
+      qty?: number;
+      pointsRedeemQty?: number;
+    };
+    const id = String(rec.id || "");
+    if (id.startsWith(legacyPrefix)) {
+      legacyUnits = Math.max(legacyUnits, Math.round(Number(rec.qty) || 1));
+      continue;
+    }
+    if (
+      id.startsWith("points-redeem-") ||
+      id.startsWith("voucher-") ||
+      id.startsWith("disc-")
+    ) {
+      continue;
+    }
+    const qty = Math.max(0, Math.round(Number(rec.qty) || 0));
+    const redeemed = Math.min(
+      qty,
+      Math.max(0, Math.round(Number(rec.pointsRedeemQty) || 0))
+    );
+    if (redeemed > 0 && isDeskRedeemEligible(id, kind)) {
+      byId.set(id, (byId.get(id) || 0) + redeemed);
+      explicit += redeemed;
+    }
+  }
+
+  const next = orderItems.map((line) => ({ ...line }));
+  const lineOk = (line: RedeemableLine) =>
+    line.unitPriceVnd > 0 &&
+    isDeskRedeemEligible(line.itemId, kind) &&
+    (kind !== "drink" || line.unitPriceVnd <= 50_000);
+
+  if (explicit > 0) {
+    for (const line of next) {
+      const want = byId.get(line.itemId) || 0;
+      if (want <= 0 || !lineOk(line)) continue;
+      const already = Math.min(
+        line.qty,
+        Math.round((line.pointsDiscountVnd || 0) / line.unitPriceVnd)
+      );
+      const take = Math.min(line.qty - already, want);
+      if (take <= 0) continue;
+      line.pointsDiscountVnd =
+        (line.pointsDiscountVnd || 0) + take * line.unitPriceVnd;
+      line.pointsRedeemTier = step;
+      byId.set(line.itemId, want - take);
+    }
+    return next;
+  }
+
+  let left = legacyUnits;
+  for (const line of next) {
+    if (left <= 0) break;
+    if (!lineOk(line)) continue;
+    const already = Math.min(
+      line.qty,
+      Math.round((line.pointsDiscountVnd || 0) / line.unitPriceVnd)
+    );
+    const take = Math.min(line.qty - already, left);
+    if (take <= 0) continue;
+    line.pointsDiscountVnd =
+      (line.pointsDiscountVnd || 0) + take * line.unitPriceVnd;
+    line.pointsRedeemTier = step;
+    left -= take;
+  }
+  return next;
+}

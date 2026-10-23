@@ -190,3 +190,32 @@ export function foldPointsOntoItems(items: PointsBillLine[]): PointsBillView[] {
     };
   });
 }
+
+/** Tiền còn lại sau đổi điểm (dùng để tính điểm cộng / cột quầy). */
+export function earnableVndFromPointLines(
+  items: {
+    id?: string;
+    nameVi?: string;
+    qty: number;
+    priceVnd?: number;
+    unitPriceVnd?: number;
+    pointsRedeemQty?: number;
+    pointsDiscountVnd?: number;
+    pointsRedeemTier?: number | null;
+  }[]
+) {
+  return foldPointsOntoItems(
+    previewCartPointLines(
+      items.map((i) => ({
+        id: i.id,
+        nameVi: i.nameVi || "Món",
+        qty: i.qty,
+        priceVnd: i.priceVnd,
+        unitPriceVnd: i.unitPriceVnd,
+        pointsRedeemQty: i.pointsRedeemQty,
+        pointsDiscountVnd: i.pointsDiscountVnd,
+        pointsRedeemTier: i.pointsRedeemTier,
+      }))
+    )
+  ).reduce((sum, row) => sum + row.netVnd, 0);
+}
