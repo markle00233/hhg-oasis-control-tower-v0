@@ -81,6 +81,8 @@ import { deskVoucherCut } from "@/lib/hhg-vouchers";
 
 /** Tạm ẩn nút sơ đồ bàn Lòng Nướng. Đặt true khi mở lại. */
 const SHOW_LONG_NUONG_TABLE_MAP = false;
+/** Vé hồ trên đơn gộp — không cần dòng quét hồ đang chọn. */
+const BOARD_POOL_KEY = "board";
 
 type CatalogItem = MiaOiMenuItem | SpaMenuItem;
 
@@ -105,6 +107,9 @@ type Scan = {
   totalVnd?: number | null;
   orderId?: string | null;
   cartToken?: string | null;
+  source?: string | null;
+  /** Tạo đơn đã được thay bằng đơn món — không hiện thành dòng riêng. */
+  walkInConsumed?: boolean;
   ticketItems?: ScanTicketItem[];
   /** Set when staff saved hồ + mía in one click. */
   deskBundleId?: string | null;
@@ -347,6 +352,23 @@ function scanLooksFinalized(s: Scan) {
     s.eventType === "POOL_ORDER" ||
     (s.ticketItems && s.ticketItems.length > 0 && (s.totalVnd || 0) > 0)
   );
+}
+
+/** Lần quét "Tạo đơn" còn trống sau khi món đã lưu — không phải đơn thứ hai. */
+function hideWalkInShell(scan: Scan, arrival: Arrival) {
+  if (scan.eventType !== "SERVICE_USE") return false;
+  if (scan.walkInConsumed) return true;
+  if (scan.source !== "desk_walkin_order") return false;
+  if (scan.cartToken || scan.orderId || scan.ticketVerified) return false;
+  if ((scan.ticketItems || []).length > 0) return false;
+  if (scanLooksFinalized(scan)) return false;
+  const scanAt = new Date(scan.at).getTime();
+  if (!Number.isFinite(scanAt)) return false;
+  return (arrival.todayOrders || []).some((order) => {
+    if (String(order.status || "").toUpperCase() === "CANCELLED") return false;
+    const at = new Date(order.at).getTime();
+    return Number.isFinite(at) && at >= scanAt;
+  });
 }
 
 function visitFinalizedLabel(zoneCode: string | null, withCatalog: boolean) {
@@ -810,6 +832,10 @@ function buildDeskTickets(
 
     for (const scan of a.todayScans || []) {
       if (seenScanIds.has(scan.id)) continue;
+      if (hideWalkInShell(scan, a)) {
+        seenScanIds.add(scan.id);
+        continue;
+      }
       if (scan.orderId && seenOrders.has(scan.orderId)) continue;
       if (!scanLooksFinalized(scan)) continue;
       seenScanIds.add(scan.id);
@@ -862,7 +888,10 @@ function buildDeskTickets(
     for (const scan of a.todayScans || []) {
       if (seenScanIds.has(scan.id)) continue;
       if (scan.eventType !== "SERVICE_USE") continue;
-      if (scanLooksFinalized(scan)) continue;
+      if (hideWalkInShell(scan, a) || scanLooksFinalized(scan)) {
+        seenScanIds.add(scan.id);
+        continue;
+      }
       // Quét QR đơn là check-in, không phải order mới — mọi khu.
       const checkInForListedCart =
         !!scan.cartToken && listedCartTokens.has(scan.cartToken);
@@ -981,6 +1010,7 @@ export default function DeskAdministrationPage() {
   const [viewDate, setViewDate] = useState<string | null>(null);
   const loadSeq = useRef(0);
   const authFailStreak = useRef(0);
+  const savingOrder = useRef(false);
   const [scanError, setScanError] = useState("");
   const [scanBusy, setScanBusy] = useState(false);
   const [scanSession, setScanSession] = useState(0);
@@ -1100,7 +1130,7 @@ export default function DeskAdministrationPage() {
     );
   }, [guestTickets, selectedTicketKey]);
 
-  /** Lần quét hồ đang chọn — vé trên đơn gộp gắn vào đây. */
+  /** Lần quét hồ còn mở — đơn gộp gắn vé vào lần mới nhất, kể cả khi dòng đang chọn là Mía. */
   const focusedPoolScanId = (() => {
     if (!isMiaOlympic) return null;
     const open = (scan: Scan | null | undefined) =>
@@ -1108,10 +1138,18 @@ export default function DeskAdministrationPage() {
       !scan.ticketVerified &&
       !scan.orderId &&
       (scan.serviceCode === "OLYMPIC_POOL" || scan.serviceCode === "OLYMPIC");
-    if (open(focusedTicket?.scan)) return focusedTicket!.scan!.id;
-    if (!poolCartOpen()) return null;
-    const pending = guestTickets.filter((t) => open(t.scan));
-    return pending.length === 1 ? pending[0].scan!.id : null;
+    const pending: Scan[] = [];
+    const push = (scan: Scan | null | undefined) => {
+      if (!open(scan) || pending.some((row) => row.id === scan!.id)) return;
+      pending.push(scan!);
+    };
+    push(focusedTicket?.scan);
+    for (const ticket of guestTickets) push(ticket.scan);
+    for (const scan of selected?.todayScans || []) push(scan);
+    pending.sort(
+      (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+    );
+    return pending[0]?.id || null;
   })();
 
   const guestCartLines = useMemo(
@@ -2999,10 +3037,10 @@ export default function DeskAdministrationPage() {
     );
   }
 
-  /** Vé trên lần quét đang chọn: giỏ khách đã duyệt cộng vé quầy vừa thêm. */
+  /** Vé trên đơn gộp: giỏ khách đã duyệt cộng vé quầy vừa thêm. */
   function focusedPoolLines() {
-    if (!isMiaOlympic || !focusedPoolScanId) return [];
-    const row = scanCarts[focusedPoolScanId] || {};
+    if (!isMiaOlympic) return [];
+    const row = scanCarts[BOARD_POOL_KEY] || {};
     const added = Object.entries(row)
       .filter(([, q]) => q > 0)
       .map(([itemId, qty]) => ({ itemId, qty }));
@@ -3136,9 +3174,6 @@ export default function DeskAdministrationPage() {
     if (pct > 0 && miaQty > 0) {
       notes.push(`✓ Hội viên Mía: −${pct}% đồ uống`);
     }
-    notes.push(
-      "Không giảm: vé bơi lẻ · đồ uống Mía (trừ hội viên trong hạn, điểm hoặc voucher)"
-    );
     const redeem = deskRedeemPreview();
     if (redeem.extraUnits > 0) {
       notes.push(
@@ -3236,27 +3271,29 @@ export default function DeskAdministrationPage() {
 
   async function confirmMiaCart(mode: "cart" | "added") {
     if (!selected || !guestCart?.token || !miaCartOpen() || ordering) return;
+    if (savingOrder.current) return;
     const extras = mode === "added" ? cartLines : [];
     if (mode === "added" && extras.length === 0) {
       setError("Chọn món gọi thêm, hoặc bấm xác nhận giỏ.");
       return;
     }
+    savingOrder.current = true;
     const poolLines = focusedPoolLines();
     const poolScan = focusedPoolScan();
     const bundleId =
-      poolLines.length > 0 && poolScan ? `b${Date.now().toString(36)}` : "";
+      poolLines.length > 0 ? `b${Date.now().toString(36)}` : "";
     setOrdering(true);
     setOrderMsg("");
     setError("");
     const notes: string[] = [];
     try {
-      if (poolLines.length && poolScan && focusedPoolScanId) {
+      if (poolLines.length) {
         const poolRes = await fetch("/api/crm/pool/orders", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             customerId: selected.id,
-            scanEventId: poolScan.id,
+            ...(poolScan ? { scanEventId: poolScan.id } : {}),
             items: poolLines,
             ...(bundleId ? { deskBundleId: bundleId } : {}),
           }),
@@ -3266,7 +3303,8 @@ export default function DeskAdministrationPage() {
         notes.push(`hồ ${formatVnd(poolData.order?.totalVnd || 0)}`);
         setScanCarts((prev) => {
           const next = { ...prev };
-          delete next[focusedPoolScanId];
+          delete next[BOARD_POOL_KEY];
+          if (focusedPoolScanId) delete next[focusedPoolScanId];
           return next;
         });
       }
@@ -3301,24 +3339,26 @@ export default function DeskAdministrationPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không xác nhận được");
     } finally {
+      savingOrder.current = false;
       setOrdering(false);
     }
   }
 
   /** Lưu đơn gộp: xác thực vé hồ (nếu có) rồi lưu đồ uống Mía (nếu có). */
   async function saveMiaOlympicBoard() {
-    if (!selected || !isMiaOlympic || ordering) return;
+    if (!selected || !isMiaOlympic || ordering || savingOrder.current) return;
     const pool = boardPoolTotals();
     const miaPay = deskMiaPayable();
     const combined = pool.sum + miaPay;
     const hasMia = cartLines.length > 0;
     const scan = focusedPoolScan();
     const poolLines = focusedPoolLines();
-    const hasPool = poolLines.length > 0 && !!scan && !!focusedPoolScanId;
+    const hasPool = poolLines.length > 0;
     if (!hasMia && !hasPool) {
       setError("Chọn vé hồ hoặc đồ uống Mía trước khi lưu.");
       return;
     }
+    savingOrder.current = true;
     setOrdering(true);
     setOrderMsg("");
     setError("");
@@ -3326,7 +3366,7 @@ export default function DeskAdministrationPage() {
     const bundleId =
       hasMia && hasPool ? `b${Date.now().toString(36)}` : "";
     try {
-      if (hasPool && scan && focusedPoolScanId) {
+      if (hasPool) {
         const items = poolLines;
         if (!items.length) throw new Error("Chọn ít nhất 1 vé hồ trước khi lưu.");
         const res = await fetch("/api/crm/pool/orders", {
@@ -3334,7 +3374,7 @@ export default function DeskAdministrationPage() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             customerId: selected.id,
-            scanEventId: scan.id,
+            ...(scan ? { scanEventId: scan.id } : {}),
             items,
             ...(bundleId ? { deskBundleId: bundleId } : {}),
           }),
@@ -3344,11 +3384,13 @@ export default function DeskAdministrationPage() {
         notes.push(`hồ ${formatVnd(data.order?.totalVnd || pool.sum)}`);
         setScanCarts((prev) => {
           const next = { ...prev };
-          delete next[focusedPoolScanId];
+          delete next[BOARD_POOL_KEY];
+          if (focusedPoolScanId) delete next[focusedPoolScanId];
           return next;
         });
       }
       if (hasMia) {
+        const shellScanId = !hasPool && focusedPoolScanId ? focusedPoolScanId : "";
         const res = await fetch("/api/crm/miaoi/orders", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -3358,6 +3400,12 @@ export default function DeskAdministrationPage() {
             pointsRedeemUnits: deskRedeemUnits,
             voucherOfferId: deskVoucherOfferId || undefined,
             ...(bundleId ? { deskBundleId: bundleId } : {}),
+            ...(!hasPool
+              ? {
+                  consumeWalkInShell: true,
+                  ...(shellScanId ? { scanEventId: shellScanId } : {}),
+                }
+              : {}),
           }),
         });
         const data = await res.json();
@@ -3383,6 +3431,7 @@ export default function DeskAdministrationPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được");
     } finally {
+      savingOrder.current = false;
       setOrdering(false);
     }
   }
@@ -3395,8 +3444,10 @@ export default function DeskAdministrationPage() {
     }
     if (!selected || !hasCatalog || isPool || cartLines.length === 0) return;
     if (miaOrderLocked()) return;
+    if (savingOrder.current) return;
     const revisingSpa = spaCartEditable();
     if (finalize && !revisingSpa) return;
+    savingOrder.current = true;
     setOrdering(true);
     setOrderMsg("");
     setError("");
@@ -3453,6 +3504,7 @@ export default function DeskAdministrationPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được đơn");
     } finally {
+      savingOrder.current = false;
       setOrdering(false);
     }
   }
@@ -5385,26 +5437,20 @@ export default function DeskAdministrationPage() {
                       Giảm: phụ kiện ≥2 món → −10% phần phụ kiện · gói tháng
                       cùng ngày vé bơi → −10% gói. Không giảm: vé bơi lẻ.
                     </p>
-                    {!focusedPoolScanId ? (
-                      <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b" }}>
-                        Chọn dòng quét / yêu cầu hồ bên trên để gắn vé, rồi +/− bên dưới.
-                      </p>
-                    ) : (
+                    {focusedPoolScanId ? (
                       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#0369a1" }}>
                         Đang gắn vé vào lần quét{" "}
                         {formatTime(
                           focusedPoolScan()?.at || focusedTicket?.scanAt || ""
                         )}.
                       </p>
-                    )}
+                    ) : null}
                     <div
                       style={{
                         display: "grid",
                         gap: 8,
                         maxHeight: 220,
                         overflow: "auto",
-                        opacity: focusedPoolScanId ? 1 : 0.55,
-                        pointerEvents: focusedPoolScanId ? "auto" : "none",
                       }}
                     >
                       {POOL_CATEGORIES.map((cat) => {
@@ -5414,7 +5460,7 @@ export default function DeskAdministrationPage() {
                         if (!items.length) return null;
                         const membershipHeld =
                           cat.id === "goi-thang" && olympicMembershipLocked();
-                        const scanId = focusedPoolScanId || "";
+                        const scanId = BOARD_POOL_KEY;
                         return (
                           <div key={cat.id} style={{ display: "grid", gap: 6 }}>
                             <p
@@ -5474,9 +5520,7 @@ export default function DeskAdministrationPage() {
                                     <button
                                       type="button"
                                       style={styles.qtyBtn}
-                                      disabled={
-                                        !scanId || q <= 0 || membershipHeld
-                                      }
+                                      disabled={q <= 0 || membershipHeld}
                                       onClick={() =>
                                         setScanQty(scanId, item.id, q - 1)
                                       }
@@ -5495,7 +5539,7 @@ export default function DeskAdministrationPage() {
                                     <button
                                       type="button"
                                       style={styles.qtyBtn}
-                                      disabled={!scanId || membershipHeld}
+                                      disabled={membershipHeld}
                                       onClick={() =>
                                         setScanQty(scanId, item.id, q + 1)
                                       }

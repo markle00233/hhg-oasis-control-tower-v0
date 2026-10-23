@@ -582,6 +582,8 @@ export async function GET(req: NextRequest) {
             orderId: typeof meta.orderId === "string" ? meta.orderId : null,
             cartToken:
               typeof meta.cartToken === "string" ? meta.cartToken : null,
+            source: typeof meta.source === "string" ? meta.source : null,
+            walkInConsumed: meta.walkInConsumed === true,
             deskBundleId:
               typeof meta.deskBundleId === "string" ? meta.deskBundleId : null,
             ticketItems: orderItems.map((i) => {

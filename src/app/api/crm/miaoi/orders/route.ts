@@ -22,6 +22,64 @@ export const dynamic = "force-dynamic";
 
 type CartLine = { itemId: string; qty: number; useAltPrice?: boolean };
 
+function eventMeta(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : {};
+}
+
+function isDeskWalkInShell(scan: {
+  eventType: string;
+  operationalStatus: string | null;
+  metadata: unknown;
+}) {
+  if (scan.eventType !== "SERVICE_USE") return false;
+  if ((scan.operationalStatus || "NEW") !== "NEW") return false;
+  const meta = eventMeta(scan.metadata);
+  if (meta.source !== "desk_walkin_order") return false;
+  if (meta.ticketVerified || meta.orderId || meta.walkInConsumed) return false;
+  if (Array.isArray(meta.items) && meta.items.length > 0) return false;
+  return true;
+}
+
+/** Tạo đơn mở 1 lần quét trống. Lưu món xong thì đóng lần đó, kẻo bảng hiện thêm dòng "Chưa có order". */
+async function consumeDeskWalkInShell(opts: {
+  customerId: string;
+  orderId: string;
+  scanEventId?: string;
+  consumeLatest?: boolean;
+}) {
+  const scans = await prisma.appServiceEvent.findMany({
+    where: {
+      customerId: opts.customerId,
+      eventType: "SERVICE_USE",
+      operationalStatus: "NEW",
+      createdAt: { gte: new Date(Date.now() - 18 * 60 * 60 * 1000) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 8,
+  });
+  const shells = scans.filter(isDeskWalkInShell);
+  const named = opts.scanEventId
+    ? shells.find((scan) => scan.id === opts.scanEventId) || null
+    : null;
+  const chosen = named || (opts.consumeLatest ? shells[0] || null : null);
+  if (!chosen) return null;
+  const prev = eventMeta(chosen.metadata);
+  await prisma.appServiceEvent.update({
+    where: { id: chosen.id },
+    data: {
+      operationalStatus: "ACKNOWLEDGED",
+      metadata: {
+        ...prev,
+        walkInConsumed: true,
+        consumedByOrderId: opts.orderId,
+      },
+    },
+  });
+  return chosen.id;
+}
+
 /** Live Mía Ơi orders for desk (Mía Ơi zone or SYSTEM_ADMIN). */
 export async function GET(req: NextRequest) {
   const gate = await requireDeskZone("MIA_OI");
@@ -254,15 +312,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (scanEventId) {
+    const consumedShellId = await consumeDeskWalkInShell({
+      customerId: customer.id,
+      orderId: order.id,
+      scanEventId,
+      consumeLatest: body.consumeWalkInShell === true,
+    });
+
+    if (scanEventId && scanEventId !== consumedShellId) {
       const scan = await prisma.appServiceEvent.findFirst({
         where: { id: scanEventId, customerId: customer.id },
       });
-      if (scan) {
-        const prev =
-          scan.metadata && typeof scan.metadata === "object"
-            ? (scan.metadata as Record<string, unknown>)
-            : {};
+      if (scan && !isDeskWalkInShell(scan)) {
+        const prev = eventMeta(scan.metadata);
         await prisma.appServiceEvent.update({
           where: { id: scan.id },
           data: {
