@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
+import { deskZoneAliases } from "@/lib/desk-zones";
+import { isOpenEmptyDeskShell } from "@/lib/desk-walkin-shell";
 import { confirmOlympicPoolScan } from "@/lib/olympic-confirm-scan";
 import { prisma } from "@/lib/prisma";
 
@@ -8,15 +10,7 @@ export const dynamic = "force-dynamic";
 
 type CartLine = { itemId: string; qty: number };
 
-function asMeta(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function scanAlreadyVerified(meta: Record<string, unknown>) {
-  return meta.ticketVerified === true || typeof meta.orderId === "string";
-}
+const isOpenEmptyShell = isOpenEmptyDeskShell;
 
 /** Bỏ dòng đổi điểm trên vé mở lại, cộng lại số tiền đã giảm. */
 function stripPointRedeem(items: unknown, totalVnd: number) {
@@ -55,29 +49,50 @@ async function olympicService() {
   });
 }
 
-/** Đơn gộp có thể thêm vé khi dòng đang chọn không phải lần quét hồ. */
+/**
+ * Finalize vé hồ vào đúng lần quét client chỉ định.
+ * Có scanEventId → luôn dùng lần đó (không tạo dòng mới / không cướp Tạo đơn khác).
+ */
 async function ensureOpenOlympicScan(customerId: string, scanEventId: string) {
   const service = await olympicService();
   if (!service) return null;
+
+  async function bindOlympicService(scanId: string, currentServiceId: string) {
+    if (currentServiceId === service!.id) return scanId;
+    await prisma.appServiceEvent.update({
+      where: { id: scanId },
+      data: { serviceId: service!.id },
+    });
+    return scanId;
+  }
+
   if (scanEventId) {
     const named = await prisma.appServiceEvent.findFirst({
       where: { id: scanEventId, customerId, eventType: "SERVICE_USE" },
     });
-    if (named && !scanAlreadyVerified(asMeta(named.metadata))) return named.id;
+    if (named) return bindOlympicService(named.id, named.serviceId);
   }
+
+  const aliases = deskZoneAliases("MIA_OLYMPIC");
+  const zoneServices = await prisma.appService.findMany({
+    where: { serviceCode: { in: aliases } },
+    select: { id: true },
+  });
+  const serviceIds = zoneServices.map((s) => s.id);
   const opens = await prisma.appServiceEvent.findMany({
     where: {
       customerId,
-      serviceId: service.id,
       eventType: "SERVICE_USE",
       operationalStatus: "NEW",
+      serviceId: { in: serviceIds.length ? serviceIds : [service.id] },
       createdAt: { gte: new Date(Date.now() - 18 * 60 * 60 * 1000) },
     },
     orderBy: { createdAt: "desc" },
-    take: 6,
+    take: 8,
   });
-  const open = opens.find((scan) => !scanAlreadyVerified(asMeta(scan.metadata)));
-  if (open) return open.id;
+  const open = opens.find((scan) => isOpenEmptyShell(scan));
+  if (open) return bindOlympicService(open.id, open.serviceId);
+
   const created = await prisma.appServiceEvent.create({
     data: {
       customerId,

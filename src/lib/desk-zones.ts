@@ -108,6 +108,14 @@ export function miaOlympicSector(code: string) {
   return (MIA_OLYMPIC_SECTOR as readonly string[]).includes(z);
 }
 
+/** Lần quét gắn vé hồ (kể cả walk-in cũ ghi nhầm MIA_OLYMPIC). */
+export function isOlympicPoolScanCode(code: string | null | undefined) {
+  const z = String(code || "")
+    .trim()
+    .toUpperCase();
+  return z === "OLYMPIC_POOL" || z === "OLYMPIC" || z === "MIA_OLYMPIC";
+}
+
 export function sameDeskSector(a: string, b: string) {
   const left = a.trim().toUpperCase();
   const right = b.trim().toUpperCase();

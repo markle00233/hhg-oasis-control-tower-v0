@@ -8,6 +8,10 @@ import {
   earnableVnd,
   isDeskRedeemTicket,
 } from "@/lib/desk-point-redeem";
+import {
+  deskEventMeta,
+  deskScanAlreadyFinalized,
+} from "@/lib/desk-walkin-shell";
 import { awardPurchasePoints, redeemPoints } from "@/lib/points";
 import { computePoolPricing } from "@/lib/pool-pricing";
 import { prisma } from "@/lib/prisma";
@@ -21,15 +25,8 @@ import {
 
 export type PoolCartLine = { itemId: string; qty: number };
 
-function asMeta(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function scanAlreadyVerified(meta: Record<string, unknown>) {
-  return meta.ticketVerified === true || typeof meta.orderId === "string";
-}
+const asMeta = deskEventMeta;
+const scanAlreadyVerified = deskScanAlreadyFinalized;
 
 /** Vé khách đã đổi trên QR — không đốt điểm lần nữa ở quầy. */
 function coverPoolCartPoints(
@@ -300,13 +297,18 @@ export async function confirmOlympicPoolScan(opts: {
         where: {
           id: scanEventId,
           customerId: customer.id,
-          serviceId: service.id,
           eventType: "SERVICE_USE",
         },
       });
       if (!scan) {
         throw Object.assign(new Error("Không tìm thấy lần quét này."), {
           status: 404,
+        });
+      }
+      if (scan.serviceId !== service.id) {
+        await tx.appServiceEvent.update({
+          where: { id: scan.id },
+          data: { serviceId: service.id },
         });
       }
 
@@ -325,11 +327,13 @@ export async function confirmOlympicPoolScan(opts: {
 
       const dayStart = new Date();
       dayStart.setHours(0, 0, 0, 0);
+      /** Chỉ gộp lần quét hồ cùng dịch vụ còn trống — không đụng đơn Tạo đơn khác. */
       const siblings = await tx.appServiceEvent.findMany({
         where: {
           customerId: customer.id,
           serviceId: service.id,
           eventType: "SERVICE_USE",
+          operationalStatus: "NEW",
           id: { not: scan.id },
           createdAt: { gte: dayStart },
         },
@@ -435,19 +439,34 @@ export async function confirmOlympicPoolScan(opts: {
       for (const sib of siblings) {
         const sibMeta = asMeta(sib.metadata);
         if (scanAlreadyVerified(sibMeta)) continue;
+        /** Không đụng Tạo đơn khác — mỗi lần Tạo đơn là 1 visit riêng. */
+        if (sibMeta.source === "desk_walkin_order") continue;
+        /** Gộp lần quét QR/shared trống trùng ngày, tránh dòng "Chưa có order" thừa. */
+        const empty =
+          !Array.isArray(sibMeta.items) || sibMeta.items.length === 0;
         await tx.appServiceEvent.update({
           where: { id: sib.id },
           data: {
             operationalStatus: "ACKNOWLEDGED",
             metadata: {
               ...sibMeta,
-              ticketVerified: true,
-              mergedIntoScanId: scan.id,
-              verifiedAt: verifiedAt.toISOString(),
-              orderId: order.id,
-              totalVnd,
-              items: metaItems,
-              ...(opts.deskBundleId ? { deskBundleId: opts.deskBundleId } : {}),
+              ...(empty
+                ? {
+                    walkInConsumed: true,
+                    consumedByOrderId: order.id,
+                    mergedIntoScanId: scan.id,
+                  }
+                : {
+                    ticketVerified: true,
+                    mergedIntoScanId: scan.id,
+                    verifiedAt: verifiedAt.toISOString(),
+                    orderId: order.id,
+                    totalVnd,
+                    items: metaItems,
+                    ...(opts.deskBundleId
+                      ? { deskBundleId: opts.deskBundleId }
+                      : {}),
+                  }),
             },
           },
         });

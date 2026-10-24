@@ -584,6 +584,12 @@ export async function GET(req: NextRequest) {
               typeof meta.cartToken === "string" ? meta.cartToken : null,
             source: typeof meta.source === "string" ? meta.source : null,
             walkInConsumed: meta.walkInConsumed === true,
+            deskOrderZone:
+              typeof meta.deskOrderZone === "string"
+                ? meta.deskOrderZone
+                : null,
+            miaOrderId:
+              typeof meta.miaOrderId === "string" ? meta.miaOrderId : null,
             deskBundleId:
               typeof meta.deskBundleId === "string" ? meta.deskBundleId : null,
             ticketItems: orderItems.map((i) => {

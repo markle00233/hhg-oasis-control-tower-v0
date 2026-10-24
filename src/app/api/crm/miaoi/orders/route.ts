@@ -5,6 +5,10 @@ import {
   earnableVnd,
   type RedeemableLine,
 } from "@/lib/desk-point-redeem";
+import {
+  deskEventMeta,
+  isOpenEmptyDeskShell,
+} from "@/lib/desk-walkin-shell";
 import { isMiaOiMembershipVoucher } from "@/lib/hhg-vouchers";
 import { getMiaOiItem } from "@/lib/miaoi-menu";
 import { quoteMiaOiVipDiscount } from "@/lib/olympic-membership";
@@ -22,33 +26,28 @@ export const dynamic = "force-dynamic";
 
 type CartLine = { itemId: string; qty: number; useAltPrice?: boolean };
 
-function eventMeta(metadata: unknown): Record<string, unknown> {
-  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
-    ? (metadata as Record<string, unknown>)
-    : {};
-}
+const eventMeta = deskEventMeta;
 
-function isDeskWalkInShell(scan: {
-  eventType: string;
-  operationalStatus: string | null;
-  metadata: unknown;
-}) {
-  if (scan.eventType !== "SERVICE_USE") return false;
-  if ((scan.operationalStatus || "NEW") !== "NEW") return false;
-  const meta = eventMeta(scan.metadata);
-  if (meta.source !== "desk_walkin_order") return false;
-  if (meta.ticketVerified || meta.orderId || meta.walkInConsumed) return false;
-  if (Array.isArray(meta.items) && meta.items.length > 0) return false;
-  return true;
-}
-
-/** Tạo đơn mở 1 lần quét trống. Lưu món xong thì đóng lần đó, kẻo bảng hiện thêm dòng "Chưa có order". */
-async function consumeDeskWalkInShell(opts: {
+/**
+ * Chỉ finalize đúng lần quét được chỉ định.
+ * Có scanEventId mà không còn trống → null (không cướp Tạo đơn khác).
+ */
+async function findOpenShellToFinalize(opts: {
   customerId: string;
-  orderId: string;
   scanEventId?: string;
-  consumeLatest?: boolean;
+  preferLatestWalkIn?: boolean;
 }) {
+  if (opts.scanEventId) {
+    const named = await prisma.appServiceEvent.findFirst({
+      where: {
+        id: opts.scanEventId,
+        customerId: opts.customerId,
+        eventType: "SERVICE_USE",
+      },
+    });
+    return named && isOpenEmptyDeskShell(named) ? named : null;
+  }
+  if (!opts.preferLatestWalkIn) return null;
   const scans = await prisma.appServiceEvent.findMany({
     where: {
       customerId: opts.customerId,
@@ -59,25 +58,52 @@ async function consumeDeskWalkInShell(opts: {
     orderBy: { createdAt: "desc" },
     take: 8,
   });
-  const shells = scans.filter(isDeskWalkInShell);
-  const named = opts.scanEventId
-    ? shells.find((scan) => scan.id === opts.scanEventId) || null
-    : null;
-  const chosen = named || (opts.consumeLatest ? shells[0] || null : null);
-  if (!chosen) return null;
-  const prev = eventMeta(chosen.metadata);
+  const shells = scans.filter(isOpenEmptyDeskShell);
+  const walkIn = shells.find(
+    (scan) => eventMeta(scan.metadata).source === "desk_walkin_order"
+  );
+  return walkIn || shells[0] || null;
+}
+
+/** Gắn đơn Mía vào lần quét đã tạo — không tạo thêm dòng lịch sử. */
+async function finalizeShellWithMiaOrder(opts: {
+  shellId: string;
+  orderId: string;
+  totalVnd: number;
+  items: {
+    name: string;
+    qty: number;
+    unitPriceVnd: number;
+    itemId: string;
+    pointsDiscountVnd: number;
+    pointsRedeemTier: number | null;
+  }[];
+  pointsRedeemUnits: number;
+  pointsRedeemCost: number;
+}) {
+  const shell = await prisma.appServiceEvent.findUnique({
+    where: { id: opts.shellId },
+  });
+  if (!shell) return null;
+  const prev = eventMeta(shell.metadata);
   await prisma.appServiceEvent.update({
-    where: { id: chosen.id },
+    where: { id: shell.id },
     data: {
       operationalStatus: "ACKNOWLEDGED",
       metadata: {
         ...prev,
-        walkInConsumed: true,
-        consumedByOrderId: opts.orderId,
+        ticketVerified: true,
+        orderId: opts.orderId,
+        totalVnd: opts.totalVnd,
+        placedBy: "desk",
+        deskOrderZone: "MIA_OI",
+        items: opts.items,
+        pointsRedeemUnits: opts.pointsRedeemUnits,
+        pointsRedeemCost: opts.pointsRedeemCost,
       },
     },
   });
-  return chosen.id;
+  return shell.id;
 }
 
 /** Live Mía Ơi orders for desk (Mía Ơi zone or SYSTEM_ADMIN). */
@@ -285,7 +311,37 @@ export async function POST(req: NextRequest) {
       include: { items: true },
     });
 
-    if (service) {
+    const metaItems = redeemed.items.map((i) => ({
+      name: i.nameVi || "",
+      qty: i.qty,
+      unitPriceVnd: i.unitPriceVnd,
+      itemId: i.itemId,
+      pointsDiscountVnd: i.pointsDiscountVnd || 0,
+      pointsRedeemTier: i.pointsRedeemTier || null,
+    }));
+
+    /**
+     * - Mía-only: gắn món vào đúng lần Tạo đơn (cùng dòng trên bảng).
+     * - Gộp với hồ (deskBundleId): tạo MIA_OI_ORDER + gắn bundle lên lần quét hồ.
+     */
+    const shellToFinish = deskBundleId
+      ? null
+      : await findOpenShellToFinalize({
+          customerId: customer.id,
+          scanEventId,
+          preferLatestWalkIn: body.consumeWalkInShell === true && !scanEventId,
+        });
+
+    if (shellToFinish) {
+      await finalizeShellWithMiaOrder({
+        shellId: shellToFinish.id,
+        orderId: order.id,
+        totalVnd,
+        items: metaItems,
+        pointsRedeemUnits: redeemed.unitsApplied,
+        pointsRedeemCost: redeemed.cost,
+      });
+    } else if (service) {
       await prisma.appServiceEvent.create({
         data: {
           customerId: customer.id,
@@ -296,15 +352,9 @@ export async function POST(req: NextRequest) {
             orderId: order.id,
             totalVnd,
             placedBy: "desk",
+            deskOrderZone: "MIA_OI",
             ...(deskBundleId ? { deskBundleId } : {}),
-            items: redeemed.items.map((i) => ({
-              name: i.nameVi,
-              qty: i.qty,
-              unitPriceVnd: i.unitPriceVnd,
-              itemId: i.itemId,
-              pointsDiscountVnd: i.pointsDiscountVnd || 0,
-              pointsRedeemTier: i.pointsRedeemTier || null,
-            })),
+            items: metaItems,
             pointsRedeemUnits: redeemed.unitsApplied,
             pointsRedeemCost: redeemed.cost,
           },
@@ -312,36 +362,23 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const consumedShellId = await consumeDeskWalkInShell({
-      customerId: customer.id,
-      orderId: order.id,
-      scanEventId,
-      consumeLatest: body.consumeWalkInShell === true,
-    });
-
-    if (scanEventId && scanEventId !== consumedShellId) {
-      const scan = await prisma.appServiceEvent.findFirst({
-        where: { id: scanEventId, customerId: customer.id },
+    if (deskBundleId && scanEventId) {
+      const poolScan = await prisma.appServiceEvent.findFirst({
+        where: {
+          id: scanEventId,
+          customerId: customer.id,
+          eventType: "SERVICE_USE",
+        },
       });
-      if (scan && !isDeskWalkInShell(scan)) {
-        const prev = eventMeta(scan.metadata);
+      if (poolScan) {
+        const prev = eventMeta(poolScan.metadata);
         await prisma.appServiceEvent.update({
-          where: { id: scan.id },
+          where: { id: poolScan.id },
           data: {
-            operationalStatus: "ACKNOWLEDGED",
             metadata: {
               ...prev,
-              ticketVerified: true,
-              orderId: order.id,
-              totalVnd,
-              items: redeemed.items.map((i) => ({
-                name: i.nameVi,
-                qty: i.qty,
-                unitPriceVnd: i.unitPriceVnd,
-                itemId: i.itemId,
-                pointsDiscountVnd: i.pointsDiscountVnd || 0,
-                pointsRedeemTier: i.pointsRedeemTier || null,
-              })),
+              deskBundleId,
+              miaOrderId: order.id,
             },
           },
         });
