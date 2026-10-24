@@ -463,11 +463,15 @@ async function ensureDeskScan(opts: {
   zone: string;
   cartToken?: string | null;
 }) {
+  /** Prefer mapped code (MIA_OLYMPIC → OLYMPIC_POOL) so desk can attach pool tickets. */
+  const preferredService = mapDeskZoneToService(opts.zone);
   const service = await prisma.appService.findFirst({
     where: {
       OR: [
-        { serviceCode: opts.zone },
-        { serviceCode: mapDeskZoneToService(opts.zone) },
+        { serviceCode: preferredService },
+        ...(preferredService !== opts.zone
+          ? [{ serviceCode: opts.zone }]
+          : []),
       ],
     },
     select: { id: true },

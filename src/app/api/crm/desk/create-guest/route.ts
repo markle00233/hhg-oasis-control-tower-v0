@@ -39,7 +39,7 @@ function mapDeskZoneToService(zone: string) {
  * Quầy tạo đơn walk-in:
  * - Chưa có TK → tạo AppCustomer, mật khẩu = SĐT
  * - Luôn Khách lẻ (VIP chỉ khi khách đăng ký gói)
- * - Mở 1 lần quét chưa xác thực để NV chọn món / vé
+ * - Luôn mở 1 lần quét mới chưa xác thực để NV chọn món / vé
  */
 export async function POST(req: NextRequest) {
   try {
@@ -150,11 +150,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    /** Prefer mapped code (MIA_OLYMPIC → OLYMPIC_POOL) so vé hồ unlocks on the board. */
+    const preferredService = mapDeskZoneToService(zone);
     const service = await prisma.appService.findFirst({
       where: {
         OR: [
-          { serviceCode: zone },
-          { serviceCode: mapDeskZoneToService(zone) },
+          { serviceCode: preferredService },
+          ...(preferredService !== zone ? [{ serviceCode: zone }] : []),
         ],
       },
       select: { id: true },
