@@ -16,6 +16,8 @@ export type HhgVoucher = {
   discountType: "amount" | "percent" | "perk";
   discountVnd?: number;
   discountPercent?: number;
+  /** Hoá đơn phải đạt mức này thì mới trừ tiền. */
+  minBillVnd?: number;
   /** Which Olympic monthly package grants this (for seeding) */
   fromPackage?: string[];
 };
@@ -34,6 +36,7 @@ export const HHG_OASIS_VOUCHERS: HhgVoucher[] = [
       "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=1200&q=60",
     discountType: "amount",
     discountVnd: 100_000,
+    minBillVnd: 500_000,
     fromPackage: ["oly-3m", "oly-6m", "oly-12m"],
   },
   // Mía Ơi −5%/−10%: giảm theo gói VIP trong hạn (không còn voucher rời).

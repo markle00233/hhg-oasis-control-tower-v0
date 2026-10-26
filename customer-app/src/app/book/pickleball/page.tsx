@@ -47,7 +47,6 @@ export default function PickleballBookPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
-  const [pointsBalance, setPointsBalance] = useState(0);
   const [successBooking, setSuccessBooking] = useState<{
     id: string;
     bookingCode: string;
@@ -122,10 +121,7 @@ export default function PickleballBookPage() {
         router.replace("/login");
         return;
       }
-      if (!cancelled) {
-        setPointsBalance(Number(data.customer?.pointsBalance) || 0);
-        setReady(true);
-      }
+      if (!cancelled) setReady(true);
     })();
     return () => {
       cancelled = true;
@@ -280,10 +276,7 @@ export default function PickleballBookPage() {
               ◯
             </Link>
           </div>
-          <p className="mt-4 text-center text-sm font-semibold text-lime-200/90">
-            {pointsBalance} điểm
-          </p>
-          <p className="mt-2 text-center text-xs font-bold uppercase tracking-[0.35em] text-lime-300/90">
+          <p className="mt-4 text-center text-xs font-bold uppercase tracking-[0.35em] text-lime-300/90">
             Courts
           </p>
           <h1 className="mt-2 text-center font-display text-4xl font-black tracking-wide">

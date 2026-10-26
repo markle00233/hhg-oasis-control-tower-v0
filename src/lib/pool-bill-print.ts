@@ -14,6 +14,8 @@ export type PoolBillPayload = {
   totalVnd: number;
   items: PoolBillLine[];
   orderId?: string | null;
+  manualDiscountVnd?: number | null;
+  manualDiscountNote?: string | null;
 };
 
 function fmtVnd(n: number) {
@@ -91,6 +93,15 @@ export function printPoolBill(bill: PoolBillPayload) {
     <tbody>${lines}</tbody>
   </table>
   <hr/>
+  ${
+    bill.manualDiscountVnd && bill.manualDiscountVnd > 0
+      ? `<div style="text-align:right;margin-top:8px">Giảm tay: −${fmtVnd(bill.manualDiscountVnd)}${
+          bill.manualDiscountNote
+            ? ` (${escapeHtml(bill.manualDiscountNote)})`
+            : ""
+        }</div>`
+      : ""
+  }
   <div class="total">TỔNG: ${fmtVnd(bill.totalVnd)}</div>
   <div class="sub" style="margin-top:12px">Cảm ơn quý khách</div>
   <script>

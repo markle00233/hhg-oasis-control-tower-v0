@@ -20,9 +20,13 @@ export type PoolCategory = {
 export const POOL_CATEGORIES: PoolCategory[] = [
   { id: "tre-em", nameVi: "Dưới 1,3m", nameEn: "Under 1.3m" },
   { id: "nguoi-lon", nameVi: "Từ 1,3m", nameEn: "1.3m+" },
+  { id: "tu-chon", nameVi: "Lượt tự chọn", nameEn: "Self-choice swim" },
   { id: "goi-thang", nameVi: "Gói tháng", nameEn: "Monthly" },
   { id: "phu-kien", nameVi: "Phụ kiện", nameEn: "Accessories" },
 ];
+
+/** Bơi tự do trừ 1 lượt tự chọn trên gói bơi học viên. */
+export const POOL_SWIM_BONUS_ID = "pool-boi-tu-do";
 
 const k = (n: number) => n * 1000;
 
@@ -60,6 +64,14 @@ export const POOL_MENU: PoolMenuItem[] = [
     nameEn: "Unlimited swim · 1.3m+",
     priceVnd: k(70),
     note: "Từ 1,3m trở lên",
+  },
+  {
+    id: POOL_SWIM_BONUS_ID,
+    category: "tu-chon",
+    nameVi: "Bơi tự do",
+    nameEn: "Self-choice swim",
+    priceVnd: 0,
+    note: "1 lượt tự chọn của gói bơi",
   },
   {
     id: "oly-1m",
@@ -156,7 +168,7 @@ export const POOL_MENU: PoolMenuItem[] = [
 ];
 
 export function formatPoolPrice(item: PoolMenuItem) {
-  if (item.priceVnd <= 0) return "—";
+  if (item.priceVnd <= 0) return "0đ";
   if (item.priceAltVnd) {
     return `${Math.round(item.priceVnd / 1000)}–${Math.round(item.priceAltVnd / 1000)}K`;
   }

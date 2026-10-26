@@ -47,7 +47,6 @@ export default function LongNuongBookPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
-  const [pointsBalance, setPointsBalance] = useState(0);
   const [success, setSuccess] = useState<{
     tableName: string;
     bookingCode: string;
@@ -103,7 +102,6 @@ export default function LongNuongBookPage() {
         return;
       }
       if (!cancelled) {
-        setPointsBalance(Number(data.customer?.pointsBalance) || 0);
         setGuestName(String(data.customer?.fullName || ""));
         setGuestPhone(String(data.customer?.phone || ""));
         setReady(true);
@@ -296,10 +294,7 @@ export default function LongNuongBookPage() {
               ◯
             </Link>
           </div>
-          <p className="mt-4 text-center text-sm font-semibold text-orange-200/90">
-            {pointsBalance} điểm
-          </p>
-          <p className="mt-2 text-center text-xs font-bold uppercase tracking-[0.35em] text-orange-300/90">
+          <p className="mt-4 text-center text-xs font-bold uppercase tracking-[0.35em] text-orange-300/90">
             {SHOW_TABLE_BOARD ? "Tables" : "Đặt bàn"}
           </p>
           <h1 className="mt-2 text-center font-display text-4xl font-black tracking-wide">

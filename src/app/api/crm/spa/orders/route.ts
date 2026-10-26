@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
 import { getSpaItem } from "@/lib/spa-menu";
-import { consumeGoiBonus } from "@/lib/swim-goi-bonus";
+import { consumeGoiBonus, refundSwimBonus } from "@/lib/swim-goi-bonus";
+import { SPA_DONE_NOTE } from "@/lib/spa-visit";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -417,6 +418,159 @@ export async function POST(req: NextRequest) {
         : 500;
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Order failed" },
+      { status: status >= 400 && status < 600 ? status : 500 }
+    );
+  }
+}
+
+/** Undo a spa bill. Restores a Gội 30' visit spent on that order or cart. */
+export async function DELETE(req: NextRequest) {
+  const gate = await requireDeskZone("SAUNA");
+  if ("error" in gate) return gate.error;
+
+  try {
+    const body = await req.json().catch(() => ({}));
+    const customerId = String(body.customerId || "").trim();
+    const orderId = String(body.orderId || "").trim();
+    const scanEventId = String(body.scanEventId || "").trim();
+    const cartToken = String(body.cartToken || "").trim();
+    if (!customerId || (!orderId && !scanEventId && !cartToken)) {
+      return NextResponse.json(
+        { error: "Thiếu đơn spa để undo." },
+        { status: 400 }
+      );
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const scan = scanEventId
+        ? await tx.appServiceEvent.findFirst({
+            where: { id: scanEventId, customerId },
+          })
+        : null;
+      const scanMeta =
+        scan?.metadata && typeof scan.metadata === "object"
+          ? (scan.metadata as Record<string, unknown>)
+          : {};
+      const resolvedOrderId =
+        orderId ||
+        (typeof scanMeta.orderId === "string" ? scanMeta.orderId : "");
+      const resolvedToken =
+        cartToken ||
+        (typeof scanMeta.cartToken === "string" ? scanMeta.cartToken : "");
+
+      const order = resolvedOrderId
+        ? await tx.appOrder.findFirst({
+            where: { id: resolvedOrderId, customerId },
+            select: { id: true },
+          })
+        : null;
+
+      const eventOr: Prisma.AppServiceEventWhereInput[] = [];
+      if (scanEventId) eventOr.push({ id: scanEventId });
+      if (order) {
+        eventOr.push({
+          metadata: { path: ["orderId"], equals: order.id },
+        });
+      }
+      if (resolvedToken) {
+        eventOr.push({
+          metadata: { path: ["cartToken"], equals: resolvedToken },
+        });
+      }
+      const events = eventOr.length
+        ? await tx.appServiceEvent.findMany({
+            where: { customerId, OR: eventOr },
+          })
+        : [];
+
+      const cart = resolvedToken
+        ? await tx.appServiceCart.findUnique({ where: { token: resolvedToken } })
+        : null;
+      const spaCart =
+        cart &&
+        cart.customerId === customerId &&
+        (cart.zoneCode === "SPA" || cart.zoneCode === "SAUNA")
+          ? cart
+          : null;
+
+      if (!order && !spaCart && !events.length) {
+        throw Object.assign(new Error("Không thấy đơn spa để undo."), {
+          status: 404,
+        });
+      }
+
+      const refs = new Set<string>();
+      if (order) refs.add(order.id);
+      if (resolvedToken) refs.add(resolvedToken);
+      let restored = 0;
+      for (const refId of refs) {
+        const refund = await refundSwimBonus(tx, { refId });
+        restored += refund.restored;
+      }
+
+      if (order) {
+        await tx.appOrderItem.deleteMany({ where: { orderId: order.id } });
+        await tx.appOrder.deleteMany({
+          where: { id: order.id, customerId },
+        });
+      }
+
+      const stripKeys = [
+        "ticketVerified",
+        "verifiedAt",
+        "orderId",
+        "totalVnd",
+        "items",
+        "placedBy",
+      ];
+      const reopenedScanIds: string[] = [];
+      for (const event of events) {
+        if (event.eventType === "SPA_ORDER") {
+          await tx.appServiceEvent.delete({ where: { id: event.id } });
+          continue;
+        }
+        const meta =
+          event.metadata && typeof event.metadata === "object"
+            ? { ...(event.metadata as Record<string, unknown>) }
+            : {};
+        for (const key of stripKeys) delete meta[key];
+        await tx.appServiceEvent.update({
+          where: { id: event.id },
+          data: {
+            operationalStatus: "NEW",
+            metadata: meta as Prisma.InputJsonValue,
+          },
+        });
+        reopenedScanIds.push(event.id);
+      }
+
+      if (spaCart && (spaCart.status === "USED" || spaCart.adminNote === SPA_DONE_NOTE)) {
+        await tx.appServiceCart.update({
+          where: { id: spaCart.id },
+          data: {
+            status: "OPEN",
+            ...(spaCart.adminNote === SPA_DONE_NOTE ? { adminNote: null } : {}),
+          },
+        });
+      }
+
+      return {
+        restored,
+        reopenedScanIds,
+        orderId: order?.id || null,
+        cartToken: spaCart?.token || null,
+      };
+    });
+
+    return NextResponse.json({ ok: true, undone: true, ...result });
+  } catch (e) {
+    const status =
+      e && typeof e === "object" && "status" in e
+        ? Number((e as { status: number }).status) || 500
+        : 500;
+    if (status >= 500) console.error("[crm/spa/orders DELETE]", e);
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Không undo được" },
       { status: status >= 400 && status < 600 ? status : 500 }
     );
   }

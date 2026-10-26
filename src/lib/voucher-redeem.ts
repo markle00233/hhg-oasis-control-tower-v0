@@ -50,6 +50,15 @@ export async function quoteDeskBillVoucher(opts: {
       status: 400,
     });
   }
+  const minBill = Math.max(0, Math.round(Number(meta.minBillVnd) || 0));
+  if (minBill > 0 && Math.max(0, Math.round(opts.baseVnd) || 0) < minBill) {
+    throw Object.assign(
+      new Error(
+        `Voucher này chỉ áp khi hoá đơn từ ${minBill.toLocaleString("vi-VN")}đ.`
+      ),
+      { status: 400 }
+    );
+  }
   const row = await prisma.appCollectedOffer.findUnique({
     where: {
       customerId_offerId: {

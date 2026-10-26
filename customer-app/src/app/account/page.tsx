@@ -378,7 +378,7 @@ export default function AccountPage() {
             {customer?.pointsBalance ?? 0} điểm
           </p>
           <p className="mt-1 text-xs text-oasis-mute">
-            Cộng điểm chỉ từ Mía Ơi & Hồ Olympic (10.000đ trước giảm = 1
+            Cộng điểm chỉ từ Mía Ơi & Hồ Olympic (10.000đ sau giảm = 1
             điểm). Đổi: 50đ đồ uống / 100đ vé bơi.
           </p>
         </div>

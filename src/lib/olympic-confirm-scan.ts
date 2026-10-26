@@ -5,7 +5,6 @@ import {
 } from "@/lib/olympic-membership";
 import {
   applyDeskRedeemUnits,
-  earnableVnd,
   isDeskRedeemTicket,
 } from "@/lib/desk-point-redeem";
 import {
@@ -16,6 +15,7 @@ import { awardPurchasePoints, redeemPoints } from "@/lib/points";
 import { computePoolPricing } from "@/lib/pool-pricing";
 import { prisma } from "@/lib/prisma";
 import { isSameDayMembershipEligible } from "@/lib/same-day-membership";
+import { consumePoolSwimBonus } from "@/lib/swim-goi-bonus";
 import {
   consumeDeskBillVoucher,
   deskVoucherNote,
@@ -126,6 +126,8 @@ export async function confirmOlympicPoolScan(opts: {
   items: PoolCartLine[];
   staffUserId: string;
   note?: string;
+  /** Giảm tay (VND), sau khuyến mãi vé. Cần note khi > 0. */
+  manualDiscountVnd?: number;
   redeemUnits?: number;
   voucherOfferId?: string;
   staffName?: string;
@@ -134,7 +136,19 @@ export async function confirmOlympicPoolScan(opts: {
   const customerId = opts.customerId.trim();
   const scanEventId = opts.scanEventId.trim();
   const lines = opts.items;
-  const note = String(opts.note || "").trim().slice(0, 300);
+  const note = String(opts.note || "").trim().slice(0, 200);
+  const manualDiscountVnd = Math.max(
+    0,
+    Math.round(Number(opts.manualDiscountVnd) || 0)
+  );
+
+  if (manualDiscountVnd > 0 && !note) {
+    return {
+      ok: false,
+      error: "Nhập ghi chú cho khoản giảm giá.",
+      status: 400,
+    };
+  }
 
   if (!customerId || !scanEventId) {
     return { ok: false, error: "Thiếu customerId hoặc lần quét.", status: 400 };
@@ -148,6 +162,7 @@ export async function confirmOlympicPoolScan(opts: {
   });
   const priced = computePoolPricing(lines, {
     sameDayMembership,
+    manualDiscountVnd,
   });
   if (!priced.lines.length) {
     return { ok: false, error: "Danh sách vé không hợp lệ.", status: 400 };
@@ -364,6 +379,11 @@ export async function confirmOlympicPoolScan(opts: {
           `gói tháng −10% cùng ngày với đơn Olympic (−${priced.membershipDiscountVnd.toLocaleString("vi-VN")}đ)`
         );
       }
+      if (priced.manualDiscountVnd > 0) {
+        discountParts.push(
+          `giảm tay −${priced.manualDiscountVnd.toLocaleString("vi-VN")}đ`
+        );
+      }
       const discountNote = discountParts.length
         ? ` · ${discountParts.join(" · ")}`
         : "";
@@ -420,6 +440,9 @@ export async function confirmOlympicPoolScan(opts: {
             accessoryDiscountVnd: priced.accessoryDiscountVnd,
             membershipDiscountVnd: priced.membershipDiscountVnd,
             manualDiscountVnd: priced.manualDiscountVnd,
+            ...(priced.manualDiscountVnd > 0 && note
+              ? { manualDiscountNote: note }
+              : {}),
             placedBy: "desk",
             verifiedByUserId: opts.staffUserId,
             ...(opts.deskBundleId ? { deskBundleId: opts.deskBundleId } : {}),
@@ -434,6 +457,13 @@ export async function confirmOlympicPoolScan(opts: {
           data: { status: "USED" },
         });
       }
+
+      await consumePoolSwimBonus(tx, {
+        customerId: customer.id,
+        items: orderItems,
+        refId: order.id,
+        staffId: opts.staffUserId,
+      });
 
       const closedScanIds = [scan.id];
       for (const sib of siblings) {
@@ -581,8 +611,8 @@ export async function confirmOlympicPoolScan(opts: {
       customerId: result.customer.id,
       refType: "APP_ORDER",
       refId: result.order.id,
-      subtotalVnd: earnableVnd(redeemed.items),
-      note: `Hồ Olympic · ${earnableVnd(redeemed.items)}đ phần chưa đổi điểm`,
+      subtotalVnd: totalVnd,
+      note: `Hồ Olympic · ${totalVnd}đ sau giảm`,
     }).catch((err) => {
       console.error("[olympic-confirm points]", err);
       return null;

@@ -147,16 +147,14 @@ export async function POST(req: NextRequest) {
         guestPhone: cart.customer.phone,
       });
 
-      /** Hồ Olympic — gói tháng: quét QR OPEN = xác nhận nâng cấp → VIP + theme. */
+      /** Hồ Olympic — gói tháng: quét QR OPEN = xác nhận nâng cấp → VIP + theme.
+       *  Quầy gộp gửi zone MIA_OLYMPIC; vẫn gắn gói khi giỏ có oly-6m / oly-12m. */
       let membership: {
         planLabel: string;
         expiresAt: Date;
         packageId: string;
       } | null = null;
-      if (
-        (zone === "OLYMPIC_POOL" || zone === "OLYMPIC") &&
-        cart.status === "OPEN"
-      ) {
+      if (cart.status === "OPEN") {
         const itemIds = Array.isArray(cart.items)
           ? cart.items
               .map((row) =>
@@ -171,7 +169,7 @@ export async function POST(req: NextRequest) {
           const applied = await applyOlympicMembership(prisma, {
             customerId: cart.customer.id,
             packageId: pkgId,
-            from: cart.createdAt,
+            from: new Date(),
           }).catch((err) => {
             console.error("[resolve-qr membership]", err);
             return null;

@@ -98,6 +98,8 @@ export type HomeOffer = {
   discountType: "amount" | "percent" | "perk";
   discountVnd?: number;
   discountPercent?: number;
+  /** Amount voucher applies only when the original bill reaches this. */
+  minBillVnd?: number;
   /** e.g. "Voucher từ HHG Oasis" */
   sourceLabel?: string;
 };
@@ -166,6 +168,7 @@ export const HOME_OFFERS: HomeOffer[] = [
     discountType: v.discountType,
     discountVnd: v.discountVnd,
     discountPercent: v.discountPercent,
+    minBillVnd: v.minBillVnd,
     sourceLabel: v.sourceLabel,
   })),
   ...MARKETING_OFFERS,
@@ -220,6 +223,11 @@ export function applyOffersDiscount(
       continue;
     }
     let cut = 0;
+    const minBill = Math.max(0, Math.round(Number(offer.minBillVnd) || 0));
+    if (offer.discountType === "amount" && minBill > 0 && subtotalVnd < minBill) {
+      lines.push({ offer, discountVnd: 0 });
+      continue;
+    }
     if (offer.discountType === "amount") {
       cut = Math.min(remaining, offer.discountVnd || 0);
     } else if (offer.discountType === "percent") {

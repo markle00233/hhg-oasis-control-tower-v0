@@ -15,6 +15,17 @@ export function isSwimTicketId(id: string) {
   return SWIM_TICKET_IDS.has(id);
 }
 
+/** Tạm thời chỉ Mía Ơi và Hồ Olympic dùng điểm. */
+export function zoneUsesPoints(zoneCode: string | null | undefined) {
+  const z = String(zoneCode || "").trim().toUpperCase();
+  return (
+    z === "MIA_OI" ||
+    z === "MIA_OLYMPIC" ||
+    z === "OLYMPIC_POOL" ||
+    z === "OLYMPIC"
+  );
+}
+
 export type GuestRedeemItem = {
   id: string;
   priceVnd: number;
@@ -77,6 +88,9 @@ export function computeGuestPointsRedeem(opts: {
   }));
 
   if (tier === REDEEM_TIER_DRINK) {
+    if (zone !== "MIA_OI" && zone !== "MIA_OLYMPIC") {
+      return redeemFail("Đổi 50 điểm chỉ dùng tại Mía Ơi.");
+    }
     const explicit = items.some((i) => i.redeemQty > 0);
     const allocations: GuestRedeemAllocation[] = [];
 
