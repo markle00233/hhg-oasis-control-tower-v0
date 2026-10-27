@@ -314,7 +314,7 @@ export default function MiaOiOrderPage() {
         customer: cartData.customer,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Lỗi tạo QR");
+      setError(e instanceof Error ? e.message : "Lỗi gửi đơn");
     } finally {
       setBusy(false);
     }
@@ -333,7 +333,7 @@ export default function MiaOiOrderPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu Mía Ơi"
-          subtitle="Chờ quầy duyệt → nhận QR → quầy xác nhận (không gọi thêm / gọi thêm) = chốt đơn."
+          subtitle="Chờ quầy duyệt. Duyệt xong là thanh toán thành công."
           detailLines={success.lines}
           cartToken={success.cartToken}
           initialStatus={success.status}
@@ -470,7 +470,7 @@ export default function MiaOiOrderPage() {
             onClick={() => void submit()}
             className="h-12 rounded-2xl bg-oasis-deep px-5 font-bold text-oasis-sand disabled:opacity-40"
           >
-            {busy ? "Đang tạo…" : "Tạo QR"}
+            {busy ? "Đang gửi…" : "Gửi đơn"}
           </button>
         </div>
       </div>

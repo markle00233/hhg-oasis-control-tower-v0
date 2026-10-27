@@ -307,7 +307,7 @@ export function CheckinFlow({ serviceToken }: { serviceToken: string }) {
             href="/home"
             className="mt-10 flex h-14 w-full max-w-sm items-center justify-center rounded-2xl bg-oasis-deep text-base font-bold text-oasis-sand"
           >
-            Quay về home dashboard
+            Tiếp tục
           </Link>
         </div>
       </Shell>

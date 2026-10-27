@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { swimBonusExpiresAt } from "@/lib/swim-packages";
 
 type Sector = "vip" | "swim" | "spa" | "grill";
@@ -79,6 +79,40 @@ function bonusLabel(row: SwimStudent) {
   return `${count} · đến ${formatWhen(until.toISOString())}`;
 }
 
+function packageOptions(labels: string[]) {
+  return [...new Set(labels.map((label) => label.trim()).filter(Boolean))].sort(
+    (a, b) => a.localeCompare(b, "vi")
+  );
+}
+
+function GoiSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (next: string) => void;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={styles.goiSelect}
+    >
+      <option value="">{label}</option>
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function DeskVipSubscribers({
   onBack,
   onLogout,
@@ -87,6 +121,7 @@ export function DeskVipSubscribers({
   onLogout: () => void;
 }) {
   const [sector, setSector] = useState<Sector>("vip");
+  const [goi, setGoi] = useState("");
   const [rows, setRows] = useState<Subscriber[] | null>(null);
   const [students, setStudents] = useState<SwimStudent[] | null>(null);
   const [redeemed, setRedeemed] = useState<RedeemedVoucher[] | null>(null);
@@ -194,9 +229,32 @@ export function DeskVipSubscribers({
     }
   }
 
-  const swimCount = students?.length ?? 0;
-  const vipCount = rows?.length ?? 0;
-  const redeemedCount = redeemed?.length ?? 0;
+  const packageChoices = useMemo(() => {
+    const labels =
+      sector === "vip"
+        ? (rows || []).map((row) => row.planLabel)
+        : sector === "swim"
+          ? (students || []).map((row) => row.packageLabel)
+          : (redeemed || []).map((row) => row.offerTitle || "Voucher");
+    return packageOptions(labels);
+  }, [sector, rows, students, redeemed]);
+  const selectedGoi = packageChoices.includes(goi) ? goi : "";
+  const vipShown = (rows || []).filter(
+    (row) => sector !== "vip" || !selectedGoi || row.planLabel === selectedGoi
+  );
+  const swimShown = (students || []).filter(
+    (row) => sector !== "swim" || !selectedGoi || row.packageLabel === selectedGoi
+  );
+  const redeemedShown = (redeemed || []).filter(
+    (row) =>
+      sector === "vip" ||
+      sector === "swim" ||
+      !selectedGoi ||
+      (row.offerTitle || "Voucher") === selectedGoi
+  );
+  const swimCount = swimShown.length;
+  const vipCount = vipShown.length;
+  const redeemedCount = redeemedShown.length;
   const title =
     sector === "vip"
       ? "Khách đang dùng gói VIP"
@@ -232,7 +290,10 @@ export function DeskVipSubscribers({
                   ...styles.pill,
                   ...(sector === "vip" ? styles.pillOn : null),
                 }}
-                onClick={() => setSector("vip")}
+                onClick={() => {
+                  setGoi("");
+                  setSector("vip");
+                }}
               >
                 Gói VIP
               </button>
@@ -242,7 +303,10 @@ export function DeskVipSubscribers({
                   ...styles.pill,
                   ...(sector === "swim" ? styles.pillOn : null),
                 }}
-                onClick={() => setSector("swim")}
+                onClick={() => {
+                  setGoi("");
+                  setSector("swim");
+                }}
               >
                 Khách học bơi
               </button>
@@ -253,6 +317,7 @@ export function DeskVipSubscribers({
                   ...(sector === "spa" ? styles.pillOn : null),
                 }}
                 onClick={() => {
+                  setGoi("");
                   setRedeemed(null);
                   setSector("spa");
                 }}
@@ -266,6 +331,7 @@ export function DeskVipSubscribers({
                   ...(sector === "grill" ? styles.pillOn : null),
                 }}
                 onClick={() => {
+                  setGoi("");
                   setRedeemed(null);
                   setSector("grill");
                 }}
@@ -300,12 +366,26 @@ export function DeskVipSubscribers({
                     <th style={styles.th}>Họ tên</th>
                     <th style={styles.th}>Số điện thoại</th>
                     <th style={styles.th}>Ngày đăng ký</th>
-                    <th style={styles.th}>Gói</th>
+                    <th style={styles.th}>
+                      <GoiSelect
+                        label="Gói"
+                        value={selectedGoi}
+                        options={packageChoices}
+                        onChange={setGoi}
+                      />
+                    </th>
                     <th style={styles.th}>Hết hạn</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {vipShown.length === 0 ? (
+                    <tr>
+                      <td style={styles.td} colSpan={5}>
+                        Không có khách cho gói này.
+                      </td>
+                    </tr>
+                  ) : (
+                    vipShown.map((row) => (
                     <tr key={row.id}>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{row.fullName}</td>
                       <td style={styles.td}>{row.phone}</td>
@@ -313,7 +393,8 @@ export function DeskVipSubscribers({
                       <td style={styles.td}>{row.planLabel}</td>
                       <td style={styles.td}>{formatWhen(row.expiresAt)}</td>
                     </tr>
-                  ))}
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -331,7 +412,14 @@ export function DeskVipSubscribers({
                   <th style={styles.th}>Họ tên</th>
                   <th style={styles.th}>Số điện thoại</th>
                   <th style={styles.th}>Ngày đăng ký</th>
-                  <th style={styles.th}>Gói</th>
+                  <th style={styles.th}>
+                    <GoiSelect
+                      label="Gói"
+                      value={selectedGoi}
+                      options={packageChoices}
+                      onChange={setGoi}
+                    />
+                  </th>
                   <th style={styles.th}>Hết hạn</th>
                   <th style={styles.th}>Buổi</th>
                   <th style={styles.th}>Lượt tự chọn</th>
@@ -339,7 +427,14 @@ export function DeskVipSubscribers({
                 </tr>
               </thead>
               <tbody>
-                {students.map((row) => (
+                {swimShown.length === 0 ? (
+                  <tr>
+                    <td style={styles.td} colSpan={8}>
+                      Không có học viên cho gói này.
+                    </td>
+                  </tr>
+                ) : (
+                  swimShown.map((row) => (
                   <tr key={row.id}>
                     <td style={{ ...styles.td, fontWeight: 700 }}>{row.fullName}</td>
                     <td style={styles.td}>{row.phone || "—"}</td>
@@ -358,7 +453,8 @@ export function DeskVipSubscribers({
                       </button>
                     </td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -375,12 +471,26 @@ export function DeskVipSubscribers({
                   <th style={styles.th}>Họ tên</th>
                   <th style={styles.th}>Số điện thoại</th>
                   <th style={styles.th}>Thời điểm</th>
-                  <th style={styles.th}>Voucher</th>
+                  <th style={styles.th}>
+                    <GoiSelect
+                      label="Voucher"
+                      value={selectedGoi}
+                      options={packageChoices}
+                      onChange={setGoi}
+                    />
+                  </th>
                   <th style={styles.th}>Nhân viên</th>
                 </tr>
               </thead>
               <tbody>
-                {redeemed.map((row) => (
+                {redeemedShown.length === 0 ? (
+                  <tr>
+                    <td style={styles.td} colSpan={5}>
+                      Không có lượt đổi cho voucher này.
+                    </td>
+                  </tr>
+                ) : (
+                  redeemedShown.map((row) => (
                   <tr key={row.id}>
                     <td style={{ ...styles.td, fontWeight: 700 }}>
                       {row.customerName || "Khách"}
@@ -390,7 +500,8 @@ export function DeskVipSubscribers({
                     <td style={styles.td}>{row.offerTitle || "Voucher"}</td>
                     <td style={styles.td}>{row.claimedByName || "—"}</td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -504,6 +615,19 @@ const styles = {
     cursor: "pointer",
   } as const,
   table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 14 },
+  goiSelect: {
+    maxWidth: 240,
+    height: 28,
+    padding: "0 8px",
+    borderRadius: 8,
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+    color: "#0f172a",
+    fontSize: 12,
+    fontWeight: 700,
+    textTransform: "none" as const,
+    letterSpacing: 0,
+  },
   th: {
     textAlign: "left" as const,
     fontSize: 11,

@@ -1,23 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
-import { IdentityQrThumb } from "@/components/IdentityQrThumb";
-import type { ServiceCardViewModel } from "@/lib/service-cards";
-
-type AccountCart = {
-  token: string;
-  zoneCode: string;
-  zoneName: string | null;
-  items: { nameVi: string; qty: number; priceVnd: number }[];
-  totalVnd: number;
-  status: string;
-  adminNote?: string | null;
-  payload?: string | null;
-  qrDataUrl?: string;
-};
 
 export default function AccountPage() {
   const router = useRouter();
@@ -34,8 +20,6 @@ export default function AccountPage() {
     packageLabel?: string | null;
     packageExpiresLabel?: string | null;
   } | null>(null);
-  const [cards, setCards] = useState<ServiceCardViewModel[]>([]);
-  const [carts, setCarts] = useState<AccountCart[]>([]);
   const [vouchers, setVouchers] = useState<
     {
       id: string;
@@ -70,9 +54,6 @@ export default function AccountPage() {
       status: string;
     }[]
   >([]);
-  const [qrDataUrl, setQrDataUrl] = useState("");
-  const [error, setError] = useState("");
-  const [deleting, setDeleting] = useState<string | null>(null);
   const [voucherQrBusy, setVoucherQrBusy] = useState<string | null>(null);
   const [voucherQrError, setVoucherQrError] = useState("");
 
@@ -99,36 +80,8 @@ export default function AccountPage() {
     }
   }
 
-  async function loadCarts(cancelled: () => boolean) {
-    const cartRes = await fetch("/api/me/cart", { cache: "no-store" });
-    if (!cartRes.ok) return;
-    const cartData = await cartRes.json();
-    const list = Array.isArray(cartData.carts) ? cartData.carts : [];
-    const QRCode = (await import("qrcode")).default;
-    const withQr: AccountCart[] = await Promise.all(
-      list.map(async (c: AccountCart) => {
-        if (c.status !== "OPEN" || !c.payload) {
-          return { ...c, qrDataUrl: "" };
-        }
-        let thumb = "";
-        try {
-          thumb = await QRCode.toDataURL(c.payload, {
-            width: 176,
-            margin: 1,
-            color: { dark: "#0b1220", light: "#ffffff" },
-          });
-        } catch {
-          /* ignore */
-        }
-        return { ...c, qrDataUrl: thumb };
-      })
-    );
-    if (!cancelled()) setCarts(withQr);
-  }
-
   useEffect(() => {
     let cancelled = false;
-    const isCancelled = () => cancelled;
     (async () => {
       const me = await fetch("/api/auth/me", { cache: "no-store" });
       const meData = await me.json();
@@ -138,33 +91,10 @@ export default function AccountPage() {
       }
       if (!cancelled) setCustomer(meData.customer);
 
-      const [cardsRes, qrRes, offerRes, swimRes] = await Promise.all([
-        fetch("/api/cards/activity", { cache: "no-store" }),
-        fetch("/api/me/qr", { cache: "no-store" }),
+      const [offerRes, swimRes] = await Promise.all([
         fetch("/api/me/offers", { cache: "no-store" }),
         fetch("/api/me/swim", { cache: "no-store" }),
       ]);
-      const data = await cardsRes.json().catch(() => ({}));
-      if (!cardsRes.ok) {
-        if (!cancelled) setError(data.error || "Không tải được thẻ dịch vụ");
-      } else if (!cancelled) {
-        setCards([...(data.active || []), ...(data.upcoming || [])]);
-      }
-
-      const QRCode = (await import("qrcode")).default;
-      if (qrRes.ok) {
-        try {
-          const qr = await qrRes.json();
-          const url = await QRCode.toDataURL(qr.payload, {
-            width: 200,
-            margin: 1,
-            color: { dark: "#0b1220", light: "#ffffff" },
-          });
-          if (!cancelled) setQrDataUrl(url);
-        } catch {
-          /* ignore */
-        }
-      }
 
       if (offerRes.ok) {
         try {
@@ -184,8 +114,6 @@ export default function AccountPage() {
         }
       }
       if (!cancelled) setSwimReady(true);
-
-      await loadCarts(isCancelled);
     })();
     return () => {
       cancelled = true;
@@ -207,116 +135,12 @@ export default function AccountPage() {
       } catch {
         /* try again on the next tick */
       }
-    }, 4000);
+    }, 12000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
   }, [signedIn, vipOn]);
-
-  const hasPending = carts.some((c) => c.status === "PENDING_APPROVAL");
-  useEffect(() => {
-    if (!hasPending) return;
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      await loadCarts(() => cancelled);
-      if (!cancelled) window.setTimeout(() => void tick(), 1200);
-    };
-    const id = window.setTimeout(() => void tick(), 1200);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(id);
-    };
-  }, [hasPending]);
-
-  const cartGroups = useMemo(() => {
-    const map = new Map<string, AccountCart[]>();
-    for (const c of carts) {
-      const key = c.zoneCode || "OTHER";
-      const list = map.get(key) || [];
-      list.push(c);
-      map.set(key, list);
-    }
-    return [...map.entries()].map(([code, items]) => ({
-      code,
-      label: shortZoneLabel(code, items[0]?.zoneName || undefined),
-      items,
-    }));
-  }, [carts]);
-
-  const groups = useMemo(() => {
-    const map = new Map<string, ServiceCardViewModel[]>();
-    for (const c of cards) {
-      const key = c.zoneCode || "OTHER";
-      const list = map.get(key) || [];
-      list.push(c);
-      map.set(key, list);
-    }
-    return [...map.entries()].map(([code, items]) => ({
-      code,
-      label: shortZoneLabel(code, items[0]?.zoneName),
-      items,
-    }));
-  }, [cards]);
-
-  async function cancelOrder(card: ServiceCardViewModel) {
-    if (deleting) return;
-    if (
-      !window.confirm(
-        "Huỷ đơn này? Điểm đã đổi sẽ được hoàn, điểm đã cộng từ đơn sẽ bị thu lại."
-      )
-    ) {
-      return;
-    }
-    setDeleting(card.id);
-    setError("");
-    try {
-      const res = await fetch("/api/me/orders", {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ orderId: card.referenceId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Không huỷ được đơn");
-      setCards((prev) => prev.filter((c) => c.id !== card.id));
-      if (typeof data.pointsBalance === "number") {
-        setCustomer((prev) =>
-          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
-        );
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không huỷ được đơn");
-    } finally {
-      setDeleting(null);
-    }
-  }
-
-  async function deleteCart(token: string) {
-    if (deleting) return;
-    if (!window.confirm("Xoá vé này? Quầy sẽ thấy trạng thái Xóa.")) return;
-    setDeleting(token);
-    setError("");
-    try {
-      const res = await fetch("/api/me/cart", {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Không xoá được");
-      setCarts((prev) => prev.filter((c) => c.token !== token));
-      if (typeof data.pointsBalance === "number") {
-        setCustomer((prev) =>
-          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
-        );
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Xoá thất bại");
-    } finally {
-      setDeleting(null);
-    }
-  }
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -465,8 +289,6 @@ export default function AccountPage() {
             </div>
           )}
         </section>
-
-        {error ? <p className="text-sm text-oasis-coral">{error}</p> : null}
 
         {vouchers.length > 0 ? (
           <section className="space-y-2">
@@ -637,64 +459,8 @@ export default function AccountPage() {
           </section>
         ) : null}
 
-        {cartGroups.length > 0 ? (
-          <section className="space-y-5">
-            <h2 className="text-sm font-bold lowercase tracking-wide text-oasis-mute">
-              vé / qr dịch vụ
-            </h2>
-            {cartGroups.map((g) => (
-              <div key={g.code} className="space-y-2">
-                <div className="flex items-end justify-between px-1">
-                  <h3 className="font-display text-xl font-semibold capitalize text-oasis-ink">
-                    {g.label}
-                  </h3>
-                  <span className="text-xs font-bold text-oasis-mute">
-                    {g.items.length} vé
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {g.items.map((c) => (
-                    <CartTicketCard
-                      key={c.token}
-                      cart={c}
-                      deleting={deleting === c.token}
-                      onDelete={() => void deleteCart(c.token)}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </section>
-        ) : null}
-
-        {groups.length === 0 && carts.length === 0 ? (
-          <p className="rounded-[22px] bg-white/70 p-5 text-sm text-oasis-mute shadow-soft">
-            Chưa có thẻ dịch vụ. Chọn gói → Gửi yêu cầu → chờ quầy duyệt → nhận
-            QR tại đây.
-          </p>
-        ) : groups.length === 0 ? null : (
-          groups.map((g) => (
-            <section key={g.code} className="space-y-2">
-              <h2 className="text-sm font-bold lowercase tracking-wide text-oasis-mute">
-                {g.label}
-              </h2>
-              <div className="space-y-3">
-                {g.items.map((card) => (
-                  <WalletCard
-                    key={card.id}
-                    card={card}
-                    qrDataUrl={qrDataUrl}
-                    cancelling={deleting === card.id}
-                    onCancel={() => void cancelOrder(card)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))
-        )}
-
         <div className="rounded-[28px] bg-white/85 p-2 shadow-soft">
-          <MenuLink href="/activity" label="Lịch sử Activity" />
+          <MenuLink href="/activity" label="Activity" />
           <MenuLink href="/messages" label="Messages" />
           <MenuLink href="/account/password" label="Đổi mật khẩu" last />
         </div>
@@ -708,148 +474,6 @@ export default function AccountPage() {
         </button>
       </div>
     </Shell>
-  );
-}
-
-function CartTicketCard({
-  cart: c,
-  deleting,
-  onDelete,
-}: {
-  cart: AccountCart;
-  deleting: boolean;
-  onDelete: () => void;
-}) {
-  const pending = c.status === "PENDING_APPROVAL";
-  const rejected = c.status === "REJECTED";
-  const body = (
-    <>
-      {pending ? (
-        <div className="grid h-[88px] w-[88px] shrink-0 place-items-center rounded-2xl bg-amber-50 px-2 text-center text-xs font-bold text-amber-800 ring-1 ring-amber-200">
-          Chờ duyệt
-        </div>
-      ) : rejected ? (
-        <div className="grid h-[88px] w-[88px] shrink-0 place-items-center rounded-2xl bg-red-50 text-xs font-bold text-red-700 ring-1 ring-red-200">
-          Từ chối
-        </div>
-      ) : (
-        <IdentityQrThumb
-          dataUrl={c.qrDataUrl}
-          size={88}
-          className="rounded-2xl shadow-sm"
-          asDiv
-        />
-      )}
-      <div className="min-w-0 flex-1 py-1">
-        {pending ? (
-          <p className="text-sm font-semibold text-amber-700">
-            Đang chờ nhân viên duyệt…
-          </p>
-        ) : null}
-        {rejected ? (
-          <p className="text-sm font-semibold text-red-700">
-            {c.adminNote || "Quầy từ chối yêu cầu"}
-          </p>
-        ) : null}
-        {(c.items || []).slice(0, 4).map((i, idx) => (
-          <p key={idx} className="mt-0.5 text-sm text-oasis-ink">
-            {i.qty}× {i.nameVi}
-          </p>
-        ))}
-        {(c.items || []).length > 4 ? (
-          <p className="text-xs text-oasis-mute">
-            +{(c.items || []).length - 4} mục khác
-          </p>
-        ) : null}
-        {c.totalVnd > 0 ? (
-          <p className="mt-2 font-mono text-xs font-bold text-oasis-moss">
-            {new Intl.NumberFormat("vi-VN").format(c.totalVnd)}đ
-          </p>
-        ) : null}
-      </div>
-      <button
-        type="button"
-        aria-label="Xoá vé"
-        disabled={deleting}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onDelete();
-        }}
-        className="grid h-9 w-9 shrink-0 place-items-center self-start rounded-full text-lg font-bold text-oasis-mute hover:bg-black/5 hover:text-oasis-coral disabled:opacity-40"
-      >
-        ×
-      </button>
-    </>
-  );
-
-  if (pending || rejected) {
-    return (
-      <div className="flex gap-3 rounded-[22px] bg-[#e8e6e1] p-3 shadow-soft">
-        {body}
-      </div>
-    );
-  }
-
-  return (
-    <Link
-      href={`/q/${encodeURIComponent(c.token)}`}
-      className="flex gap-3 rounded-[22px] bg-[#e8e6e1] p-3 shadow-soft"
-    >
-      {body}
-    </Link>
-  );
-}
-
-function WalletCard({
-  card,
-  qrDataUrl,
-  cancelling,
-  onCancel,
-}: {
-  card: ServiceCardViewModel;
-  qrDataUrl: string;
-  cancelling?: boolean;
-  onCancel?: () => void;
-}) {
-  const href =
-    card.type === "BOOKING" && card.referenceId
-      ? `/activity/booking/${encodeURIComponent(card.referenceId)}`
-      : card.href && card.href !== "/activity"
-        ? card.href
-        : "/activity";
-  return (
-    <div className="rounded-[22px] bg-white/90 shadow-soft">
-      <Link href={href} className="flex gap-3 p-3">
-        <IdentityQrThumb
-          dataUrl={card.showQrHint ? qrDataUrl : ""}
-          size={72}
-          className="rounded-2xl"
-          asDiv
-        />
-        <div className="min-w-0 flex-1 py-0.5">
-          <p className="text-sm font-bold text-oasis-ink">{card.title}</p>
-          <p className="mt-0.5 text-xs text-oasis-mute">{card.subtitle}</p>
-          {card.statusLabel ? (
-            <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-oasis-moss">
-              {card.statusLabel}
-            </p>
-          ) : null}
-        </div>
-      </Link>
-      {card.canCancel && onCancel ? (
-        <div className="flex justify-end border-t border-oasis-line/60 px-3 py-2">
-          <button
-            type="button"
-            disabled={cancelling}
-            onClick={onCancel}
-            className="h-9 rounded-xl border border-oasis-line bg-white px-3 text-[13px] font-extrabold text-oasis-ink disabled:opacity-40"
-          >
-            {cancelling ? "Đang huỷ…" : "Huỷ đơn"}
-          </button>
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -961,18 +585,3 @@ function PhoneIdLine({
   );
 }
 
-function shortZoneLabel(code: string, fallback?: string) {
-  const map: Record<string, string> = {
-    OLYMPIC_POOL: "Olympic",
-    RESORT_POOL: "Resort",
-    VIP_RESORT: "VIP",
-    GYM: "Gym",
-    SPA: "Spa",
-    SAUNA: "Spa",
-    MIA_OI: "Mía ơi",
-    PICKLEBALL: "Pickleball",
-    LONG_NUONG: "Lòng Nướng Chí Phèo",
-    CHI_PHEO: "Lòng Nướng Chí Phèo",
-  };
-  return map[code] || fallback || code;
-}

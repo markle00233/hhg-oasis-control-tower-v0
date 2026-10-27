@@ -14,6 +14,7 @@ import {
   createServiceCart,
   serviceCartQrPayload,
 } from "@/lib/service-cart";
+import { formatVnDateTime } from "@/lib/vn-time";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "sin1";
@@ -173,14 +174,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const arriveLabel = startAt.toLocaleString("vi-VN", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
+    const arriveLabel = formatVnDateTime(startAt);
     const now = Date.now();
     const overlapsNow = startAt.getTime() <= now && endAt.getTime() > now;
 

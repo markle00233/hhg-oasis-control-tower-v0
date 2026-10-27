@@ -89,31 +89,50 @@ export default function HomePage() {
       return activeVip;
     }
 
-    void (async () => {
-      let activeVip = false;
-      try {
-        activeVip = await load(true);
-      } catch {
-        if (!cancelled) setCardReady(true);
-      }
-      while (!cancelled && !activeVip) {
-        await new Promise((resolve) => window.setTimeout(resolve, 4000));
-        if (cancelled || document.visibilityState === "hidden") continue;
-        try {
-          activeVip = await load(false);
-        } catch {
-          /* keep the card, try again */
-        }
-      }
-    })();
+    let timer = 0;
+    let inflight = false;
+    let done = false;
 
+    function schedule() {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (cancelled || done) return;
+        if (document.visibilityState === "hidden") {
+          schedule();
+          return;
+        }
+        void tick(false);
+      }, 12000);
+    }
+
+    async function tick(first: boolean) {
+      if (cancelled || done || inflight) return;
+      inflight = true;
+      let stop = false;
+      try {
+        stop = await load(first);
+      } catch {
+        if (first && !cancelled) setCardReady(true);
+      } finally {
+        inflight = false;
+      }
+      if (cancelled || stop) {
+        done = stop;
+        return;
+      }
+      schedule();
+    }
+
+    void tick(true);
     const onVisible = () => {
-      if (document.visibilityState !== "visible" || cancelled) return;
-      void load(false).catch(() => undefined);
+      if (document.visibilityState !== "visible" || cancelled || done) return;
+      window.clearTimeout(timer);
+      void tick(false);
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [router]);

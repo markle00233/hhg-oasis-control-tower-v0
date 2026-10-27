@@ -10,6 +10,7 @@ import {
   buildDateOptions,
   buildDaySchedule,
   buildTimeOptions,
+  courtBoardNote,
   courtTone,
   formatVnd,
   hmToMinutes,
@@ -131,6 +132,18 @@ type Court = {
   bookings: { startAt: string; endAt: string }[];
 };
 
+const SCHEDULE_CLASS = {
+  busy: "bg-[#fecaca] text-[#7f1d1d]",
+  selected: "bg-lime-200 text-[#14532d] ring-1 ring-[#0b1220]/30",
+  free: "bg-[#bbf7d0]/70 text-[#14532d]",
+} as const;
+
+const SCHEDULE_LABEL = {
+  busy: "Hết chỗ",
+  selected: "Đang chọn",
+  free: "Trống",
+} as const;
+
 export default function PickleballBookPage() {
   const router = useRouter();
   const dates = useMemo(() => buildDateOptions(10), []);
@@ -142,6 +155,7 @@ export default function PickleballBookPage() {
   const [fromHm, setFromHm] = useState("");
   const [toHm, setToHm] = useState("");
   const [courts, setCourts] = useState<Court[]>([]);
+  const [myBookingId, setMyBookingId] = useState("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -191,9 +205,15 @@ export default function PickleballBookPage() {
   const schedule = useMemo(
     () =>
       selectedCourt
-        ? buildDaySchedule(dateKey, selectedCourt.bookings)
+        ? buildDaySchedule(
+            dateKey,
+            selectedCourt.bookings,
+            validated && validated.ok
+              ? { startAt: validated.startAt, endAt: validated.endAt }
+              : null
+          )
         : [],
-    [selectedCourt, dateKey]
+    [selectedCourt, dateKey, validated]
   );
 
   const loadCourts = useCallback(async () => {
@@ -205,6 +225,9 @@ export default function PickleballBookPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không tải được sân");
       setCourts(data.courts || []);
+      setMyBookingId(
+        typeof data.myBooking?.id === "string" ? data.myBooking.id : ""
+      );
       if (step === "board") setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi tải sân");
@@ -319,7 +342,7 @@ export default function PickleballBookPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu đặt sân"
-          subtitle="Chờ nhân viên Pickleball duyệt — sau đó hiện QR mang tới sân."
+          subtitle="Chờ quầy duyệt. Duyệt xong là thanh toán thành công."
           detailLines={[
             successBooking.courtName,
             `${start.toLocaleDateString("vi-VN")} · ${start.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false })} – ${end.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false })}`,
@@ -404,20 +427,28 @@ export default function PickleballBookPage() {
                   <span className="text-4xl font-black text-slate-200">06</span>
                 </div>
 
-                <p className="mt-2 text-xs text-slate-500">
-                  Xanh nhạt = trống · Vàng nhạt = sắp hết giờ · Đỏ nhạt = đang
-                  chơi · Cập nhật realtime
+                <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                  Màu là lúc này. Xanh trống · Vàng sắp trống · Xanh dương đã có
+                  giờ · Hồng đang có khách.
                 </p>
+
+                {courts.length > 0 &&
+                courts.every((c) => c.status !== "available") ? (
+                  <p className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-semibold leading-relaxed text-slate-600">
+                    Không có sân trống lúc này. Bấm sân để đặt giờ khác.
+                  </p>
+                ) : null}
 
                 <div className="mt-4 grid grid-cols-3 gap-3">
                   {courts.map((c) => {
                     const tone = courtTone(c.status);
+                    const note = courtBoardNote(c.status, todayKey, c.bookings);
                     return (
                       <button
                         key={c.id}
                         type="button"
                         onClick={() => openCourt(c.id)}
-                        className="relative flex aspect-square flex-col items-center justify-center rounded-[22px] text-center transition active:scale-[0.98]"
+                        className="relative flex aspect-square flex-col items-center justify-center rounded-[22px] px-1.5 text-center transition active:scale-[0.98]"
                         style={{ background: tone.bg, color: tone.fg }}
                       >
                         <span className="text-3xl font-black tracking-wide">
@@ -426,6 +457,11 @@ export default function PickleballBookPage() {
                         <span className="mt-1 text-[10px] font-bold uppercase">
                           {tone.label}
                         </span>
+                        {note ? (
+                          <span className="mt-0.5 text-[9px] font-semibold leading-tight">
+                            {note}
+                          </span>
+                        ) : null}
                       </button>
                     );
                   })}
@@ -438,7 +474,11 @@ export default function PickleballBookPage() {
                 ) : null}
 
                 <Link
-                  href="/account"
+                  href={
+                    myBookingId
+                      ? `/activity/booking/${encodeURIComponent(myBookingId)}`
+                      : "/account"
+                  }
                   className="mt-8 block text-center text-sm font-semibold text-slate-500"
                 >
                   Xem booking trong tài khoản
@@ -508,37 +548,17 @@ export default function PickleballBookPage() {
                       Chưa có lịch — cả ngày trống.
                     </p>
                   ) : (
-                    schedule.map((row) => {
-                      const selected =
-                        rangeOk &&
-                        validated.ok &&
-                        new Date(row.startAt).getTime() <
-                          new Date(validated.endAt).getTime() &&
-                        new Date(row.endAt).getTime() >
-                          new Date(validated.startAt).getTime() &&
-                        row.kind === "free";
-                      return (
-                        <div
-                          key={row.key}
-                          className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold ${
-                            row.kind === "busy"
-                              ? "bg-[#fecaca] text-[#7f1d1d]"
-                              : selected
-                                ? "bg-lime-200 text-[#14532d] ring-1 ring-[#0b1220]/30"
-                                : "bg-[#bbf7d0]/70 text-[#14532d]"
-                          }`}
-                        >
-                          <span>{row.label}</span>
-                          <span className="text-[10px] font-bold uppercase tracking-wide">
-                            {row.kind === "busy"
-                              ? "Hết chỗ"
-                              : selected
-                                ? "Đang chọn"
-                                : "Trống"}
-                          </span>
-                        </div>
-                      );
-                    })
+                    schedule.map((row) => (
+                      <div
+                        key={row.key}
+                        className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold ${SCHEDULE_CLASS[row.kind]}`}
+                      >
+                        <span>{row.label}</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wide">
+                          {SCHEDULE_LABEL[row.kind]}
+                        </span>
+                      </div>
+                    ))
                   )}
                 </div>
 

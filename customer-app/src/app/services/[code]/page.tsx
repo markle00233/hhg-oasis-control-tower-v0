@@ -51,22 +51,22 @@ const META: Record<string, { title: string; body: string; accent: string }> = {
   },
   GYM: {
     title: "Gym",
-    body: "Chọn gói → Áp voucher (nếu có) → tạo QR mang quầy.",
+    body: "Chọn gói → Áp voucher (nếu có) → gửi đơn. Quầy duyệt là thanh toán xong.",
     accent: "#3730a3",
   },
   VIP_RESORT: {
     title: "VIP Resort",
-    body: "Chọn tiện ích / ưu đãi / thẻ → có thể áp nhiều voucher → tạo QR.",
+    body: "Chọn tiện ích / ưu đãi / thẻ → có thể áp nhiều voucher → gửi đơn. Quầy duyệt là thanh toán xong.",
     accent: "#92400e",
   },
   SPA: {
     title: "Oasis Spa",
-    body: "Chọn dịch vụ / gói (Giờ Vàng · Date · Family) · chỉnh số lượng · tạo QR mang quầy.",
+    body: "Chọn dịch vụ / gói (Giờ Vàng · Date · Family) · chỉnh số lượng · gửi đơn. Quầy duyệt là thanh toán xong.",
     accent: "#9f1239",
   },
   LONG_NUONG: {
     title: "Lòng Nướng Chí Phèo",
-    body: "Chọn set · chỉnh số lượng · tạo QR mang quầy.",
+    body: "Chọn set · chỉnh số lượng · gửi đơn. Quầy duyệt là thanh toán xong.",
     accent: "#9a3412",
   },
 };
@@ -757,8 +757,8 @@ export default function ServiceInfoPage({
     return (
       <Shell showNav={false}>
         <OrderQrSuccess
-          title="Đã duyệt — mã QR dịch vụ"
-          subtitle="QR mang toàn bộ dịch vụ đã chọn — đưa nhân viên quét."
+          title="Đã gửi đơn"
+          subtitle="Chờ quầy duyệt. Duyệt xong là thanh toán thành công."
           detailLines={detailLines}
           cartToken={cartToken}
           initialStatus={cartStatus}
@@ -785,7 +785,7 @@ export default function ServiceInfoPage({
       <div className="flex items-center gap-3 rounded-[22px] bg-oasis-ink p-3 text-oasis-sand shadow-soft">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-wide text-lime-300/90">
-            Đã chọn — QR mang tất cả
+            Đã chọn
           </p>
           <p className="mt-0.5 font-bold">
             {count} mục
@@ -809,9 +809,9 @@ export default function ServiceInfoPage({
     </div>
   );
 
-  /** Sit above BottomNav (z-50), not under it */
+  /** Nav body plus the raised center QR (`-mt-7` on BottomNav). */
   const stickyBar = count > 0 && (
-    <div className="fixed inset-x-0 z-[60] border-t border-oasis-line/60 bg-white/95 px-4 pt-3 backdrop-blur pb-[calc(4.25rem+env(safe-area-inset-bottom))]">
+    <div className="fixed inset-x-0 bottom-[calc(4.5rem+1.75rem+env(safe-area-inset-bottom))] z-[60] border-t border-oasis-line/60 bg-white/95 px-4 py-3 backdrop-blur">
       <div className="mx-auto max-w-lg">{createBar}</div>
     </div>
   );
@@ -1153,16 +1153,12 @@ export default function ServiceInfoPage({
             Hiện My Oasis QR
           </Link>
         ) : (
-          <>
-            {/* Inline CTA — luôn thấy khi scroll hết list (không phụ thuộc sticky) */}
-            {createBar}
-            <Link
-              href="/account"
-              className="block pb-2 text-center text-sm font-semibold text-oasis-mute"
-            >
-              Chưa dùng liền → trang cá nhân
-            </Link>
-          </>
+          <Link
+            href="/account"
+            className="block pb-2 text-center text-sm font-semibold text-oasis-mute"
+          >
+            Chưa dùng liền → trang cá nhân
+          </Link>
         )}
       </div>
       {stickyBar}

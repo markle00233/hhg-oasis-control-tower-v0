@@ -68,6 +68,7 @@ export async function createServiceCart(opts: {
           items,
           totalVnd,
           status,
+          ...(status === CART_STATUS.OPEN ? { approvedAt: new Date() } : {}),
           expiresAt,
         },
       });

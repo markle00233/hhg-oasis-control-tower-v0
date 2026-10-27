@@ -1,34 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ENDING_SOON_MIN, type CourtVisualStatus } from "@/lib/pickleball";
+import { getSessionCustomer } from "@/lib/session";
+import {
+  LIVE_BOOKING_STATUSES,
+  courtLiveState,
+  withSessionBooking,
+} from "@/lib/pickleball";
+
+const ON_COURT = new Set(["ARRIVED", "CHECKED_IN", "IN_SERVICE"]);
+
+/** Booking the signed-in customer should open from the court board. */
+async function currentCustomerBooking(
+  customerId: string,
+  serviceId: string,
+  now: Date
+) {
+  const rows = await prisma.appBooking.findMany({
+    where: {
+      customerId,
+      serviceId,
+      status: { in: [...LIVE_BOOKING_STATUSES] },
+      endAt: { gt: new Date(now.getTime() - 2 * 60 * 60 * 1000) },
+    },
+    orderBy: { startAt: "asc" },
+    take: 12,
+    select: { id: true, startAt: true, endAt: true, status: true },
+  });
+  const nowMs = now.getTime();
+  const live = rows.find(
+    (b) =>
+      ON_COURT.has(b.status) ||
+      (b.startAt.getTime() <= nowMs && b.endAt.getTime() > nowMs)
+  );
+  if (live) return live;
+  return rows.find((b) => b.endAt.getTime() > nowMs) ?? null;
+}
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "sin1";
-
-function visualStatus(opts: {
-  resourceStatus: string;
-  sessionEndAt: Date | null;
-  now: Date;
-}): CourtVisualStatus {
-  const occupied =
-    opts.resourceStatus === "OCCUPIED" ||
-    (opts.sessionEndAt && opts.sessionEndAt.getTime() > opts.now.getTime());
-
-  if (!occupied && opts.resourceStatus !== "OCCUPIED") {
-    // also treat CLEANING/BLOCKED as occupied-ish for booking UI? show occupied red for BLOCKED
-    if (opts.resourceStatus === "BLOCKED" || opts.resourceStatus === "CLEANING") {
-      return "occupied";
-    }
-    return "available";
-  }
-
-  if (opts.sessionEndAt) {
-    const mins =
-      (opts.sessionEndAt.getTime() - opts.now.getTime()) / (60 * 1000);
-    if (mins > 0 && mins <= ENDING_SOON_MIN) return "ending_soon";
-  }
-  return "occupied";
-}
 
 /** Live court board + slot availability for a day. */
 export async function GET(req: NextRequest) {
@@ -60,20 +69,17 @@ export async function GET(req: NextRequest) {
           where: { status: "OCCUPIED" },
           orderBy: { startAt: "desc" },
           take: 1,
+          include: {
+            booking: {
+              select: { id: true, startAt: true, endAt: true, status: true },
+            },
+          },
         },
         bookings: {
           where: {
             startAt: { lt: dayEnd },
             endAt: { gt: dayStart },
-            status: {
-              in: [
-                "PENDING",
-                "CONFIRMED",
-                "ARRIVED",
-                "CHECKED_IN",
-                "IN_SERVICE",
-              ],
-            },
+            status: { in: [...LIVE_BOOKING_STATUSES] },
           },
           orderBy: { startAt: "asc" },
         },
@@ -82,19 +88,26 @@ export async function GET(req: NextRequest) {
 
     const payload = courts.map((c) => {
       const session = c.sessions[0] || null;
-      // Estimate session end from linked booking end, else +90min from start
-      let sessionEndAt: Date | null = null;
-      if (session) {
-        const linked = c.bookings.find((b) => b.id === session.bookingId);
-        sessionEndAt =
-          linked?.endAt ||
-          session.endAt ||
-          new Date(session.startAt.getTime() + 90 * 60 * 1000);
-      }
-      const status = visualStatus({
+      const bookings = withSessionBooking(
+        c.bookings.map((b) => ({
+          id: b.id,
+          startAt: b.startAt,
+          endAt: b.endAt,
+          status: b.status,
+        })),
+        session?.booking
+      );
+      const live = courtLiveState({
         resourceStatus: c.status,
-        sessionEndAt,
         now,
+        session: session
+          ? {
+              startAt: session.startAt,
+              endAt: session.endAt,
+              bookingId: session.bookingId,
+            }
+          : null,
+        bookings,
       });
 
       return {
@@ -102,16 +115,16 @@ export async function GET(req: NextRequest) {
         code: c.code,
         name: c.name,
         shortLabel: c.name.replace(/^Sân\s*/i, "") || c.code.replace("COURT_", ""),
-        status,
+        status: live.status,
         resourceStatus: c.status,
         session: session
           ? {
               id: session.id,
               startAt: session.startAt.toISOString(),
-              endAt: sessionEndAt?.toISOString() || null,
+              endAt: session.endAt?.toISOString() || null,
             }
           : null,
-        bookings: c.bookings.map((b) => ({
+        bookings: bookings.map((b) => ({
           id: b.id,
           startAt: b.startAt.toISOString(),
           endAt: b.endAt.toISOString(),
@@ -120,10 +133,16 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    const customer = await getSessionCustomer();
+    const mine = customer
+      ? await currentCustomerBooking(customer.id, service.id, now)
+      : null;
+
     return NextResponse.json({
       ok: true,
       date: dayKey,
       courts: payload,
+      myBooking: mine ? { id: mine.id } : null,
     });
   } catch (e) {
     console.error("[pickleball/courts]", e);

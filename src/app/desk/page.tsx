@@ -79,7 +79,7 @@ import {
   isDeskRedeemTicket,
   type RedeemableLine,
 } from "@/lib/desk-point-redeem";
-import { billEvidenceFrozen } from "@/lib/bill-photo";
+import { billEvidenceFrozen, zoneRequiresBillPhoto } from "@/lib/bill-photo";
 import { deskVoucherCut } from "@/lib/hhg-vouchers";
 
 /** Tạm ẩn nút sơ đồ bàn Lòng Nướng. Đặt true khi mở lại. */
@@ -244,6 +244,15 @@ type DeskTicket = {
   manualDiscountNote?: string | null;
 };
 
+function orderSettled(t: DeskTicket) {
+  const status = t.cart?.status;
+  return t.orderStatus === "ordered" || status === "OPEN" || status === "USED";
+}
+
+function orderInk(settled: boolean) {
+  return settled ? "#047857" : "#b45309";
+}
+
 /** Overlay QR đổi điểm onto order lines when ticket metadata lost the discount. */
 function withCartPointCover<
   T extends {
@@ -304,10 +313,15 @@ function billFromItems(
   return totalVnd ? `${list} · ${formatVnd(totalVnd)}` : list;
 }
 
+function proofPartial(status?: string | null, hasBill?: boolean) {
+  if (hasBill) return false;
+  const s = status || "";
+  return s === "OPEN" || s === "USED";
+}
+
 function cartOrderLabel(
   status: string | undefined,
   zoneCode: string | null,
-  withCatalog: boolean,
   adminNote?: string | null
 ) {
   const z = (zoneCode || "").toUpperCase();
@@ -325,10 +339,7 @@ function cartOrderLabel(
     }
     return "Đã dùng";
   }
-  if (status === "OPEN") {
-    if (z === "MIA_OI") return "Đã duyệt · chờ TT";
-    return withCatalog ? "Đã duyệt · chờ order" : "Đã duyệt";
-  }
+  if (status === "OPEN") return "Thanh toán thành công";
   if (status === "PENDING_APPROVAL") return "Chờ duyệt";
   if (status === "REJECTED") return "Từ chối";
   if (status === "CANCELLED") {
@@ -810,12 +821,7 @@ function buildDeskTickets(
         orderId: confirmed?.orderId ?? claimed?.id ?? null,
         scanAt: cart.createdAt || a.lastVisitAt,
         orderStatus: ordered ? "ordered" : "pending",
-        orderLabel: cartOrderLabel(
-          cart.status,
-          zoneCode,
-          withCatalog,
-          cart.adminNote
-        ),
+        orderLabel: cartOrderLabel(cart.status, zoneCode, cart.adminNote),
         billText:
           (confirmed
             ? confirmed.orderSummary
@@ -1306,16 +1312,6 @@ export default function DeskAdministrationPage() {
     return confirmedBillForCart(selected.todayScans || [], guestCart, used);
   }, [selected, guestCart]);
 
-  const openOrderCount = useMemo(
-    () =>
-      deskTickets.filter((t) => {
-        if (!hasCatalog || t.orderStatus !== "pending") return false;
-        const status = t.cart?.status;
-        return !status || status === "OPEN" || status === "PENDING_APPROVAL";
-      }).length,
-    [deskTickets, hasCatalog]
-  );
-
   const categoryItems = useMemo(
     () => catalogMenu.filter((i) => i.category === category),
     [catalogMenu, category]
@@ -1537,7 +1533,7 @@ export default function DeskAdministrationPage() {
   async function approveCart(
     token: string,
     e?: React.MouseEvent,
-    action: "approve" | "reject" = "approve",
+    action: "approve" | "reject" | "finalize" = "approve",
     reason?: string
   ) {
     e?.stopPropagation();
@@ -1559,6 +1555,12 @@ export default function DeskAdministrationPage() {
       if (!res.ok) throw new Error(data.error || "Không xử lý được");
       setRejectTarget(null);
       setRejectReason("");
+      if (action === "finalize") {
+        setOrderMsg("Đã chốt đơn.");
+        setGuestCart((prev) =>
+          prev && prev.token === token ? { ...prev, status: "USED" } : prev
+        );
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Thao tác thất bại");
@@ -1612,7 +1614,7 @@ export default function DeskAdministrationPage() {
       setGuestCart((prev) =>
         prev && prev.token === token ? { ...prev, hasBillPhoto: true } : prev
       );
-      setOrderMsg("Đã lưu ảnh bill.");
+      setOrderMsg("Đã bổ sung chứng từ.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được ảnh bill");
@@ -1642,30 +1644,25 @@ export default function DeskAdministrationPage() {
   function renderBillCapture(
     token: string | undefined,
     has: boolean,
-    required = true,
-    frozen = false
+    partial = false,
+    frozen = false,
+    status?: string | null
   ) {
     if (!token) return null;
     if (frozen && !has) return null;
+    const canFinalize = isMiaOi && has && status === "OPEN";
     return (
-      <div
-        style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div style={styles.billRow} onClick={(e) => e.stopPropagation()}>
         {frozen ? null : (
           <label
-            style={{
-              ...styles.ghost,
-              height: 30,
-              padding: "0 10px",
-              fontSize: 12,
-              display: "inline-flex",
-              alignItems: "center",
-              cursor: "pointer",
-              margin: 0,
-            }}
+            title="CK: chụp màn hình chuyển khoản. Tiền mặt: ảnh bill in từ Fabi. Làm trong ca."
+            style={styles.billBtn}
           >
-            {billBusyToken === token ? "Đang lưu…" : has ? "Đổi ảnh bill" : "Chụp bill"}
+            {billBusyToken === token
+              ? "Đang lưu…"
+              : has
+                ? "Đổi chứng từ"
+                : "Bổ sung chứng từ"}
             <input
               type="file"
               accept="image/*"
@@ -1682,15 +1679,30 @@ export default function DeskAdministrationPage() {
         {has ? (
           <button
             type="button"
-            style={{ ...styles.ghost, height: 30, padding: "0 10px", fontSize: 12 }}
+            style={styles.billBtn}
             onClick={() => void openBillPhoto(token)}
           >
-            Xem bill
+            Xem chứng từ
           </button>
-        ) : required ? (
+        ) : partial ? (
           <span style={{ fontSize: 12, fontWeight: 700, color: "#b45309", whiteSpace: "nowrap" }}>
-            Cần ảnh bill để chốt
+            Hoàn thành 1 phần
           </span>
+        ) : null}
+        {canFinalize ? (
+          <button
+            type="button"
+            title="Kế toán đã kiểm chứng từ"
+            style={{
+              ...styles.billBtn,
+              ...styles.billBtnSolid,
+              opacity: approvingToken === token ? 0.45 : 1,
+            }}
+            disabled={approvingToken === token}
+            onClick={(e) => void approveCart(token, e, "finalize")}
+          >
+            {approvingToken === token ? "…" : "Chốt đơn"}
+          </button>
         ) : null}
       </div>
     );
@@ -4156,30 +4168,6 @@ export default function DeskAdministrationPage() {
         <div>
           <p style={styles.eyebrow}>adminAllplace · Quầy phân khu</p>
           <h1 style={styles.h1}>{title}</h1>
-          <p style={styles.mute}>
-            {hasCatalog
-              ? `${visibleTickets.length} dòng · ${openOrderCount} chưa order · ${pendingApprovalCount} chờ duyệt`
-              : `${arrivals.length} khách · ${pendingApprovalCount} chờ duyệt`}
-            {pendingApprovalCount > 0
-              ? " · bấm Xác nhận để mở QR cho khách"
-              : ""}
-            {isMiaOlympic
-              ? " · 1 quầy Mía+Hồ · Tạo đơn → chọn vé hồ và đồ uống → Lưu đơn (hồ + mía)"
-              : isMiaOi
-                ? " · duyệt QR → mở khách → Xác nhận, không gọi thêm / Xác nhận và gọi thêm"
-                : ""}
-            {isSpa ? " · bấm dòng để chọn spa" : ""}
-            {isPool && !isMiaOlympic ? " · sau duyệt: Quét QR → Xác thực, không mua thêm / Xác thực và mua thêm" : ""}
-            {zone === "PICKLEBALL"
-              ? " · duyệt đặt sân online · ghi khách tại quầy trên lịch · Kết thúc = reset sân"
-              : ""}
-            {zone === "LONG_NUONG" && SHOW_LONG_NUONG_TABLE_MAP
-              ? " · bảng dưới = duyệt mã · sơ đồ bàn mở bằng nút riêng"
-              : zone === "LONG_NUONG"
-                ? " · bảng dưới = duyệt mã"
-                : ""}
-            {isAdmin ? " · admin" : ""}
-          </p>
         </div>
         <div
           className="desk-actions"
@@ -4991,7 +4979,7 @@ export default function DeskAdministrationPage() {
 
       <div style={styles.sheet}>
         <div style={styles.sheetBar}>
-          <h2 style={styles.sheetTitle}>Yêu cầu / duyệt mã</h2>
+          <h2 style={styles.sheetTitle}>Đơn khách gửi</h2>
           <span style={styles.sheetCount}>
             {pendingApprovalCount} chờ duyệt · {visibleTickets.length} dòng
             {zone === "LONG_NUONG" && SHOW_LONG_NUONG_TABLE_MAP
@@ -5014,14 +5002,14 @@ export default function DeskAdministrationPage() {
               </th>
               {hasCatalog ? <th style={styles.th}>Order</th> : null}
               <th style={styles.th}>Duyệt</th>
-              <th style={styles.th}>Đã check in</th>
+              {isMiaOi ? null : <th style={styles.th}>Đã check in</th>}
             </tr>
           </thead>
           <tbody>
             {visibleTickets.length === 0 ? (
               <tr>
                 <td
-                  colSpan={hasCatalog ? 10 : 9}
+                  colSpan={(hasCatalog ? 10 : 9) - (isMiaOi ? 1 : 0)}
                   style={{ ...styles.td, color: "#64748b", padding: 28 }}
                 >
                   {viewDate
@@ -5036,7 +5024,12 @@ export default function DeskAdministrationPage() {
                 const a = t.arrival;
                 const needApprove = t.needsApproval;
                 const cartTok = t.cart?.token || "";
+                const partialProof = proofPartial(
+                  t.cart?.status,
+                  t.cart?.hasBillPhoto
+                );
                 const ci = t.checkInUi;
+                const settled = orderSettled(t);
                 const shown = segmentAtTime({
                   segment: a.segment,
                   segmentLabel: a.segmentLabel,
@@ -5060,10 +5053,12 @@ export default function DeskAdministrationPage() {
                     }}
                     onClick={() => openCustomer(a, t.cart, t.key)}
                   >
-                    <td style={{ ...styles.td, fontWeight: 700 }}>
+                    <td style={{ ...styles.td, fontWeight: 700, whiteSpace: "nowrap" }}>
                       {a.fullName || "—"}
                     </td>
-                    <td style={styles.td}>{a.phone || "—"}</td>
+                    <td style={{ ...styles.td, whiteSpace: "nowrap" }}>
+                      {a.phone || "—"}
+                    </td>
                     <td style={{ ...styles.td, fontWeight: 800 }}>
                       {a.shortId || "—"}
                     </td>
@@ -5075,10 +5070,10 @@ export default function DeskAdministrationPage() {
                     >
                       {t.scanAt ? formatTime(t.scanAt) : "—"}
                     </td>
-                    <td style={styles.td}>
+                    <td style={{ ...styles.td, whiteSpace: "nowrap" }}>
                       <span
                         style={{
-                          ...styles.badge,
+                          ...styles.pill,
                           background:
                             shown.segment === "MEMBER" ? "#dbeafe" : "#f1f5f9",
                           color:
@@ -5091,23 +5086,21 @@ export default function DeskAdministrationPage() {
                     <td
                       style={{
                         ...styles.td,
-                        maxWidth: 320,
+                        maxWidth: 420,
                         fontSize: 12,
                         color: "#334155",
                         whiteSpace: "normal",
                         lineHeight: 1.4,
                       }}
                     >
-                      {isLongNuong
+                      {t.cart?.token &&
+                      zoneRequiresBillPhoto(t.cart.zoneCode || zone)
                         ? renderBillCapture(
-                            t.cart?.token,
-                            !!t.cart?.hasBillPhoto,
-                            !!t.cart &&
-                              (t.cart.status === "OPEN" ||
-                                t.cart.status === "PENDING_APPROVAL" ||
-                                (t.cart.status === "USED" &&
-                                  !longNuongVisitDone(t.cart.adminNote))),
-                            !!t.cart && billEvidenceFrozen(t.cart)
+                            t.cart.token,
+                            !!t.cart.hasBillPhoto,
+                            partialProof,
+                            billEvidenceFrozen(t.cart),
+                            t.cart.status
                           )
                         : null}
                       {t.billTotal != null && t.billTotal > 0 ? (
@@ -5213,25 +5206,27 @@ export default function DeskAdministrationPage() {
                       )}
                     </td>
                     {hasCatalog ? (
-                      <td style={styles.td}>
+                      <td style={{ ...styles.td, whiteSpace: "nowrap" }}>
                         <span
+                          title={
+                            settled
+                              ? "Khách thấy giao dịch đã hoàn thành."
+                              : undefined
+                          }
                           style={{
-                            ...styles.badge,
-                            background:
-                              t.orderStatus === "ordered"
-                                ? "#d1fae5"
-                                : "#ffedd5",
-                            color:
-                              t.orderStatus === "ordered"
-                                ? "#047857"
-                                : "#c2410c",
+                            ...styles.pill,
+                            background: settled ? "#d1fae5" : "#ffedd5",
+                            color: settled ? "#047857" : "#c2410c",
                           }}
                         >
                           {t.orderLabel}
                         </span>
                       </td>
                     ) : null}
-                    <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                    <td
+                      style={{ ...styles.td, whiteSpace: "nowrap" }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {needApprove && cartTok ? (
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           <button
@@ -5250,7 +5245,7 @@ export default function DeskAdministrationPage() {
                               ? "…"
                               : isLongNuong
                                 ? "Đã gọi"
-                                : "Duyệt"}
+                                : "Duyệt thành công"}
                           </button>
                           <button
                             type="button"
@@ -5280,7 +5275,7 @@ export default function DeskAdministrationPage() {
                         <span
                           title={t.cart.adminNote || ""}
                           style={{
-                            ...styles.badge,
+                            ...styles.pill,
                             background: "#fee2e2",
                             color: "#b91c1c",
                           }}
@@ -5290,7 +5285,7 @@ export default function DeskAdministrationPage() {
                       ) : t.cart?.status === "CANCELLED" ? (
                         <span
                           style={{
-                            ...styles.badge,
+                            ...styles.pill,
                             background: (t.cart.adminNote || "").includes("huỷ")
                               ? "#fee2e2"
                               : "#f1f5f9",
@@ -5305,8 +5300,9 @@ export default function DeskAdministrationPage() {
                         </span>
                       ) : t.cart ? (
                         <span
+                          title="Khách thấy thanh toán thành công. Chứng từ thiếu vẫn là hoàn thành 1 phần ở cột hoá đơn."
                           style={{
-                            ...styles.badge,
+                            ...styles.pill,
                             background: "#d1fae5",
                             color: "#047857",
                           }}
@@ -5317,6 +5313,7 @@ export default function DeskAdministrationPage() {
                         <span style={{ color: "#94a3b8" }}>—</span>
                       )}
                     </td>
+                    {isMiaOi ? null : (
                     <td style={styles.td} onClick={(e) => e.stopPropagation()}>
                       {(isLongNuong || isSpa) &&
                       t.cart?.status === "USED" &&
@@ -5346,11 +5343,7 @@ export default function DeskAdministrationPage() {
                             </span>
                             <button
                               type="button"
-                              title={
-                                !isLongNuong || t.cart?.hasBillPhoto
-                                  ? "Kết thúc lượt"
-                                  : "Chụp ảnh bill trước"
-                              }
+                              title="Kết thúc lượt"
                               style={{
                                 ...styles.btn,
                                 flex: "0 0 auto",
@@ -5359,16 +5352,9 @@ export default function DeskAdministrationPage() {
                                 fontSize: 12,
                                 background: "#0f766e",
                                 whiteSpace: "nowrap",
-                                opacity:
-                                  approvingToken === cartTok ||
-                                  (isLongNuong && !t.cart?.hasBillPhoto)
-                                    ? 0.45
-                                    : 1,
+                                opacity: approvingToken === cartTok ? 0.45 : 1,
                               }}
-                              disabled={
-                                approvingToken === cartTok ||
-                                (isLongNuong && !t.cart?.hasBillPhoto)
-                              }
+                              disabled={approvingToken === cartTok}
                               onClick={(e) => void finishLongNuong(cartTok, e)}
                             >
                               {approvingToken === cartTok ? "…" : "Đã dùng"}
@@ -5401,6 +5387,7 @@ export default function DeskAdministrationPage() {
                         </span>
                       )}
                     </td>
+                    )}
                   </tr>
                 );
               })
@@ -5617,18 +5604,18 @@ export default function DeskAdministrationPage() {
                   }}
                 >
                   {guestCart.status === "PENDING_APPROVAL"
-                    ? "Yêu cầu chờ duyệt"
+                    ? "Đơn chờ xác nhận"
                     : spaCartEditable()
-                      ? "Giỏ QR đã duyệt"
+                      ? "Đơn đã nhận"
                       : guestConfirmedBill
                         ? "Đơn đã xác thực"
-                        : "Giỏ QR đã duyệt"}
+                        : "Đơn đã nhận"}
                   {guestCart.zoneName ? ` · ${guestCart.zoneName}` : ""}
                 </p>
                 {spaCartEditable() ? (
                   <p style={{ margin: "6px 0 0", fontSize: 12, color: "#334155" }}>
-                    Cập nhật đơn lưu thay đổi, kể cả khi khách đang dùng. Xác nhận
-                    hoặc quét QR chuyển sang Đang dùng. Đã dùng khi khách xong.
+                    Cập nhật đơn lưu thay đổi, kể cả khi khách đang dùng. Duyệt thành công
+                    để khách thấy thanh toán xong. Bổ sung chứng từ trong ca. Đã dùng khi khách xong.
                   </p>
                 ) : null}
                 <div
@@ -5704,21 +5691,10 @@ export default function DeskAdministrationPage() {
                         fontSize: 12,
                         background: "#0f766e",
                         whiteSpace: "nowrap",
-                        opacity:
-                          approvingToken === guestCart.token ||
-                          (isLongNuong && !guestCart.hasBillPhoto)
-                            ? 0.45
-                            : 1,
+                        opacity: approvingToken === guestCart.token ? 0.45 : 1,
                       }}
-                      title={
-                        !isLongNuong || guestCart.hasBillPhoto
-                          ? "Kết thúc lượt"
-                          : "Chụp ảnh bill trước"
-                      }
-                      disabled={
-                        approvingToken === guestCart.token ||
-                        (isLongNuong && !guestCart.hasBillPhoto)
-                      }
+                      title="Kết thúc lượt"
+                      disabled={approvingToken === guestCart.token}
                       onClick={() => void finishLongNuong(guestCart.token)}
                     >
                       {approvingToken === guestCart.token ? "…" : "Đã dùng"}
@@ -5740,16 +5716,14 @@ export default function DeskAdministrationPage() {
                   </span>
                 ) : null}
                 </div>
-                {isLongNuong ? (
+                {zoneRequiresBillPhoto(guestCart.zoneCode || zone) ? (
                   <div style={{ marginTop: 8 }}>
                     {renderBillCapture(
                       guestCart.token,
                       !!guestCart.hasBillPhoto,
-                      guestCart.status === "OPEN" ||
-                        guestCart.status === "PENDING_APPROVAL" ||
-                        (guestCart.status === "USED" &&
-                          !longNuongVisitDone(guestCart.adminNote)),
-                      billEvidenceFrozen(guestCart)
+                      proofPartial(guestCart.status, guestCart.hasBillPhoto),
+                      billEvidenceFrozen(guestCart),
+                      guestCart.status
                     )}
                   </div>
                 ) : null}
@@ -5834,7 +5808,7 @@ export default function DeskAdministrationPage() {
                           ? "…"
                           : isLongNuong
                             ? "Đã gọi"
-                            : "Duyệt"}
+                            : "Duyệt thành công"}
                       </button>
                       <button
                         type="button"
@@ -6435,7 +6409,7 @@ export default function DeskAdministrationPage() {
                                   marginLeft: 8,
                                   fontSize: 12,
                                   fontWeight: 700,
-                                  color: locked ? "#047857" : "#b45309",
+                                  color: orderInk(locked || orderSettled(t)),
                                 }}
                               >
                                 {t.orderLabel}
@@ -6463,7 +6437,7 @@ export default function DeskAdministrationPage() {
                                 margin: 0,
                                 fontSize: 13,
                                 fontWeight: 700,
-                                color: locked ? "#047857" : "#b45309",
+                                color: orderInk(locked || orderSettled(t)),
                               }}
                             >
                               {t.orderLabel}
@@ -6932,7 +6906,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "flex-start",
     gap: 16,
     marginBottom: 18,
-    maxWidth: 1180,
+    maxWidth: 1360,
     marginInline: "auto",
   },
   card: {
@@ -7035,7 +7009,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   err: { color: "#dc2626", fontSize: 14, maxWidth: 980, margin: "0 auto 12px" },
   sheet: {
-    maxWidth: 1180,
+    maxWidth: 1360,
     margin: "0 auto",
     background: "#fff",
     borderRadius: 18,
@@ -7074,7 +7048,40 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "auto",
     borderRadius: "0 0 18px 18px",
   },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 15 },
+  table: {
+    width: "100%",
+    minWidth: 1240,
+    borderCollapse: "collapse",
+    fontSize: 15,
+  },
+  billRow: {
+    display: "flex",
+    gap: 6,
+    alignItems: "center",
+    flexWrap: "nowrap",
+  },
+  billBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    flex: "0 0 auto",
+    height: 30,
+    margin: 0,
+    padding: "0 10px",
+    border: "1px solid #cbd5e1",
+    borderRadius: 12,
+    background: "#fff",
+    color: "#0f172a",
+    fontWeight: 700,
+    fontSize: 12,
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+  },
+  billBtnSolid: {
+    background: "#0f766e",
+    color: "#fff",
+    border: 0,
+  },
   th: {
     textAlign: "left",
     padding: "12px 16px",
@@ -7096,6 +7103,19 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 800,
+  },
+  pill: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxSizing: "border-box",
+    height: 28,
+    padding: "0 12px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+    lineHeight: 1,
+    whiteSpace: "nowrap",
   },
   modalBackdrop: {
     position: "fixed",

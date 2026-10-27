@@ -28,24 +28,26 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    let lookup = username;
-    if (
+    const adminLogin =
       username.toUpperCase() === ADMIN_PANEL_USERNAME &&
-      password === ADMIN_PANEL_PASSWORD
-    ) {
-      const existing = await prisma.user.findUnique({
-        where: { username: ADMIN_PANEL_USERNAME },
-        select: { passwordHash: true, systemRole: true, status: true },
-      });
-      const ready =
-        existing?.status === "ACTIVE" &&
-        existing.systemRole === "SYSTEM_ADMIN" &&
-        (await verifyPassword(password, existing.passwordHash));
-      if (!ready) await ensureAdminPanelUser(prisma);
-      lookup = ADMIN_PANEL_USERNAME;
+      password === ADMIN_PANEL_PASSWORD;
+    let user = await prisma.user.findUnique({
+      where: { username: adminLogin ? ADMIN_PANEL_USERNAME : username },
+    });
+    let passwordOk = false;
+    if (adminLogin) {
+      passwordOk =
+        !!user &&
+        user.status === "ACTIVE" &&
+        user.systemRole === "SYSTEM_ADMIN" &&
+        (await verifyPassword(password, user.passwordHash));
+      if (!passwordOk) {
+        await ensureAdminPanelUser(prisma);
+        user = await prisma.user.findUnique({
+          where: { username: ADMIN_PANEL_USERNAME },
+        });
+      }
     }
-
-    const user = await prisma.user.findUnique({ where: { username: lookup } });
 
     // Generic failure — do not reveal whether username exists.
     if (!user) {
@@ -62,12 +64,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const ok = await verifyPassword(password, user.passwordHash);
-    if (!ok) {
-      return NextResponse.json(
-        { error: "Tài khoản hoặc mật khẩu không đúng." },
-        { status: 401 }
-      );
+    if (!passwordOk) {
+      const ok = await verifyPassword(password, user.passwordHash);
+      if (!ok) {
+        return NextResponse.json(
+          { error: "Tài khoản hoặc mật khẩu không đúng." },
+          { status: 401 }
+        );
+      }
     }
 
     await setSessionCookie(user.id);
