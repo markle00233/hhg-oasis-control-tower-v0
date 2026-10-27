@@ -88,7 +88,7 @@ export const SPA_MENU: SpaMenuItem[] = [
     nameEn: "Complimentary 30' wash",
     durationMin: 30,
     priceVnd: 0,
-    note: "1 lượt tự chọn của học viên",
+    note: "1 lượt tự chọn của gói bơi",
   },
   {
     id: "goi-sau-the-thao",

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
 import {
   applyDeskRedeemUnits,
-  earnableVnd,
   type RedeemableLine,
 } from "@/lib/desk-point-redeem";
 import {
@@ -80,6 +79,8 @@ async function finalizeShellWithMiaOrder(opts: {
   }[];
   pointsRedeemUnits: number;
   pointsRedeemCost: number;
+  manualDiscountVnd?: number;
+  manualDiscountNote?: string;
 }) {
   const shell = await prisma.appServiceEvent.findUnique({
     where: { id: opts.shellId },
@@ -100,6 +101,14 @@ async function finalizeShellWithMiaOrder(opts: {
         items: opts.items,
         pointsRedeemUnits: opts.pointsRedeemUnits,
         pointsRedeemCost: opts.pointsRedeemCost,
+        ...(opts.manualDiscountVnd
+          ? {
+              manualDiscountVnd: opts.manualDiscountVnd,
+              ...(opts.manualDiscountNote
+                ? { manualDiscountNote: opts.manualDiscountNote }
+                : {}),
+            }
+          : {}),
       },
     },
   });
@@ -178,7 +187,11 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const customerId = String(body.customerId || "").trim();
     const lines = Array.isArray(body.items) ? (body.items as CartLine[]) : [];
-    const note = String(body.note || "").trim().slice(0, 300);
+    const note = String(body.note || "").trim().slice(0, 200);
+    const manualRequest = Math.max(
+      0,
+      Math.round(Number(body.manualDiscountVnd) || 0)
+    );
     const deskBundleId = String(body.deskBundleId || "").trim().slice(0, 40);
     const scanEventId = String(body.scanEventId || "").trim();
     const pointsRedeemUnits = Math.max(
@@ -285,6 +298,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (manualRequest > 0 && !note) {
+      return NextResponse.json(
+        { error: "Nhập ghi chú cho khoản giảm giá." },
+        { status: 400 }
+      );
+    }
+    const manualDiscountVnd = Math.min(manualRequest, totalVnd);
+    totalVnd = Math.max(0, totalVnd - manualDiscountVnd);
+    const manualNote =
+      manualDiscountVnd > 0
+        ? `Giảm tay −${manualDiscountVnd.toLocaleString("vi-VN")}đ${
+            note ? ` (${note})` : ""
+          }`
+        : "";
+
     const order = await prisma.appOrder.create({
       data: {
         customerId: customer.id,
@@ -292,7 +320,12 @@ export async function POST(req: NextRequest) {
         status: "CONFIRMED",
         totalVnd,
         note:
-          [note, redeemNote, membershipNote, voucherNote]
+          [
+            manualDiscountVnd > 0 ? manualNote : note,
+            redeemNote,
+            membershipNote,
+            voucherNote,
+          ]
             .filter(Boolean)
             .join(" · ") || null,
         createdByType: "STAFF",
@@ -340,6 +373,9 @@ export async function POST(req: NextRequest) {
         items: metaItems,
         pointsRedeemUnits: redeemed.unitsApplied,
         pointsRedeemCost: redeemed.cost,
+        ...(manualDiscountVnd > 0
+          ? { manualDiscountVnd, manualDiscountNote: note }
+          : {}),
       });
     } else if (service) {
       await prisma.appServiceEvent.create({
@@ -357,6 +393,9 @@ export async function POST(req: NextRequest) {
             items: metaItems,
             pointsRedeemUnits: redeemed.unitsApplied,
             pointsRedeemCost: redeemed.cost,
+            ...(manualDiscountVnd > 0
+              ? { manualDiscountVnd, manualDiscountNote: note }
+              : {}),
           },
         },
       });
@@ -424,8 +463,8 @@ export async function POST(req: NextRequest) {
       customerId: customer.id,
       refType: "APP_ORDER",
       refId: order.id,
-      subtotalVnd: earnableVnd(redeemed.items),
-      note: `Mía Ơi desk · ${earnableVnd(redeemed.items)}đ phần chưa đổi điểm`,
+      subtotalVnd: totalVnd,
+      note: `Mía Ơi desk · ${totalVnd}đ sau giảm`,
     }).catch((err) => {
       console.error("[miaoi/orders points]", err);
       return null;

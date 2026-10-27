@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
 import { normalizePhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
-import { getSwimPackage, isSwimBonusPurpose } from "@/lib/swim-packages";
+import {
+  getSwimPackage,
+  isSwimBonusOpen,
+  isSwimBonusPurpose,
+  swimPackageExpiresAt,
+} from "@/lib/swim-packages";
 
 export const dynamic = "force-dynamic";
 
@@ -120,9 +125,41 @@ export async function GET(req: NextRequest) {
     take: 200,
   });
 
+  const students = await Promise.all(
+    rows.map(async (row) => {
+      const pkg = getSwimPackage(row.packageId);
+      if (!pkg) return serialize(row);
+      const expiresAt = swimPackageExpiresAt(pkg, row.startedAt);
+      // Session courses used to store the 30-day bonus window in this field.
+      if (pkg.sessions != null) {
+        if (!row.expiresAt) return serialize(row);
+        await prisma.appSwimStudent
+          .update({ where: { id: row.id }, data: { expiresAt: null } })
+          .catch((err) => {
+            console.error("[swim-students] clear course expiry", err);
+          });
+        return serialize({ ...row, expiresAt: null });
+      }
+      if (
+        expiresAt &&
+        row.expiresAt &&
+        Math.abs(row.expiresAt.getTime() - expiresAt.getTime()) < 60_000
+      ) {
+        return serialize(row);
+      }
+      if (!expiresAt) return serialize(row);
+      await prisma.appSwimStudent
+        .update({ where: { id: row.id }, data: { expiresAt } })
+        .catch((err) => {
+          console.error("[swim-students] expiry backfill", err);
+        });
+      return serialize({ ...row, expiresAt });
+    })
+  );
+
   return NextResponse.json({
     ok: true,
-    students: rows.map(serialize),
+    students,
   });
 }
 
@@ -159,6 +196,7 @@ export async function POST(req: NextRequest) {
     const sessionsTotal = pkg.sessions ?? 0;
     const phoneNormalized = phoneRaw ? normalizePhone(phoneRaw) : null;
     const now = new Date();
+    const expiresAt = swimPackageExpiresAt(pkg, now);
 
     const row = await prisma.appSwimStudent.create({
       data: {
@@ -176,6 +214,7 @@ export async function POST(req: NextRequest) {
         billPhoto,
         billPhotoAt: now,
         startedAt: now,
+        expiresAt,
       },
       select: STUDENT_LIST_SELECT,
     });
@@ -212,6 +251,7 @@ export async function PATCH(req: NextRequest) {
         sessionsTotal: true,
         bonusVisitsLeft: true,
         bonusVisitsTotal: true,
+        startedAt: true,
         status: true,
       },
     });
@@ -254,6 +294,12 @@ export async function PATCH(req: NextRequest) {
       if (existing.bonusVisitsLeft <= 0) {
         return NextResponse.json(
           { error: "Đã hết lượt tự chọn." },
+          { status: 409 }
+        );
+      }
+      if (!isSwimBonusOpen(existing.startedAt)) {
+        return NextResponse.json(
+          { error: "Lượt tự chọn chỉ dùng trong 30 ngày kể từ ngày đăng ký." },
           { status: 409 }
         );
       }

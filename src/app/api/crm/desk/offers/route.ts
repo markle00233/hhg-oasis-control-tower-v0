@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
 function deskZoneAliases(zone: string) {
   const z = zone.toUpperCase();
   if (z === "SAUNA" || z === "SPA") return ["SAUNA", "SPA"];
+  if (z === "LONG_NUONG" || z === "CHI_PHEO") return ["LONG_NUONG", "CHI_PHEO"];
   return [z];
 }
 
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
         note: { startsWith: "Quét QR voucher" },
       },
       orderBy: { createdAt: "desc" },
-      take: 80,
+      take: 200,
       include: {
         customer: {
           select: { fullName: true, phone: true, customerCode: true },

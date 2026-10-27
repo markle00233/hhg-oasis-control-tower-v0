@@ -2,7 +2,6 @@ import { CART_STATUS } from "@/lib/cart-status";
 import {
   applyDeskRedeemUnits,
   coverDrinkCartPoints,
-  earnableVnd,
 } from "@/lib/desk-point-redeem";
 import { getMiaOiItem } from "@/lib/miaoi-menu";
 import {
@@ -516,13 +515,12 @@ export async function confirmMiaOiCartPayment(opts: {
     pointsBalance = burned.balance;
   }
 
-  const earnable = earnableVnd(finalItems);
   const pts = await awardPurchasePoints({
     customerId: cart.customerId,
     refType: "SERVICE_CART",
     refId: cart.id,
-    subtotalVnd: earnable,
-    note: `Mía Ơi · ${earnable}đ phần chưa đổi điểm`,
+    subtotalVnd: totalVnd,
+    note: `Mía Ơi · ${totalVnd}đ sau giảm`,
   }).catch((err) => {
     console.error("[miaoi-confirm points]", err);
     return null;

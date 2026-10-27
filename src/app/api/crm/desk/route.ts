@@ -16,8 +16,10 @@ import {
 import {
   isOlympicPackageId,
   OLYMPIC_PACKAGE_IDS,
+  vipStartedAtFromExpiry,
 } from "@/lib/olympic-membership";
 import { phoneKeys } from "@/lib/swim-goi-bonus";
+import { swimBonusStartedAfter } from "@/lib/swim-packages";
 import { prisma } from "@/lib/prisma";
 
 /** Quầy — mỗi yêu cầu QR = 1 dòng (không ghi đè cùng khách). */
@@ -473,19 +475,28 @@ export async function GET(req: NextRequest) {
           const crm = c.phoneNormalized
             ? membershipByPhone.get(c.phoneNormalized)?.startDate
             : null;
-          const start = packageStart.get(c.id) || crm || null;
+          const start =
+            packageStart.get(c.id) ||
+            crm ||
+            (c.vipExpiresAt
+              ? vipStartedAtFromExpiry(c.vipExpiresAt, c.vipPlanLabel)
+              : null);
           if (!start) return;
           packageStart.set(c.id, start);
-          await prisma.appCustomer.update({
-            where: { id: c.id },
-            data: { vipStartedAt: start },
-          });
+          await prisma.appCustomer
+            .update({
+              where: { id: c.id },
+              data: { vipStartedAt: start },
+            })
+            .catch((err) => {
+              console.error("[desk] vip start backfill", err);
+            });
         })
       );
     }
 
       const bonusByPhone = new Map<string, number>();
-      if (zone === "SAUNA") {
+      if (zone === "SAUNA" || miaOlympicSector(zone)) {
         const phones = [
           ...new Set(
             rows.flatMap((c) => [
@@ -499,6 +510,8 @@ export async function GET(req: NextRequest) {
             where: {
               status: "ACTIVE",
               bonusVisitsTotal: { gt: 0 },
+              bonusVisitsLeft: { gt: 0 },
+              startedAt: { gt: swimBonusStartedAfter() },
               OR: [
                 { phoneNormalized: { in: phones } },
                 { phone: { in: phones } },
@@ -592,6 +605,15 @@ export async function GET(req: NextRequest) {
               typeof meta.miaOrderId === "string" ? meta.miaOrderId : null,
             deskBundleId:
               typeof meta.deskBundleId === "string" ? meta.deskBundleId : null,
+            manualDiscountVnd: Math.max(
+              0,
+              Math.round(Number(meta.manualDiscountVnd) || 0)
+            ),
+            manualDiscountNote:
+              typeof meta.manualDiscountNote === "string" &&
+              meta.manualDiscountNote.trim()
+                ? meta.manualDiscountNote.trim()
+                : null,
             ticketItems: orderItems.map((i) => {
               const row = i as {
                 name?: string;

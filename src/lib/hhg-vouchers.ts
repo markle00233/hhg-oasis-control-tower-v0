@@ -11,6 +11,8 @@ export type DeskHhgVoucher = {
   discountType: "amount" | "percent" | "perk";
   discountVnd?: number;
   discountPercent?: number;
+  /** Bill must reach this before an amount voucher applies. */
+  minBillVnd?: number;
 };
 
 export const DESK_HHG_VOUCHERS: DeskHhgVoucher[] = [
@@ -22,6 +24,7 @@ export const DESK_HHG_VOUCHERS: DeskHhgVoucher[] = [
     zoneLabel: "Lòng Nướng",
     discountType: "amount",
     discountVnd: 100_000,
+    minBillVnd: 500_000,
   },
   // Legacy ids (hhg-oly-mia-5 / hhg-oly-mia-10): giảm Mía Ơi giờ gắn gói VIP,
   // không còn cấp / chọn như voucher. Giữ lookup để bill cũ không vỡ.
@@ -35,8 +38,8 @@ export const DESK_HHG_VOUCHERS: DeskHhgVoucher[] = [
   },
   {
     id: "hhg-oly-spa-massage",
-    title: "Massage Spa",
-    subtitle: "Quà kèm gói tháng Olympic · Spa",
+    title: "Massage Spa 45'",
+    subtitle: "Quà kèm gói tháng Olympic · Spa 45'",
     zoneCode: "SPA",
     zoneLabel: "Spa",
     discountType: "perk",
@@ -100,10 +103,13 @@ export function deskVoucherCut(
     discountType?: string;
     discountVnd?: number;
     discountPercent?: number;
+    minBillVnd?: number;
   } | null
 ) {
   const base = Math.max(0, Math.round(Number(baseVnd) || 0));
   if (!v || base <= 0) return 0;
+  const minBill = Math.max(0, Math.round(Number(v.minBillVnd) || 0));
+  if (minBill > 0 && base < minBill) return 0;
   if (v.discountType === "amount") {
     return Math.min(base, Math.max(0, Math.round(Number(v.discountVnd) || 0)));
   }

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireSystemAdmin } from "@/lib/auth";
+import {
+  reconcileOlympicMembership,
+  vipStartedAtFromExpiry,
+} from "@/lib/olympic-membership";
 import { prisma } from "@/lib/prisma";
 
 /** Active VIP packages for the admin panel. */
@@ -24,15 +28,40 @@ export async function GET() {
     },
   });
 
-  const subscribers = rows
-    .map((row) => ({
-      id: row.id,
-      fullName: row.fullName?.trim() || "—",
-      phone: row.phone || row.phoneNormalized || "—",
-      planLabel: row.vipPlanLabel?.trim() || "Gói VIP",
-      startedAt: row.vipStartedAt?.toISOString() || null,
-      expiresAt: row.vipExpiresAt?.toISOString() || null,
-    }))
+  const subscribers = (
+    await Promise.all(
+      rows.map(async (row) => {
+        let started = row.vipStartedAt;
+        if (!started && row.vipExpiresAt) {
+          started = vipStartedAtFromExpiry(row.vipExpiresAt, row.vipPlanLabel);
+          if (started) {
+            await prisma.appCustomer
+              .update({
+                where: { id: row.id },
+                data: { vipStartedAt: started },
+              })
+              .catch((err) => {
+                console.error("[vip-subscribers] start backfill", err);
+              });
+          }
+        }
+        const aligned = await reconcileOlympicMembership(prisma, {
+          id: row.id,
+          vipPlanLabel: row.vipPlanLabel,
+          vipStartedAt: started,
+          vipExpiresAt: row.vipExpiresAt,
+        });
+        return {
+          id: row.id,
+          fullName: row.fullName?.trim() || "—",
+          phone: row.phone || row.phoneNormalized || "—",
+          planLabel: aligned.vipPlanLabel?.trim() || "Gói VIP",
+          startedAt: aligned.vipStartedAt?.toISOString() || null,
+          expiresAt: aligned.vipExpiresAt?.toISOString() || null,
+        };
+      })
+    )
+  )
     .sort((a, b) => {
       const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
       const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;

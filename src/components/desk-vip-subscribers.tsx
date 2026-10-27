@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { swimBonusExpiresAt } from "@/lib/swim-packages";
 
-type Sector = "vip" | "swim";
+type Sector = "vip" | "swim" | "spa" | "grill";
 
 type Subscriber = {
   id: string;
@@ -32,19 +33,36 @@ type BonusLog = {
   usedAt: string;
 };
 
+type RedeemedVoucher = {
+  id: string;
+  at: string;
+  offerTitle: string | null;
+  phone: string | null;
+  customerName: string | null;
+  claimedByName: string | null;
+};
+
+const REDEEM_ZONE: Record<"spa" | "grill", string> = {
+  spa: "SAUNA",
+  grill: "LONG_NUONG",
+};
+
 function formatWhen(iso: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("vi-VN", {
+  const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Ho_Chi_Minh",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
-  });
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || "";
+  return `${pick("day")}/${pick("month")}/${pick("year")} ${pick("hour")}:${pick("minute")}`;
 }
 
 function sessionsLabel(row: SwimStudent) {
@@ -53,10 +71,12 @@ function sessionsLabel(row: SwimStudent) {
 }
 
 function bonusLabel(row: SwimStudent) {
-  if (row.bonusVisitsTotal > 0) {
-    return `${row.bonusVisitsLeft}/${row.bonusVisitsTotal}`;
-  }
-  return "—";
+  if (row.bonusVisitsTotal <= 0) return "—";
+  const count = `${row.bonusVisitsLeft}/${row.bonusVisitsTotal}`;
+  if (!row.startedAt) return count;
+  const until = swimBonusExpiresAt(new Date(row.startedAt));
+  if (Number.isNaN(until.getTime())) return count;
+  return `${count} · đến ${formatWhen(until.toISOString())}`;
 }
 
 export function DeskVipSubscribers({
@@ -69,12 +89,17 @@ export function DeskVipSubscribers({
   const [sector, setSector] = useState<Sector>("vip");
   const [rows, setRows] = useState<Subscriber[] | null>(null);
   const [students, setStudents] = useState<SwimStudent[] | null>(null);
+  const [redeemed, setRedeemed] = useState<RedeemedVoucher[] | null>(null);
   const [error, setError] = useState("");
-  const [logFor, setLogFor] = useState<{ id: string; fullName: string } | null>(
-    null
-  );
+  const [logFor, setLogFor] = useState<{
+    id: string;
+    fullName: string;
+    used: number;
+    total: number;
+  } | null>(null);
   const [logs, setLogs] = useState<BonusLog[] | null>(null);
   const [logError, setLogError] = useState("");
+  const listReq = useRef(0);
 
   const loadVip = useCallback(async () => {
     setError("");
@@ -110,16 +135,52 @@ export function DeskVipSubscribers({
     setStudents(Array.isArray(data.students) ? data.students : []);
   }, []);
 
+  const loadRedeemed = useCallback(async (which: "spa" | "grill") => {
+    const seq = ++listReq.current;
+    setError("");
+    setRedeemed(null);
+    try {
+      const zone = REDEEM_ZONE[which];
+      const res = await fetch(
+        `/api/crm/desk/offers?history=1&zone=${encodeURIComponent(zone)}`,
+        { cache: "no-store" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (seq !== listReq.current) return;
+      if (res.status === 401 || res.status === 403) {
+        setRedeemed(null);
+        setError(data.error || "Phiên đăng nhập đã hết. Chọn lại khu.");
+        return;
+      }
+      if (!res.ok) {
+        setError(data.error || "Không tải được voucher đã đổi.");
+        return;
+      }
+      setRedeemed(Array.isArray(data.logs) ? data.logs : []);
+    } catch {
+      if (seq !== listReq.current) return;
+      setError("Không tải được voucher đã đổi.");
+    }
+  }, []);
+
   useEffect(() => {
+    if (sector !== "swim") setLogFor(null);
     if (sector === "vip") {
       void loadVip().catch(() => setError("Không tải được danh sách."));
-    } else {
+    } else if (sector === "swim") {
       void loadSwim().catch(() => setError("Không tải được danh sách học viên."));
+    } else {
+      void loadRedeemed(sector);
     }
-  }, [sector, loadVip, loadSwim]);
+  }, [sector, loadVip, loadSwim, loadRedeemed]);
 
-  async function openLog(person: { id: string; fullName: string }) {
-    setLogFor(person);
+  async function openLog(person: SwimStudent) {
+    setLogFor({
+      id: person.id,
+      fullName: person.fullName,
+      used: Math.max(0, person.bonusVisitsTotal - person.bonusVisitsLeft),
+      total: person.bonusVisitsTotal,
+    });
     setLogs(null);
     setLogError("");
     const url = `/api/crm/desk/swim-bonus-log?studentId=${encodeURIComponent(person.id)}`;
@@ -135,6 +196,27 @@ export function DeskVipSubscribers({
 
   const swimCount = students?.length ?? 0;
   const vipCount = rows?.length ?? 0;
+  const redeemedCount = redeemed?.length ?? 0;
+  const title =
+    sector === "vip"
+      ? "Khách đang dùng gói VIP"
+      : sector === "swim"
+        ? "Khách học bơi"
+        : sector === "spa"
+          ? "Voucher Spa đã đổi"
+          : "Voucher Lòng Nướng đã đổi";
+  const subtitle =
+    sector === "vip"
+      ? rows
+        ? `${vipCount} khách còn hạn`
+        : "Tên, số điện thoại, ngày đăng ký, gói và ngày hết hạn."
+      : sector === "swim"
+        ? students
+          ? `${swimCount} học viên`
+          : "Cùng thông tin gói, thêm buổi và lượt tự chọn còn lại."
+        : redeemed
+          ? `${redeemedCount} lượt đã quét`
+          : "Khách, số điện thoại, thời điểm và voucher đã đổi.";
 
   return (
     <main style={styles.page}>
@@ -142,9 +224,7 @@ export function DeskVipSubscribers({
         <p style={styles.eyebrow}>Admin</p>
         <div style={styles.head}>
           <div>
-            <h1 style={styles.h1}>
-              {sector === "vip" ? "Khách đang dùng gói VIP" : "Khách học bơi"}
-            </h1>
+            <h1 style={styles.h1}>{title}</h1>
             <div style={styles.pills}>
               <button
                 type="button"
@@ -166,16 +246,34 @@ export function DeskVipSubscribers({
               >
                 Khách học bơi
               </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.pill,
+                  ...(sector === "spa" ? styles.pillOn : null),
+                }}
+                onClick={() => {
+                  setRedeemed(null);
+                  setSector("spa");
+                }}
+              >
+                Voucher Spa
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.pill,
+                  ...(sector === "grill" ? styles.pillOn : null),
+                }}
+                onClick={() => {
+                  setRedeemed(null);
+                  setSector("grill");
+                }}
+              >
+                Voucher Lòng Nướng
+              </button>
             </div>
-            <p style={styles.mute}>
-              {sector === "vip"
-                ? rows
-                  ? `${vipCount} khách còn hạn`
-                  : "Tên, số điện thoại, ngày đăng ký, gói và ngày hết hạn."
-                : students
-                  ? `${swimCount} học viên`
-                  : "Cùng thông tin gói, thêm buổi và lượt tự chọn còn lại."}
-            </p>
+            <p style={styles.mute}>{subtitle}</p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" style={styles.ghost} onClick={onBack}>
@@ -220,7 +318,8 @@ export function DeskVipSubscribers({
               </table>
             </div>
           )
-        ) : students === null ? (
+        ) : sector === "swim" ? (
+          students === null ? (
           error ? null : <p style={styles.mute}>Đang tải…</p>
         ) : students.length === 0 ? (
           <p style={styles.mute}>Chưa có học viên.</p>
@@ -263,6 +362,38 @@ export function DeskVipSubscribers({
               </tbody>
             </table>
           </div>
+        )
+        ) : redeemed === null ? (
+          error ? null : <p style={styles.mute}>Đang tải…</p>
+        ) : redeemed.length === 0 ? (
+          <p style={styles.mute}>Chưa có voucher đã đổi.</p>
+        ) : (
+          <div style={{ overflowX: "auto", marginTop: 16 }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Họ tên</th>
+                  <th style={styles.th}>Số điện thoại</th>
+                  <th style={styles.th}>Thời điểm</th>
+                  <th style={styles.th}>Voucher</th>
+                  <th style={styles.th}>Nhân viên</th>
+                </tr>
+              </thead>
+              <tbody>
+                {redeemed.map((row) => (
+                  <tr key={row.id}>
+                    <td style={{ ...styles.td, fontWeight: 700 }}>
+                      {row.customerName || "Khách"}
+                    </td>
+                    <td style={styles.td}>{row.phone || "—"}</td>
+                    <td style={styles.td}>{formatWhen(row.at)}</td>
+                    <td style={styles.td}>{row.offerTitle || "Voucher"}</td>
+                    <td style={styles.td}>{row.claimedByName || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -282,7 +413,11 @@ export function DeskVipSubscribers({
             {logs === null && !logError ? (
               <p style={styles.mute}>Đang tải…</p>
             ) : logs && logs.length === 0 ? (
-              <p style={styles.mute}>Chưa dùng lượt tự chọn.</p>
+              <p style={styles.mute}>
+                {logFor.used > 0
+                  ? `Đã dùng ${logFor.used}/${logFor.total} lượt. Chưa lưu chi tiết từng lần.`
+                  : "Chưa dùng lượt tự chọn."}
+              </p>
             ) : (
               <ul style={styles.logList}>
                 {(logs || []).map((entry) => (

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DateChipRow } from "@/components/DateChipRow";
 import { Shell } from "@/components/Shell";
 import { OrderQrSuccess } from "@/components/OrderQrSuccess";
 import {
@@ -22,6 +23,104 @@ import {
   validateBookRange,
   type CourtVisualStatus,
 } from "@/lib/pickleball";
+
+function TimeMenu({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { key: string; label: string }[];
+  disabled?: boolean;
+  onChange: (hm: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const selected = listRef.current.querySelector<HTMLElement>(
+      "[data-selected='true']"
+    );
+    if (!selected) return;
+    const list = listRef.current;
+    list.scrollTop =
+      selected.offsetTop - list.clientHeight / 2 + selected.clientHeight / 2;
+  }, [open, value]);
+
+  return (
+    <div ref={rootRef} className="relative block">
+      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-12 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-3 text-base font-bold text-[#0b1220] outline-none disabled:opacity-40"
+      >
+        <span>
+          {value
+            ? options.find((o) => o.key === value)?.label || value
+            : "--:-- --"}
+        </span>
+        <svg
+          viewBox="0 0 24 24"
+          aria-hidden
+          className="h-4 w-4 shrink-0 text-slate-500"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <circle cx="12" cy="12" r="8" />
+          <path d="M12 8v4l2.5 2" strokeLinecap="round" />
+        </svg>
+      </button>
+      {open ? (
+        <ul
+          ref={listRef}
+          className="absolute left-0 right-0 z-30 mt-1 max-h-36 overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white py-1 shadow-lg"
+        >
+          {options.map((o) => {
+            const selected = o.key === value;
+            return (
+              <li key={o.key}>
+                <button
+                  type="button"
+                  data-selected={selected ? "true" : undefined}
+                  onClick={() => {
+                    onChange(o.key);
+                    setOpen(false);
+                  }}
+                  className={`block w-full px-3 py-1.5 text-left text-sm ${
+                    selected
+                      ? "bg-lime-200 font-bold text-[#0b1220]"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 type Court = {
   id: string;
@@ -47,7 +146,6 @@ export default function PickleballBookPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
-  const [pointsBalance, setPointsBalance] = useState(0);
   const [successBooking, setSuccessBooking] = useState<{
     id: string;
     bookingCode: string;
@@ -122,10 +220,7 @@ export default function PickleballBookPage() {
         router.replace("/login");
         return;
       }
-      if (!cancelled) {
-        setPointsBalance(Number(data.customer?.pointsBalance) || 0);
-        setReady(true);
-      }
+      if (!cancelled) setReady(true);
     })();
     return () => {
       cancelled = true;
@@ -280,10 +375,7 @@ export default function PickleballBookPage() {
               ◯
             </Link>
           </div>
-          <p className="mt-4 text-center text-sm font-semibold text-lime-200/90">
-            {pointsBalance} điểm
-          </p>
-          <p className="mt-2 text-center text-xs font-bold uppercase tracking-[0.35em] text-lime-300/90">
+          <p className="mt-4 text-center text-xs font-bold uppercase tracking-[0.35em] text-lime-300/90">
             Courts
           </p>
           <h1 className="mt-2 text-center font-display text-4xl font-black tracking-wide">
@@ -355,105 +447,47 @@ export default function PickleballBookPage() {
             ) : (
               <>
                 <h2 className="text-lg font-bold">Chọn ngày đặt sân</h2>
-                <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                  {dates.map((d) => {
-                    const on = d.key === dateKey;
-                    return (
-                      <button
-                        key={d.key}
-                        type="button"
-                        onClick={() => setDateKey(d.key)}
-                        className={`flex h-16 w-14 shrink-0 flex-col items-center justify-center rounded-full text-sm font-bold ${
-                          on
-                            ? "bg-lime-300 text-[#0b1220]"
-                            : "bg-white text-[#64748b] shadow-sm"
-                        }`}
-                      >
-                        <span className="text-lg leading-none">{d.dayNum}</span>
-                        <span className="mt-1 text-[10px] uppercase tracking-wide">
-                          {d.weekday}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <DateChipRow
+                  dates={dates}
+                  value={dateKey}
+                  onChange={setDateKey}
+                  activeClassName="bg-lime-300 text-[#0b1220]"
+                />
 
                 <h2 className="mt-6 text-lg font-bold">Chọn khung giờ</h2>
                 <p className="mt-1 text-xs text-slate-500">
                   Tự chọn giờ (bước {PICKLEBALL_TIME_STEP_MIN} phút) — ví dụ
-                  06:45 → 07:25. Mở cửa{" "}
+                  06:15 → 07:30. Mở cửa{" "}
                   {minutesToHm(PICKLEBALL_OPEN_MIN)}–
                   {minutesToHm(PICKLEBALL_CLOSE_MIN)}, tối thiểu{" "}
                   {PICKLEBALL_MIN_DURATION_MIN} phút.
                 </p>
 
                 <div className="mt-3 grid grid-cols-2 gap-3">
-                  <label className="block">
-                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Từ giờ
-                    </span>
-                    <input
-                      type="time"
-                      step={PICKLEBALL_TIME_STEP_MIN * 60}
-                      min={minutesToHm(PICKLEBALL_OPEN_MIN)}
-                      max={minutesToHm(
-                        PICKLEBALL_CLOSE_MIN - PICKLEBALL_MIN_DURATION_MIN
-                      )}
-                      value={fromHm}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setFromHm(next);
-                        const nextMin = hmToMinutes(next);
-                        const toMin = hmToMinutes(toHm);
-                        if (
-                          nextMin != null &&
-                          toMin != null &&
-                          toMin < nextMin + PICKLEBALL_MIN_DURATION_MIN
-                        ) {
-                          setToHm("");
-                        }
-                      }}
-                      list="pickleball-from-times"
-                      className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-base font-bold text-[#0b1220] outline-none"
-                    />
-                    <datalist id="pickleball-from-times">
-                      {fromOptions.map((o) => (
-                        <option key={o.key} value={o.key} />
-                      ))}
-                    </datalist>
-                  </label>
-                  <label className="block">
-                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Đến giờ
-                    </span>
-                    <input
-                      type="time"
-                      step={PICKLEBALL_TIME_STEP_MIN * 60}
-                      min={
-                        fromMin != null
-                          ? minutesToHm(
-                              Math.min(
-                                PICKLEBALL_CLOSE_MIN,
-                                fromMin + PICKLEBALL_MIN_DURATION_MIN
-                              )
-                            )
-                          : minutesToHm(
-                              PICKLEBALL_OPEN_MIN + PICKLEBALL_MIN_DURATION_MIN
-                            )
+                  <TimeMenu
+                    label="Từ giờ"
+                    value={fromHm}
+                    options={fromOptions}
+                    onChange={(next) => {
+                      setFromHm(next);
+                      const nextMin = hmToMinutes(next);
+                      const toMin = hmToMinutes(toHm);
+                      if (
+                        nextMin != null &&
+                        toMin != null &&
+                        toMin < nextMin + PICKLEBALL_MIN_DURATION_MIN
+                      ) {
+                        setToHm("");
                       }
-                      max={minutesToHm(PICKLEBALL_CLOSE_MIN)}
-                      value={toHm}
-                      disabled={!fromHm}
-                      onChange={(e) => setToHm(e.target.value)}
-                      list="pickleball-to-times"
-                      className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-base font-bold text-[#0b1220] outline-none disabled:opacity-40"
-                    />
-                    <datalist id="pickleball-to-times">
-                      {toOptions.map((o) => (
-                        <option key={o.key} value={o.key} />
-                      ))}
-                    </datalist>
-                  </label>
+                    }}
+                  />
+                  <TimeMenu
+                    label="Đến giờ"
+                    value={toHm}
+                    options={toOptions}
+                    disabled={!fromHm}
+                    onChange={setToHm}
+                  />
                 </div>
 
                 {validated && !validated.ok ? (

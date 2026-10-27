@@ -46,7 +46,7 @@ import {
 const META: Record<string, { title: string; body: string; accent: string }> = {
   OLYMPIC_POOL: {
     title: "Hồ Olympic",
-    body: "Vé lẻ · Gói tháng (+ voucher HHG, −10% nếu đăng ký cùng ngày với đơn bơi) · Phụ kiện (từ 02 món −10%). Tích điểm: 10K trước giảm = 1 điểm.",
+    body: "Vé lẻ · Gói tháng (+ voucher HHG, −10% nếu đăng ký cùng ngày với đơn bơi) · Phụ kiện (từ 02 món −10%). Tích điểm: 10K sau giảm = 1 điểm.",
     accent: "#1e3a8a",
   },
   GYM: {
@@ -580,6 +580,13 @@ export default function ServiceInfoPage({
         lines.push(
           `Voucher ${line.offer.title} −${new Intl.NumberFormat("vi-VN").format(line.discountVnd)}đ`
         );
+      } else if (
+        line.offer.minBillVnd &&
+        afterAccessoryVnd < line.offer.minBillVnd
+      ) {
+        lines.push(
+          `Voucher ${line.offer.title} cần hoá đơn từ ${new Intl.NumberFormat("vi-VN").format(line.offer.minBillVnd)}đ`
+        );
       } else if (line.offer.discountType === "perk") {
         lines.push(`Voucher ${line.offer.title}`);
       }
@@ -603,6 +610,7 @@ export default function ServiceInfoPage({
     totalVnd,
     subtotalVnd,
     priced.lines,
+    afterAccessoryVnd,
     accessoryAutoDiscount,
     membershipAutoDiscount,
     redeemTier,
@@ -712,7 +720,14 @@ export default function ServiceInfoPage({
           zoneCode: code,
           zoneName: meta.title,
           items,
-          offerIds: appliedOffers.map((o) => o.id),
+          offerIds: appliedOffers
+            .filter((o) => {
+              const line = priced.lines.find((l) => l.offer.id === o.id);
+              if (!line) return true;
+              if (o.discountType === "perk") return true;
+              return line.discountVnd > 0;
+            })
+            .map((o) => o.id),
           discountVnd: accessoryAutoDiscount + priced.discountVnd,
           pointsRedeemTier: swimRedeemUnits > 0 ? 100 : redeemTier,
           ...(swimRedeemUnits > 0 ? { pointsRedeemUnits: swimRedeemUnits } : {}),

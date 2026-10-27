@@ -4,6 +4,7 @@ import { requireDeskZone } from "@/lib/auth";
 import { deskZoneAliases } from "@/lib/desk-zones";
 import { isOpenEmptyDeskShell } from "@/lib/desk-walkin-shell";
 import { confirmOlympicPoolScan } from "@/lib/olympic-confirm-scan";
+import { refundSwimBonus } from "@/lib/swim-goi-bonus";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -118,7 +119,11 @@ export async function POST(req: NextRequest) {
     const customerId = String(body.customerId || "").trim();
     const scanEventId = String(body.scanEventId || "").trim();
     const lines = Array.isArray(body.items) ? (body.items as CartLine[]) : [];
-    const note = String(body.note || "").trim().slice(0, 300);
+    const note = String(body.note || "").trim().slice(0, 200);
+    const manualDiscountVnd = Math.max(
+      0,
+      Math.round(Number(body.manualDiscountVnd) || 0)
+    );
     const redeemUnits = Math.max(
       0,
       Math.round(Number(body.pointsRedeemUnits) || 0)
@@ -150,6 +155,7 @@ export async function POST(req: NextRequest) {
       items: lines,
       staffUserId: gate.user.id,
       note,
+      manualDiscountVnd,
       redeemUnits,
       voucherOfferId,
       staffName: gate.user.displayName || gate.user.username,
@@ -248,6 +254,7 @@ export async function DELETE(req: NextRequest) {
       }
 
       if (orderId) {
+        await refundSwimBonus(tx, { refId: orderId });
         await tx.appOrderItem.deleteMany({ where: { orderId } });
         await tx.appOrder.deleteMany({
           where: { id: orderId, customerId },
@@ -264,6 +271,7 @@ export async function DELETE(req: NextRequest) {
         "accessoryDiscountVnd",
         "membershipDiscountVnd",
         "manualDiscountVnd",
+        "manualDiscountNote",
         "placedBy",
         "verifiedByUserId",
         "deskBundleId",

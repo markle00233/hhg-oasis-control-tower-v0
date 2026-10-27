@@ -192,6 +192,28 @@ export default function AccountPage() {
     };
   }, [router]);
 
+  const signedIn = !!customer;
+  const vipOn = !!customer?.vip;
+  useEffect(() => {
+    if (!signedIn || vipOn) return;
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      try {
+        const me = await fetch("/api/auth/me", { cache: "no-store" });
+        const data = await me.json();
+        if (cancelled || !data?.customer?.vip) return;
+        setCustomer(data.customer);
+      } catch {
+        /* try again on the next tick */
+      }
+    }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [signedIn, vipOn]);
+
   const hasPending = carts.some((c) => c.status === "PENDING_APPROVAL");
   useEffect(() => {
     if (!hasPending) return;
@@ -378,7 +400,7 @@ export default function AccountPage() {
             {customer?.pointsBalance ?? 0} điểm
           </p>
           <p className="mt-1 text-xs text-oasis-mute">
-            Cộng điểm chỉ từ Mía Ơi & Hồ Olympic (10.000đ trước giảm = 1
+            Cộng điểm chỉ từ Mía Ơi & Hồ Olympic (10.000đ sau giảm = 1
             điểm). Đổi: 50đ đồ uống / 100đ vé bơi.
           </p>
         </div>
@@ -703,8 +725,8 @@ function CartTicketCard({
   const body = (
     <>
       {pending ? (
-        <div className="grid h-[88px] w-[88px] shrink-0 place-items-center rounded-2xl bg-amber-50 ring-1 ring-amber-200">
-          <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-amber-200 border-t-amber-600" />
+        <div className="grid h-[88px] w-[88px] shrink-0 place-items-center rounded-2xl bg-amber-50 px-2 text-center text-xs font-bold text-amber-800 ring-1 ring-amber-200">
+          Chờ duyệt
         </div>
       ) : rejected ? (
         <div className="grid h-[88px] w-[88px] shrink-0 place-items-center rounded-2xl bg-red-50 text-xs font-bold text-red-700 ring-1 ring-red-200">

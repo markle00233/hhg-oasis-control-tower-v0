@@ -61,13 +61,55 @@ export async function POST(req: NextRequest) {
       )
     );
     let discountVnd = Math.max(0, Math.round(Number(body.discountVnd) || 0));
+    if (offerIds.includes("hhg-oly-ln-100k")) {
+      const bill = items.reduce((sum, item) => {
+        const id = String(item.id || "");
+        if (
+          id.startsWith("voucher-") ||
+          id.startsWith("disc-") ||
+          id.startsWith("points-redeem-")
+        ) {
+          return sum;
+        }
+        return (
+          sum +
+          Math.max(0, Math.round(Number(item.priceVnd) || 0)) *
+            Math.max(0, Math.round(Number(item.qty) || 0))
+        );
+      }, 0);
+      if (bill < 500_000) {
+        return NextResponse.json(
+          {
+            error:
+              "Voucher Lòng Nướng 100K chỉ áp khi hoá đơn từ 500.000đ.",
+          },
+          { status: 400 }
+        );
+      }
+    }
     const pointsRedeemTierRaw = Math.round(
       Number(body.pointsRedeemTier) || 0
     );
+    const pointsZone =
+      zoneCode === "MIA_OI" ||
+      zoneCode === "MIA_OLYMPIC" ||
+      zoneCode === "OLYMPIC_POOL" ||
+      zoneCode === "OLYMPIC";
     const pointsRedeemTier =
-      pointsRedeemTierRaw === 50 || pointsRedeemTierRaw === 100
+      pointsZone &&
+      (pointsRedeemTierRaw === 50 || pointsRedeemTierRaw === 100)
         ? pointsRedeemTierRaw
         : null;
+    if (!pointsZone) {
+      items = items
+        .filter((item) => !String(item.id || "").startsWith("points-redeem-"))
+        .map((item) => {
+          if (!item.pointsRedeemQty) return item;
+          const rest = { ...item };
+          delete rest.pointsRedeemQty;
+          return rest;
+        });
+    }
 
     if (!zoneCode) {
       return NextResponse.json({ error: "Thiếu khu vực." }, { status: 400 });

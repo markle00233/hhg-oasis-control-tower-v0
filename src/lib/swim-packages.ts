@@ -18,7 +18,9 @@ export type SwimPackage = {
 /** Lượt tự chọn được dùng cho một trong hai việc này. */
 export const SWIM_BONUS_PURPOSES = ["Bơi tự do", "Gội 30'"] as const;
 
-export function isSwimBonusPurpose(value: string): value is (typeof SWIM_BONUS_PURPOSES)[number] {
+export type SwimBonusPurpose = (typeof SWIM_BONUS_PURPOSES)[number];
+
+export function isSwimBonusPurpose(value: string): value is SwimBonusPurpose {
   return (SWIM_BONUS_PURPOSES as readonly string[]).includes(value);
 }
 
@@ -113,6 +115,57 @@ export const SWIM_PACKAGES: SwimPackage[] = [
     detail: "Đã biết 2 kiểu bơi · 5 buổi/tuần · Thứ 2–6",
   },
 ];
+
+/** Lượt tự chọn trên gói cam kết có hạn 30 ngày kể từ ngày đăng ký. */
+export const SWIM_BONUS_WINDOW_DAYS = 30;
+
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** Add calendar months on the Vietnam wall clock. Day 31 clamps to the last day. */
+function addMonthsVn(date: Date, months: number): Date {
+  const vn = new Date(date.getTime() + VN_OFFSET_MS);
+  const day = vn.getUTCDate();
+  const shifted = new Date(
+    Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth() + months, 1)
+  );
+  const dim = new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  shifted.setUTCDate(Math.min(day, dim));
+  shifted.setUTCHours(
+    vn.getUTCHours(),
+    vn.getUTCMinutes(),
+    vn.getUTCSeconds(),
+    vn.getUTCMilliseconds()
+  );
+  return new Date(shifted.getTime() - VN_OFFSET_MS);
+}
+
+/** Self-choice visits end 30 days after signup. The lesson package itself does not. */
+export function swimBonusExpiresAt(startedAt: Date): Date {
+  return new Date(
+    startedAt.getTime() + SWIM_BONUS_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+}
+
+export function isSwimBonusOpen(startedAt: Date, now = new Date()): boolean {
+  return swimBonusExpiresAt(startedAt).getTime() > now.getTime();
+}
+
+/** Students registered after this instant still have lượt tự chọn. */
+export function swimBonusStartedAfter(now = new Date()): Date {
+  return new Date(now.getTime() - SWIM_BONUS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * Package end shown on the swim list.
+ * Session courses stay open until the lessons are used.
+ * Bé / nâng cao last one calendar month.
+ */
+export function swimPackageExpiresAt(pkg: SwimPackage, startedAt: Date): Date | null {
+  if (pkg.sessions == null) return addMonthsVn(startedAt, 1);
+  return null;
+}
 
 export function getSwimPackage(id: string) {
   return SWIM_PACKAGES.find((p) => p.id === id) || null;

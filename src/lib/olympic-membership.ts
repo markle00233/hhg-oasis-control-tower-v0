@@ -1,7 +1,13 @@
 import type { PrismaClient } from "@prisma/client";
-import { packageIdFromVipPlanLabel } from "@/lib/hhg-vouchers";
+import {
+  packageIdFromVipPlanLabel,
+  qtyForOlympicVoucher,
+} from "@/lib/hhg-vouchers";
 
-/** Số tháng cộng vào hạn gói (gồm tháng tặng theo menu). */
+/**
+ * Hạn gói trên lịch VN.
+ * 6 tháng được cộng thêm 1 tháng bơi (7). 12 tháng được cộng thêm 2 tháng (14).
+ */
 export function monthsForOlympicPackage(packageId: string): number {
   switch (packageId) {
     case "oly-1m":
@@ -9,12 +15,56 @@ export function monthsForOlympicPackage(packageId: string): number {
     case "oly-3m":
       return 3;
     case "oly-6m":
-      return 7; // 6 + 1 tặng
+      return 6 + 1;
     case "oly-12m":
-      return 14; // 12 + 2 tặng
+      return 12 + 2;
     default:
       return 0;
   }
+}
+
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** Add calendar months on the Vietnam wall clock. Same result on UTC hosts and local. */
+function addMonthsVn(date: Date, months: number): Date {
+  const vn = new Date(date.getTime() + VN_OFFSET_MS);
+  const day = vn.getUTCDate();
+  const hours = vn.getUTCHours();
+  const minutes = vn.getUTCMinutes();
+  const seconds = vn.getUTCSeconds();
+  const ms = vn.getUTCMilliseconds();
+  const shifted = new Date(Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth() + months, 1));
+  const dim = new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  shifted.setUTCDate(Math.min(day, dim));
+  shifted.setUTCHours(hours, minutes, seconds, ms);
+  return new Date(shifted.getTime() - VN_OFFSET_MS);
+}
+
+function bonusMonthsForPackage(packageId: string) {
+  if (packageId === "oly-6m") return 1;
+  if (packageId === "oly-12m") return 2;
+  return 0;
+}
+
+/**
+ * Membership start implied by an expiry saved before vipStartedAt existed.
+ * A label without "tặng" is the paid term only, so the gift month is not
+ * subtracted away before it can be added back.
+ */
+export function vipStartedAtFromExpiry(
+  expiresAt: Date,
+  planLabel: string | null | undefined
+): Date | null {
+  const packageId = packageIdFromVipPlanLabel(planLabel) || "";
+  const full = monthsForOlympicPackage(packageId);
+  if (full <= 0) return null;
+  const bonus = bonusMonthsForPackage(packageId);
+  const includesGift = bonus > 0 && /tặng/i.test(String(planLabel || ""));
+  const span = includesGift ? full : full - bonus;
+  if (span <= 0) return null;
+  return addMonthsVn(expiresAt, -span);
 }
 
 export function labelForOlympicPackage(packageId: string): string {
@@ -24,9 +74,9 @@ export function labelForOlympicPackage(packageId: string): string {
     case "oly-3m":
       return "Gói Olympic 3 tháng";
     case "oly-6m":
-      return "Gói Olympic 6 tháng";
+      return "Gói Olympic 6 tháng (tặng 1 tháng)";
     case "oly-12m":
-      return "Gói Olympic 12 tháng";
+      return "Gói Olympic 12 tháng (tặng 2 tháng)";
     default:
       return "Gói Olympic";
   }
@@ -235,8 +285,7 @@ export async function applyOlympicMembership(
     };
   }
 
-  const vipExpiresAt = new Date(from);
-  vipExpiresAt.setMonth(vipExpiresAt.getMonth() + months);
+  const vipExpiresAt = addMonthsVn(from, months);
 
   await prisma.appCustomer.update({
     where: { id: opts.customerId },
@@ -292,5 +341,107 @@ export async function applyOlympicMembership(
     vipPlanLabel,
     vipExpiresAt,
     offerIds,
+  };
+}
+
+function sameInstant(a: Date, b: Date) {
+  return Math.abs(a.getTime() - b.getTime()) < 36 * 60 * 60 * 1000;
+}
+
+/**
+ * Existing 6- and 12-month VIP rows keep the name and term from the day they
+ * were sold. Rewrite the label, add the gift months when the saved end date
+ * is only the paid term, and raise voucher counts without wiping uses.
+ */
+export async function reconcileOlympicMembership(
+  prisma: PrismaClient,
+  customer: {
+    id: string;
+    vipPlanLabel: string | null;
+    vipStartedAt: Date | null;
+    vipExpiresAt: Date | null;
+  }
+): Promise<{
+  vipPlanLabel: string | null;
+  vipStartedAt: Date | null;
+  vipExpiresAt: Date | null;
+}> {
+  const packageId = packageIdFromVipPlanLabel(customer.vipPlanLabel);
+  if (packageId !== "oly-6m" && packageId !== "oly-12m") return customer;
+
+  const months = monthsForOlympicPackage(packageId);
+  const bonus = bonusMonthsForPackage(packageId);
+  const label = labelForOlympicPackage(packageId);
+  let expiresAt = customer.vipExpiresAt;
+
+  if (customer.vipStartedAt && expiresAt) {
+    const paidEnd = addMonthsVn(customer.vipStartedAt, months - bonus);
+    const fullEnd = addMonthsVn(customer.vipStartedAt, months);
+    if (sameInstant(expiresAt, paidEnd) && !sameInstant(expiresAt, fullEnd)) {
+      expiresAt = fullEnd;
+    }
+  }
+
+  if (label !== customer.vipPlanLabel || expiresAt !== customer.vipExpiresAt) {
+    await prisma.appCustomer.update({
+      where: { id: customer.id },
+      data: {
+        vipPlanLabel: label,
+        ...(expiresAt && expiresAt !== customer.vipExpiresAt
+          ? { vipExpiresAt: expiresAt }
+          : {}),
+      },
+    });
+  }
+
+  const offerIds = vouchersForOlympicPackage(packageId);
+  const existingOffers = offerIds.length
+    ? await prisma.appCollectedOffer.findMany({
+        where: { customerId: customer.id, offerId: { in: offerIds } },
+      })
+    : [];
+  const offerById = new Map(existingOffers.map((row) => [row.offerId, row]));
+
+  for (const offerId of offerIds) {
+    const granted = qtyForOlympicVoucher(packageId, offerId);
+    if (granted == null) continue;
+    const row = offerById.get(offerId);
+    if (!row) {
+      await prisma.appCollectedOffer.create({
+        data: {
+          customerId: customer.id,
+          offerId,
+          status: "COLLECTED",
+          qtyTotal: granted,
+          qtyRemaining: granted,
+        },
+      });
+      continue;
+    }
+    const used =
+      row.qtyTotal == null
+        ? row.status === "USED"
+          ? 1
+          : 0
+        : Math.max(0, row.qtyTotal - (row.qtyRemaining ?? 0));
+    if (row.qtyTotal != null && row.qtyTotal >= granted && row.qtyRemaining != null) {
+      continue;
+    }
+    const qtyRemaining = Math.max(0, granted - used);
+    await prisma.appCollectedOffer.update({
+      where: { id: row.id },
+      data: {
+        status: "COLLECTED",
+        qtyTotal: granted,
+        qtyRemaining,
+        usedAt: qtyRemaining > 0 ? null : row.usedAt,
+      },
+    });
+  }
+
+  return {
+    vipPlanLabel: label,
+    vipStartedAt: customer.vipStartedAt,
+    vipExpiresAt: expiresAt,
   };
 }

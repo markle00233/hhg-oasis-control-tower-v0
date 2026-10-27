@@ -6,7 +6,7 @@ export const POINTS_ENABLED = true;
 /** Legacy flat check-in award (kept off — dùng điểm theo doanh thu). */
 export const CHECKIN_POINTS = 5;
 
-/** 10.000đ (trước giảm giá) = 1 điểm. */
+/** 10.000đ sau giảm giá (số tiền phải trả) = 1 điểm. */
 export const POINTS_PER_10K = 1;
 
 export type PointRefType = "SERVICE_EVENT" | "SERVICE_CART" | "APP_ORDER";
@@ -42,7 +42,7 @@ export async function awardPurchasePoints(opts: {
   customerId: string;
   refType: PointRefType;
   refId: string;
-  /** Tiền còn lại sau đổi điểm (phần đổi điểm không cộng điểm). */
+  /** Tiền phải trả sau giảm giá và sau đổi điểm. */
   subtotalVnd: number;
   note?: string;
 }) {
@@ -102,7 +102,7 @@ export async function awardPurchasePoints(opts: {
           refId,
           note:
             opts.note ||
-            `+${delta}đ điểm · ${Math.round(opts.subtotalVnd)}đ trước giảm`,
+            `+${delta} điểm · ${Math.round(opts.subtotalVnd)}đ sau giảm`,
         },
       });
       return customer.pointsBalance;

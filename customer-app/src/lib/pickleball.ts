@@ -69,8 +69,8 @@ export function buildTimeSlots(dayKey: string, opts?: { includePast?: boolean })
 /** Open 06:00 · close 21:30 (local minutes from midnight). */
 export const PICKLEBALL_OPEN_MIN = 6 * 60;
 export const PICKLEBALL_CLOSE_MIN = 21 * 60 + 30;
-/** Fine-grained picker step (supports 06:45 → 07:25). */
-export const PICKLEBALL_TIME_STEP_MIN = 5;
+/** Picker step: 06:00, 06:15, 06:30, 06:45, … */
+export const PICKLEBALL_TIME_STEP_MIN = 15;
 /** Minimum bookable duration */
 export const PICKLEBALL_MIN_DURATION_MIN = 30;
 
@@ -82,6 +82,16 @@ export function minutesToHm(minutes: number) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return `${pad(h)}:${pad(m)}`;
+}
+
+/** 6:00 AM, 6:15 AM, … from minutes after midnight. */
+export function formatAmpmMinutes(total: number) {
+  const h24 = Math.floor(total / 60);
+  const m = total % 60;
+  const suffix = h24 >= 12 ? "PM" : "AM";
+  let h = h24 % 12;
+  if (h === 0) h = 12;
+  return `${h}:${pad(m)} ${suffix}`;
 }
 
 export function hmToMinutes(hm: string): number | null {
@@ -105,7 +115,7 @@ export function formatTimeLabel(iso: string) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** HH:mm options every 5 min within open hours. */
+/** 15-minute options within open hours. Labels are built once. */
 export function buildTimeOptions(
   opts?: { forEnd?: boolean; afterMin?: number }
 ) {
@@ -119,7 +129,7 @@ export function buildTimeOptions(
   const out: { key: string; label: string; minutes: number }[] = [];
   for (let m = start; m <= end; m += PICKLEBALL_TIME_STEP_MIN) {
     if (m <= after) continue;
-    out.push({ key: minutesToHm(m), label: minutesToHm(m), minutes: m });
+    out.push({ key: minutesToHm(m), label: formatAmpmMinutes(m), minutes: m });
   }
   return out;
 }
