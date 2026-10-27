@@ -57,14 +57,57 @@ function vnClock(d: Date) {
   };
 }
 
+const VN_PARTS = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function vnParts(d: Date) {
+  const parts = VN_PARTS.formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value || "";
+  let hour = get("hour");
+  if (hour === "24") hour = "00";
+  return {
+    hour,
+    minute: get("minute"),
+    day: get("day"),
+    month: get("month"),
+    year: get("year"),
+  };
+}
+
+/** Clock label that stays on Vietnam time even when the server is UTC. */
+export function formatVnDateTime(d: Date) {
+  const p = vnParts(d);
+  return `${p.hour}:${p.minute} ${p.day}/${p.month}/${p.year}`;
+}
+
+export function formatVnTime(d: Date) {
+  const p = vnParts(d);
+  return `${p.hour}:${p.minute}`;
+}
+
+const BAKED_CLOCK = /\d{1,2}:\d{2}[,\s]+\d{1,2}\/\d{1,2}\/\d{4}/;
+const BAKED_END = /(–|-)\s*\d{1,2}:\d{2}/;
+
+/** Replace a clock baked in UTC (e.g. "10:00 27/10/2026") with Vietnam time. */
+export function withVnBookingClock(nameVi: string, startAt: Date, endAt: Date) {
+  if (!BAKED_CLOCK.test(nameVi)) return nameVi;
+  let next = nameVi.replace(BAKED_CLOCK, formatVnDateTime(startAt));
+  if (BAKED_END.test(next)) {
+    next = next.replace(BAKED_END, `–${formatVnTime(endAt)}`);
+  }
+  return next;
+}
+
 function viLabel(d: Date, withDate: boolean) {
-  return d.toLocaleString("vi-VN", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    ...(withDate ? { day: "2-digit", month: "2-digit", year: "numeric" } : {}),
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return withDate ? formatVnDateTime(d) : formatVnTime(d);
 }
 
 export function bookingIdFromCartItems(items: unknown): string | null {

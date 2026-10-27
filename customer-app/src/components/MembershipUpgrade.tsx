@@ -165,7 +165,7 @@ export function MembershipUpgrade({
             : `Thanh toán 1 lần: ${copy.payOnce}`,
           ...copy.perks.map((p) => `· ${p}`),
           "Voucher kèm gói dùng trong hạn hội viên (không hết theo lượt)",
-          "Chờ quầy duyệt → nhận QR → mang quầy quét",
+          "Chờ quầy duyệt thành công",
         ],
       });
     } catch (e) {

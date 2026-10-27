@@ -113,25 +113,6 @@ export function ServiceCard({
           </button>
         </div>
       ) : null}
-      {card.showQrHint ? (
-        <Link
-          href={
-            card.type === "TICKET" && card.referenceId
-              ? `/q/${encodeURIComponent(card.referenceId)}`
-              : card.qrToken
-                ? `/q/${encodeURIComponent(card.qrToken)}`
-                : "/qr"
-          }
-          className="flex items-center justify-between border-t border-oasis-line/60 px-4 py-3 text-xs font-semibold text-oasis-mute"
-        >
-          <span>
-            {card.status === "PENDING_APPROVAL"
-              ? "Chờ quầy duyệt — mở mã yêu cầu"
-              : "Đưa QR cho nhân viên xác nhận"}
-          </span>
-          <span className="text-oasis-moss">Hiện QR →</span>
-        </Link>
-      ) : null}
     </article>
   );
 }

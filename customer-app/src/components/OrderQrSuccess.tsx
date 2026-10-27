@@ -4,21 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 /**
- * After Tạo QR: chờ nhân viên duyệt → rồi hiện QR.
- * Poll nhẹ (~1.2s) đến khi status OPEN.
+ * After the customer sends an order: no confirmation QR.
+ * Staff duyệt thành công → customer sees payment done.
+ * The bill photo is a later staff proof, not shown here.
  */
 export function OrderQrSuccess({
   title,
-  subtitle,
   detailLines,
-  /** Cart token from /api/me/cart POST */
   cartToken,
-  /** Initial status (PENDING_APPROVAL | OPEN) */
   initialStatus,
-  /** Prefer cart QR payload when already OPEN */
-  payload: initialPayload,
   customerName,
-  customerCode,
   onDone,
 }: {
   title: string;
@@ -31,21 +26,14 @@ export function OrderQrSuccess({
   customerCode?: string;
   onDone?: () => void;
 }) {
-  const [status, setStatus] = useState(
-    initialStatus || (initialPayload ? "OPEN" : "PENDING_APPROVAL")
-  );
-  const [payload, setPayload] = useState(initialPayload || "");
-  const [dataUrl, setDataUrl] = useState("");
-  const [name, setName] = useState(customerName || "");
-  const [code, setCode] = useState(customerCode || "");
+  const [status, setStatus] = useState(initialStatus || "PENDING_APPROVAL");
   const [error, setError] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const polling = useRef(true);
 
   const pending = status === "PENDING_APPROVAL";
-  const ready = status === "OPEN" && !!payload;
+  const accepted = status === "OPEN" || status === "USED";
 
-  // Light status poll while pending
   useEffect(() => {
     if (!cartToken || !pending) return;
     polling.current = true;
@@ -61,14 +49,12 @@ export function OrderQrSuccess({
         if (res.ok) {
           const data = await res.json();
           if (cancelled) return;
-          if (data.status === "OPEN" && data.payload) {
-            setStatus("OPEN");
-            setPayload(data.payload);
-            return;
-          }
           if (data.status && data.status !== "PENDING_APPROVAL") {
             setStatus(data.status);
-            if (data.status !== "OPEN") {
+            if (
+              data.status !== "OPEN" &&
+              data.status !== "USED"
+            ) {
               setError(
                 data.status === "REJECTED"
                   ? `Từ chối: ${data.adminNote || "Quầy không duyệt."}`
@@ -96,38 +82,6 @@ export function OrderQrSuccess({
     };
   }, [cartToken, pending]);
 
-  // Render QR when payload ready
-  useEffect(() => {
-    if (!payload) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        if (!name && !code) {
-          const res = await fetch("/api/me/qr", { cache: "no-store" });
-          if (res.ok) {
-            const data = await res.json();
-            if (!cancelled) {
-              setName(data.customer?.fullName || "");
-              setCode(data.customer?.customerCode || "");
-            }
-          }
-        }
-        const QRCode = (await import("qrcode")).default;
-        const url = await QRCode.toDataURL(payload, {
-          width: 280,
-          margin: 2,
-          color: { dark: "#0b1220", light: "#ffffff" },
-        });
-        if (!cancelled) setDataUrl(url);
-      } catch {
-        if (!cancelled) setError("Không tạo được QR");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [payload, name, code]);
-
   if (dismissed && pending) {
     return (
       <div className="animate-rise flex min-h-[50dvh] flex-col items-center justify-center px-4 text-center">
@@ -135,7 +89,7 @@ export function OrderQrSuccess({
           Đã ẩn hộp chờ
         </p>
         <p className="mt-2 max-w-sm text-sm text-oasis-mute">
-          Vé vẫn đang chờ duyệt — xem trạng thái tại trang cá nhân.
+          Đơn vẫn đang chờ quầy — xem trạng thái tại trang cá nhân.
         </p>
         <Link
           href="/account"
@@ -156,29 +110,31 @@ export function OrderQrSuccess({
     );
   }
 
+  const headline = pending ? "Đã gửi đơn" : accepted ? "Thanh toán thành công" : title;
+  const lead = pending
+    ? "Chờ quầy duyệt. Khi quầy bấm duyệt thành công, thanh toán của bạn xong."
+    : error
+      ? error
+      : "Thanh toán xong.";
+
   return (
     <div className="animate-rise flex min-h-[70dvh] flex-col items-center px-1 py-4 text-center">
       <p className="text-xs font-bold uppercase tracking-[0.28em] text-oasis-mute">
         HHG Oasis
       </p>
       <h1 className="mt-2 font-display text-3xl font-semibold text-oasis-ink">
-        {pending ? "Chờ nhân viên duyệt" : title}
+        {headline}
       </h1>
-      <p className="mt-2 max-w-sm text-sm text-oasis-mute">
-        {pending
-          ? "Đã gửi yêu cầu tới quầy. Khi nhân viên xác nhận, mã QR sẽ hiện tại đây."
-          : subtitle || "Đưa QR cho nhân viên khu vực."}
-      </p>
+      <p className="mt-2 max-w-sm text-sm text-oasis-mute">{lead}</p>
 
       {pending ? (
-        <div className="mt-6 w-full max-w-sm rounded-[28px] bg-amber-50 p-5 shadow-soft ring-1 ring-amber-200/80">
+        <div className="mt-6 w-full max-w-sm rounded-[28px] bg-amber-50 p-5 shadow-soft">
           <p className="font-display text-xl font-semibold text-oasis-ink">
-            Đang chờ duyệt…
+            Đang chờ quầy xác nhận
           </p>
-          <p className="mt-2 text-sm text-oasis-mute">
-            Quầy đã nhận yêu cầu. Giữ màn hình hoặc tắt hộp này — vé vẫn hiện
-            ở trang cá nhân.
-          </p>
+          {customerName ? (
+            <p className="mt-3 font-semibold text-oasis-ink">{customerName}</p>
+          ) : null}
           <button
             type="button"
             onClick={() => setDismissed(true)}
@@ -187,36 +143,21 @@ export function OrderQrSuccess({
             Tắt hộp chờ
           </button>
         </div>
-      ) : (
-        <div className="mt-6 rounded-[28px] bg-white p-4 shadow-soft">
-          {dataUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={dataUrl}
-              alt="Service cart QR"
-              className="h-[240px] w-[240px]"
-            />
-          ) : (
-            <div className="grid h-[240px] w-[240px] place-items-center text-sm text-oasis-mute">
-              {error || "Đang tạo QR…"}
-            </div>
-          )}
-        </div>
-      )}
-
-      {ready ? (
-        <>
-          <p className="mt-4 font-display text-xl font-semibold text-oasis-ink">
-            {name || "Khách Oasis"}
+      ) : accepted ? (
+        <div className="mt-6 w-full max-w-sm rounded-[28px] bg-emerald-50 p-5 shadow-soft">
+          <p className="font-display text-xl font-semibold text-emerald-900">
+            Giao dịch đã hoàn thành
           </p>
-          <p className="font-mono text-sm font-bold text-oasis-moss">{code}</p>
-        </>
+          {customerName ? (
+            <p className="mt-2 font-semibold text-oasis-ink">{customerName}</p>
+          ) : null}
+        </div>
       ) : null}
 
       {detailLines?.length ? (
         <ul className="mt-4 w-full max-w-sm space-y-1 rounded-[22px] bg-white/80 p-4 text-left text-sm shadow-soft">
           <li className="text-[11px] font-bold uppercase tracking-wide text-oasis-mute">
-            {pending ? "Yêu cầu" : "Trong QR này"}
+            Đơn của bạn
           </li>
           {detailLines.map((line, i) => (
             <li key={i} className="text-oasis-ink">
@@ -224,10 +165,6 @@ export function OrderQrSuccess({
             </li>
           ))}
         </ul>
-      ) : null}
-
-      {error && !pending ? (
-        <p className="mt-3 text-sm text-oasis-coral">{error}</p>
       ) : null}
 
       <div className="mt-6 grid w-full max-w-sm gap-3">

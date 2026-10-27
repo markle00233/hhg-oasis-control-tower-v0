@@ -21,6 +21,11 @@ import {
 import { phoneKeys } from "@/lib/swim-goi-bonus";
 import { swimBonusStartedAfter } from "@/lib/swim-packages";
 import { prisma } from "@/lib/prisma";
+import {
+  bookingIdFromCartItems,
+  formatVnDateTime,
+  withVnBookingClock,
+} from "@/lib/revise-booking";
 
 /** Quầy — mỗi yêu cầu QR = 1 dòng (không ghi đè cùng khách). */
 function vnDayBounds(ymd: string) {
@@ -171,13 +176,7 @@ export async function GET(req: NextRequest) {
             );
           });
           if (hasCart) continue;
-          const arriveLabel = b.startAt.toLocaleString("vi-VN", {
-            day: "2-digit",
-            month: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          });
+          const arriveLabel = formatVnDateTime(b.startAt);
           await createServiceCart({
             customerId: b.customerId,
             zoneCode: "LONG_NUONG",
@@ -536,6 +535,29 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const bookingIds = new Set<string>();
+      for (const c of rows) {
+        for (const cart of c.serviceCarts) {
+          const id = bookingIdFromCartItems(cart.items);
+          if (id) bookingIds.add(id);
+          if (!Array.isArray(cart.items)) continue;
+          for (const raw of cart.items) {
+            if (!raw || typeof raw !== "object") continue;
+            const note = String((raw as { note?: string }).note || "");
+            const fromNote = note.match(/bookingId:([^|\s]+)/)?.[1]?.trim();
+            if (fromNote) bookingIds.add(fromNote);
+          }
+        }
+      }
+      const bookingClocks = new Map<string, { startAt: Date; endAt: Date }>();
+      if (bookingIds.size) {
+        const found = await prisma.appBooking.findMany({
+          where: { id: { in: [...bookingIds] } },
+          select: { id: true, startAt: true, endAt: true },
+        });
+        for (const b of found) bookingClocks.set(b.id, b);
+      }
+
       const arrivals = rows
       .map((c) => {
         const crmMember = !!(
@@ -665,7 +687,7 @@ export async function GET(req: NextRequest) {
         }));
 
         const carts = (c.serviceCarts || []).map((row) => {
-          const items = parseCartItems(row.items);
+          const items = parseCartItems(row.items, bookingClocks);
           const menuItems = items.filter(
             (i) =>
               !i.id.startsWith("voucher-") &&
@@ -814,7 +836,10 @@ function safeParseServices(raw: string): string[] {
     .filter(Boolean);
 }
 
-function parseCartItems(raw: unknown): {
+function parseCartItems(
+  raw: unknown,
+  clocks?: Map<string, { startAt: Date; endAt: Date }>
+): {
   id: string;
   nameVi: string;
   qty: number;
@@ -829,9 +854,17 @@ function parseCartItems(raw: unknown): {
         0,
         Math.round(Number(row.pointsRedeemQty) || 0)
       );
+      const bookingId =
+        (typeof row.bookingId === "string" && row.bookingId) ||
+        String(row.note || "").match(/bookingId:([^|\s]+)/)?.[1]?.trim() ||
+        "";
+      const clock = bookingId ? clocks?.get(bookingId) : undefined;
+      const nameVi = String(row.nameVi || "").trim();
       return {
         id: String(row.id || "").trim(),
-        nameVi: String(row.nameVi || "").trim(),
+        nameVi: clock
+          ? withVnBookingClock(nameVi, clock.startAt, clock.endAt)
+          : nameVi,
         qty: Math.max(1, Number(row.qty) || 1),
         priceVnd: Math.max(0, Number(row.priceVnd) || 0),
         ...(pointsRedeemQty > 0 ? { pointsRedeemQty } : {}),

@@ -7,6 +7,7 @@ import { DateChipRow } from "@/components/DateChipRow";
 import { Shell } from "@/components/Shell";
 import { OrderQrSuccess } from "@/components/OrderQrSuccess";
 import { isValidPhone } from "@/lib/phone";
+import { formatVnDateTime, formatVnTime } from "@/lib/vn-time";
 import {
   LONG_NUONG_CLOSE_MIN,
   LONG_NUONG_OPEN_MIN,
@@ -163,14 +164,7 @@ export default function LongNuongBookPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gửi yêu cầu thất bại");
       const start = new Date(data.booking?.startAt || validated.startAt);
-      const arriveLabel = start.toLocaleString("vi-VN", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
+      const arriveLabel = formatVnDateTime(start);
       setSuccess({
         tableName: data.booking?.tableName || selected?.name || "",
         bookingCode: data.booking?.bookingCode || "",
@@ -207,7 +201,7 @@ export default function LongNuongBookPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu bàn"
-          subtitle="Chờ quầy duyệt → nhận QR xác nhận → đến nơi đưa QR cho nhân viên quét."
+          subtitle="Chờ quầy duyệt. Duyệt xong là yêu cầu thành công."
           detailLines={[
             success.tableName,
             `Đến: ${success.arriveLabel}`,
@@ -366,7 +360,7 @@ export default function LongNuongBookPage() {
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
                   {SHOW_TABLE_BOARD
-                    ? "Chọn ngày & tự điền giờ đến để kiểm tra còn chỗ, rồi gửi QR xác nhận (không chọn đồ ăn)."
+                    ? "Chọn ngày và giờ đến để kiểm tra còn chỗ, rồi gửi yêu cầu (không chọn đồ ăn)."
                     : "Điền tên, số điện thoại, giờ đến và số khách. Quầy sẽ gọi xác nhận. Khi đến, nói tên hoặc số điện thoại."}
                 </p>
 
@@ -489,7 +483,7 @@ export default function LongNuongBookPage() {
 
                 {SHOW_TABLE_BOARD && rangeOk ? (
                   <p className="mt-3 text-sm font-semibold text-emerald-700">
-                    Khung giờ còn trống — có thể gửi QR xác nhận.
+                    Khung giờ còn trống — có thể gửi yêu cầu.
                   </p>
                 ) : null}
 
@@ -532,7 +526,7 @@ export default function LongNuongBookPage() {
                   {busy
                     ? "Đang gửi…"
                     : SHOW_TABLE_BOARD
-                      ? "GỬI QR XÁC NHẬN"
+                      ? "GỬI YÊU CẦU"
                       : "GỬI YÊU CẦU"}
                 </button>
               </>
@@ -554,13 +548,5 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function fmtRange(startAt: string, endAt: string) {
-  const a = new Date(startAt);
-  const b = new Date(endAt);
-  const t = (d: Date) =>
-    d.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  return `${t(a)} – ${t(b)}`;
+  return `${formatVnTime(new Date(startAt))} – ${formatVnTime(new Date(endAt))}`;
 }

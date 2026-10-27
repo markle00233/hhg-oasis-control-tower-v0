@@ -14,6 +14,7 @@ import {
 } from "@/lib/points";
 import { prisma } from "@/lib/prisma";
 import { isStaffScanVoucher } from "@/lib/voucher-pass";
+import { bookingIdsInItems, relabelItemNames } from "@/lib/vn-time";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "sin1";
@@ -716,10 +717,22 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
       take: 40,
     });
+    const ids = [
+      ...new Set(carts.flatMap((c) => bookingIdsInItems(c.items))),
+    ];
+    const clocks = new Map<string, { startAt: Date; endAt: Date }>();
+    if (ids.length) {
+      const found = await prisma.appBooking.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, startAt: true, endAt: true },
+      });
+      for (const b of found) clocks.set(b.id, b);
+    }
     return NextResponse.json({
       ok: true,
       carts: carts.map((c) => ({
         ...c,
+        items: relabelItemNames(c.items, clocks),
         payload:
           c.status === CART_STATUS.OPEN
             ? serviceCartQrPayload(c.token)

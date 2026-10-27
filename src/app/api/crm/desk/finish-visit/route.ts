@@ -6,7 +6,6 @@ import {
   finishLongNuongVisit,
 } from "@/lib/long-nuong-activate";
 import { finishSpaVisit, SPA_DONE_NOTE } from "@/lib/spa-visit";
-import { BILL_PHOTO_REQUIRED, zoneRequiresBillPhoto } from "@/lib/bill-photo";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +41,6 @@ export async function POST(req: NextRequest) {
         customerId: true,
         items: true,
         adminNote: true,
-        billPhotoAt: true,
       },
     });
     if (!cart || !deskZoneAliases(zone).includes(cart.zoneCode.toUpperCase())) {
@@ -52,16 +50,9 @@ export async function POST(req: NextRequest) {
     if ((cart.adminNote || "").trim() === doneNote) {
       return NextResponse.json({ ok: true, already: true });
     }
-    if (zoneRequiresBillPhoto(cart.zoneCode) && !cart.billPhotoAt) {
-      return NextResponse.json({ error: BILL_PHOTO_REQUIRED }, { status: 409 });
-    }
     if (cart.status !== "USED") {
       return NextResponse.json(
-        {
-          error: spaDesk
-            ? "Xác nhận hoặc quét QR để chuyển sang Đang dùng trước."
-            : "Quét QR để chuyển sang Đang dùng trước.",
-        },
+        { error: "Chuyển sang Đang dùng trước khi bấm Đã dùng." },
         { status: 409 }
       );
     }

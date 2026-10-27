@@ -8,11 +8,26 @@ export function parseBillPhoto(raw: unknown): string | null {
   return dataUrl;
 }
 
-export const BILL_PHOTO_REQUIRED = "Chụp ảnh bill trước khi chốt đơn.";
+export const BILL_PHOTO_REQUIRED = "Gắn ảnh bill trước khi chốt đơn.";
 
-/** Chỉ Lòng Nướng bắt ảnh bill trước khi chốt. Mía, Olympic, Spa không. */
+/** Đơn khách gửi: quầy gắn ảnh bill để xác nhận, giống gói bơi. */
+const BILL_PHOTO_ZONES = new Set([
+  "LONG_NUONG",
+  "PICKLEBALL",
+  "SPA",
+  "SAUNA",
+  "MIA_OI",
+  "OLYMPIC_POOL",
+  "OLYMPIC",
+  "VIP_RESORT",
+  "GYM",
+  "RESORT_POOL",
+  "RESORT",
+  "JACUZZI",
+]);
+
 export function zoneRequiresBillPhoto(zone: string | null | undefined) {
-  return (zone || "").trim().toUpperCase() === "LONG_NUONG";
+  return BILL_PHOTO_ZONES.has((zone || "").trim().toUpperCase());
 }
 export const BILL_PHOTO_LOCKED = "Đơn đã chốt, không đổi được ảnh bill.";
 

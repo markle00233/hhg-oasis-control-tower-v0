@@ -6,6 +6,7 @@ import { writeAudit } from "@/lib/audit";
 import { hashPassword } from "@/lib/password";
 import { normalizePhone, phoneShortId } from "@/lib/phone";
 import { priceForRange } from "@/lib/pickleball";
+import { formatVnDateTime, formatVnTime } from "@/lib/revise-booking";
 import { prisma } from "@/lib/prisma";
 import { createServiceCart, serviceCartQrPayload } from "@/lib/service-cart";
 import { CART_STATUS } from "@/lib/cart-status";
@@ -171,17 +172,7 @@ export async function POST(req: NextRequest) {
         ? Math.max(0, Math.round(Number(paidRaw) || 0))
         : priced;
 
-    const slotLabel = `${startAt.toLocaleString("vi-VN", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })}–${endAt.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })}`;
+    const slotLabel = `${formatVnDateTime(startAt)}–${formatVnTime(endAt)}`;
 
     const booking = await prisma.appBooking.create({
       data: {

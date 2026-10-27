@@ -1,3 +1,4 @@
+import { SPA_MENU } from "./service-catalogs";
 import { prisma } from "./prisma";
 import {
   customerCanCancelOrder,
@@ -24,7 +25,7 @@ export type ServiceCardViewModel = {
   accent: string;
   href: string;
   showQrHint: boolean;
-  /** Service-cart token so "Hiện QR" opens a scannable /q/{token}, not the identity QR. */
+  /** Unused for orders. Confirmation is a bill photo on the desk, not a customer QR. */
   qrToken?: string | null;
   remainingLabel: string | null;
   referenceId: string;
@@ -71,7 +72,12 @@ function pad(n: number) {
 }
 
 function hm(d: Date) {
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(d);
 }
 
 function calendarDate(d: Date) {
@@ -138,7 +144,7 @@ function orderStatusLabel(status: string): string {
     case "SERVED":
     case "DONE":
     case "CONFIRMED":
-      return "Hoàn tất";
+      return "Thanh toán thành công";
     case "CANCELLED":
       return "Đã hủy";
     default:
@@ -169,26 +175,91 @@ function visitInUseZone(zoneCode?: string) {
   return spaZone(z) || z === "LONG_NUONG";
 }
 
-/** Trạng thái yêu cầu QR dịch vụ: tạo mã → duyệt → NV xác nhận / từ chối. */
-function cartStatusLabel(
-  status: string,
-  zoneCode?: string,
-  adminNote?: string | null
-): string {
+/** Spa, Lòng Nướng, Pickleball: main screen shows in-use until the slot ends. */
+function timedVisitZone(zoneCode?: string) {
   const z = (zoneCode || "").toUpperCase();
+  return visitInUseZone(z) || z === "PICKLEBALL";
+}
+
+function hideTableName(zoneCode?: string) {
+  const z = (zoneCode || "").toUpperCase();
+  return z === "LONG_NUONG" || spaZone(z);
+}
+
+function inUseLabel(zoneCode?: string) {
+  const z = (zoneCode || "").toUpperCase();
+  if (z === "PICKLEBALL") return "Đang dùng sân";
+  if (z === "LONG_NUONG") return "Đang dùng bàn";
+  return "Đang dùng";
+}
+
+function cartItemRows(items: unknown) {
+  if (!Array.isArray(items)) return [];
+  return items.filter(
+    (row): row is { id?: string; nameVi?: string; qty?: number } =>
+      !!row && typeof row === "object"
+  );
+}
+
+function spaServiceNames(items: unknown) {
+  const names: string[] = [];
+  for (const row of cartItemRows(items)) {
+    const id = String(row.id || "");
+    if (!row.nameVi || id.startsWith("voucher-") || id.startsWith("points-redeem-")) {
+      continue;
+    }
+    const qty = Math.max(1, Number(row.qty) || 1);
+    names.push(qty > 1 ? `${qty}× ${row.nameVi}` : row.nameVi);
+  }
+  return names;
+}
+
+function spaDurationMin(items: unknown) {
+  let sum = 0;
+  for (const row of cartItemRows(items)) {
+    const id = String(row.id || "");
+    if (id.startsWith("voucher-") || id.startsWith("points-redeem-")) continue;
+    const menu = SPA_MENU.find((item) => item.id === id);
+    let mins = menu?.durationMin || 0;
+    if (!mins && row.nameVi) {
+      const match = row.nameVi.match(/(\d{2,3})\s*(?:phút|phut|′|'|’)/i);
+      if (match) mins = Number(match[1]);
+    }
+    if (mins > 0) sum += mins * Math.max(1, Number(row.qty) || 1);
+  }
+  return sum;
+}
+
+/** Duyệt time: column when the client knows it, otherwise the stamp written onto the cart. */
+function readApprovedAt(items: unknown, approvedAt?: Date | null) {
+  if (approvedAt) return approvedAt;
+  if (!Array.isArray(items)) return null;
+  for (const row of items) {
+    if (!row || typeof row !== "object") continue;
+    const stamp = row as { id?: string; approvedAt?: string };
+    if (stamp.id !== "__approvedAt" || !stamp.approvedAt) continue;
+    const at = new Date(stamp.approvedAt);
+    if (!Number.isNaN(at.getTime())) return at;
+  }
+  return null;
+}
+
+/** Spa stay starts when the transaction is done (staff duyệt), then runs for the service duration. */
+function spaEndsAt(approvedAt: Date | null | undefined, items: unknown) {
+  if (!approvedAt) return null;
+  const mins = spaDurationMin(items);
+  if (mins <= 0) return null;
+  return new Date(approvedAt.getTime() + mins * 60_000);
+}
+
+/** Trạng thái đơn khách gửi: chờ quầy duyệt thành công. */
+function cartStatusLabel(status: string): string {
   switch (status) {
     case "PENDING_APPROVAL":
-      return "Đã tạo mã · chờ quầy duyệt";
+      return "Đã gửi · chờ quầy duyệt";
     case "OPEN":
-      return z === "MIA_OI"
-        ? "Đã duyệt · chờ NV xác nhận thanh toán"
-        : "Đã duyệt · chờ NV quét / xác nhận";
     case "USED":
-      if (visitInUseZone(z) && !spaVisitDone(adminNote)) return "Đang dùng";
-      if (visitInUseZone(z)) return "Đã dùng";
-      return z === "MIA_OI"
-        ? "NV đã xác nhận TT · hoàn tất"
-        : "NV đã xác nhận · hoàn tất";
+      return "Thanh toán thành công";
     case "REJECTED":
       return "Quầy từ chối yêu cầu";
     case "CANCELLED":
@@ -203,8 +274,8 @@ function cartStatusLabel(
 }
 
 function cartStatusTone(status: string): "ok" | "warn" | "bad" | "mute" {
-  if (status === "USED") return "ok";
-  if (status === "PENDING_APPROVAL" || status === "OPEN") return "warn";
+  if (status === "OPEN" || status === "USED") return "ok";
+  if (status === "PENDING_APPROVAL") return "warn";
   if (status === "REJECTED" || status === "CANCELLED" || status === "NO_SHOW")
     return "bad";
   return "mute";
@@ -251,27 +322,21 @@ function bookingIdsInCartItems(items: unknown): string[] {
   return ids;
 }
 
-function cartTokenForBooking(
-  bookingId: string,
-  carts: { token: string; status: string; items: unknown }[]
-) {
-  for (const cart of carts) {
-    if (cart.status !== "PENDING_APPROVAL" && cart.status !== "OPEN") continue;
-    if (bookingIdsInCartItems(cart.items).includes(bookingId)) return cart.token;
-  }
-  return null;
-}
-
 function cartBucket(
   status: string,
-  zoneCode?: string,
-  adminNote?: string | null
+  zoneCode: string | undefined,
+  adminNote: string | null | undefined,
+  items: unknown,
+  approvedAt: Date | null | undefined,
+  now: Date
 ): "active" | "upcoming" | "history" {
-  if (status === "PENDING_APPROVAL" || status === "OPEN") return "active";
-  if (status === "USED" && visitInUseZone(zoneCode) && !spaVisitDone(adminNote)) {
-    return "active";
-  }
-  return "history";
+  if (status === "PENDING_APPROVAL") return "active";
+  if (status !== "OPEN" && status !== "USED") return "history";
+  if (spaVisitDone(adminNote)) return "history";
+  const z = (zoneCode || "").toUpperCase();
+  if (!spaZone(z)) return "history";
+  const end = spaEndsAt(approvedAt, items);
+  return end && end.getTime() > now.getTime() ? "active" : "history";
 }
 
 function remainingBetween(endAt: Date, now = new Date()) {
@@ -415,7 +480,17 @@ async function collectCards(
               OR: [
                 activeBookingWhere,
                 {
-                  status: { in: ["COMPLETED", "CANCELLED", "NO_SHOW"] },
+                  status: {
+                    in: [
+                      "COMPLETED",
+                      "CANCELLED",
+                      "NO_SHOW",
+                      "CONFIRMED",
+                      "ARRIVED",
+                      "CHECKED_IN",
+                      "IN_SERVICE",
+                    ],
+                  },
                   endAt: {
                     gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
                   },
@@ -529,27 +604,59 @@ async function collectCards(
     }),
   ]);
 
+  const knownBookingIds = new Set(bookings.map((b) => b.id));
+  const missingBookingIds: string[] = [];
+  for (const cart of carts) {
+    for (const id of bookingIdsInCartItems(cart.items)) {
+      if (!knownBookingIds.has(id) && !missingBookingIds.includes(id)) {
+        missingBookingIds.push(id);
+      }
+    }
+  }
+  if (missingBookingIds.length) {
+    const extra = await prisma.appBooking.findMany({
+      where: { id: { in: missingBookingIds }, customerId },
+      include: {
+        service: { select: { serviceCode: true, serviceName: true } },
+        resource: { select: { name: true, code: true } },
+      },
+    });
+    bookings.push(...extra);
+  }
+
   const cards: ServiceCardViewModel[] = [];
   const bookingIdsWithSession = new Set(
     sessions.map((s) => s.bookingId).filter(Boolean) as string[]
   );
+  const cartByBookingId = new Map<string, { status: string }>();
+  for (const cart of carts) {
+    for (const id of bookingIdsInCartItems(cart.items)) {
+      cartByBookingId.set(id, { status: cart.status });
+    }
+  }
 
   for (const s of sessions) {
     const zone = s.resource.service.serviceCode;
     const end = s.endAt || s.booking?.endAt || null;
+    const hiddenTable = hideTableName(zone);
     cards.push({
       id: `session-${s.id}`,
       type: "SESSION",
       zoneCode: zone,
       zoneName: s.resource.service.serviceName,
       title: s.resource.service.serviceName,
-      subtitle: s.resource.name,
+      subtitle:
+        zone === "LONG_NUONG"
+          ? "Đang dùng bàn"
+          : hiddenTable
+            ? s.resource.service.serviceName
+            : s.resource.name,
       dateLabel: dateLabel(s.startAt),
       timeLabel: end ? `${hm(s.startAt)} – ${hm(end)}` : hm(s.startAt),
-      resourceName: s.resource.name,
+      resourceName: hiddenTable ? null : s.resource.name,
       partySize: null,
       status: "IN_SERVICE",
-      statusLabel: zone === "LONG_NUONG" ? "Đang dùng" : "Đang sử dụng",
+      statusLabel: inUseLabel(zone),
       statusTone: "ok",
       accent: accentFor(zone),
       href: s.bookingId
@@ -560,59 +667,70 @@ async function collectCards(
       referenceId: s.id,
       bucket: "active",
       bookingCode: s.booking?.bookingCode || null,
-      detailLines: s.resource.name ? [`Tài nguyên: ${s.resource.name}`] : [],
+      detailLines:
+        !hiddenTable && s.resource.name
+          ? [`Tài nguyên: ${s.resource.name}`]
+          : [],
       sortAt: s.startAt.getTime(),
     });
   }
 
-  const cartTokenByBookingId = new Map<string, string>();
-  for (const cart of carts) {
-    if (cart.status !== "PENDING_APPROVAL" && cart.status !== "OPEN") continue;
-    for (const bookingId of bookingIdsInCartItems(cart.items)) {
-      if (!cartTokenByBookingId.has(bookingId)) {
-        cartTokenByBookingId.set(bookingId, cart.token);
-      }
-    }
-  }
-
   for (const b of bookings) {
-    if (bookingIdsWithSession.has(b.id) && b.status === "IN_SERVICE") continue;
+    if (bookingIdsWithSession.has(b.id)) continue;
     const zone = b.service.serviceCode;
-    const bucket = bookingBucket(b.status, b.startAt, b.endAt, now);
+    const linked = cartByBookingId.get(b.id);
+    const waiting = linked?.status === "PENDING_APPROVAL";
+    const closedCart =
+      !!linked &&
+      ["REJECTED", "CANCELLED", "NO_SHOW", "EXPIRED"].includes(linked.status);
+    let bucket = bookingBucket(b.status, b.startAt, b.endAt, now);
+    if (closedCart) bucket = "history";
     if (opts.historyLimit === 0 && bucket === "history") continue;
-    const resourceName = b.resource?.name || null;
+    const resourceName = hideTableName(zone) ? null : b.resource?.name || null;
+    const paid =
+      !linked || linked.status === "OPEN" || linked.status === "USED";
+    const tableInUse =
+      bucket === "active" && zone === "LONG_NUONG" && paid && !waiting && !closedCart;
+    const statusLabel = waiting
+      ? "Đã gửi · chờ quầy duyệt"
+      : closedCart
+        ? linked?.status === "REJECTED"
+          ? "Quầy từ chối yêu cầu"
+          : linked?.status === "NO_SHOW"
+            ? "Không tới (no-show)"
+            : linked?.status === "EXPIRED"
+              ? "Hết hạn"
+              : "Khách đã huỷ"
+        : bucket === "active" && timedVisitZone(zone) && paid
+          ? inUseLabel(zone)
+          : paid && timedVisitZone(zone)
+            ? "Thanh toán thành công"
+            : bookingStatusLabel(b.status, zone);
     cards.push({
       id: `booking-${b.id}`,
       type: "BOOKING",
       zoneCode: zone,
       zoneName: b.service.serviceName,
       title: b.service.serviceName,
-      subtitle:
-        resourceName ||
-        (zone === "LONG_NUONG" ? `${b.partySize} khách` : b.bookingCode),
+      subtitle: tableInUse
+        ? "Đang dùng bàn"
+        : resourceName ||
+          (zone === "LONG_NUONG" ? `${b.partySize} khách` : b.bookingCode),
       dateLabel: dateLabel(b.startAt, bucket === "history"),
       timeLabel: `${hm(b.startAt)} – ${hm(b.endAt)}`,
       resourceName,
-      partySize: b.partySize,
+      partySize: tableInUse ? null : b.partySize,
       status: b.status,
-      statusLabel: bookingStatusLabel(b.status, zone),
-      statusTone: (["CANCELLED", "NO_SHOW"].includes(b.status)
+      statusLabel,
+      statusTone: (closedCart || ["CANCELLED", "NO_SHOW"].includes(b.status)
         ? "bad"
-        : ["COMPLETED"].includes(b.status)
-          ? "ok"
-          : ["PENDING"].includes(b.status)
-            ? "warn"
-            : "ok") as "ok" | "warn" | "bad" | "mute",
+        : waiting || b.status === "PENDING"
+          ? "warn"
+          : "ok") as "ok" | "warn" | "bad" | "mute",
       accent: accentFor(zone),
       href: `/activity/booking/${b.id}`,
-      showQrHint:
-        zone === "LONG_NUONG"
-          ? false
-          : ["PENDING", "CONFIRMED"].includes(b.status),
-      qrToken:
-        zone === "LONG_NUONG"
-          ? null
-          : cartTokenByBookingId.get(b.id) || null,
+      showQrHint: false,
+      qrToken: null,
       remainingLabel:
         bucket === "active" ? remainingBetween(b.endAt, now) : null,
       referenceId: b.id,
@@ -676,6 +794,7 @@ async function collectCards(
     });
   }
 
+  const bookingIdSet = new Set(bookings.map((b) => b.id));
   const shownOrderIds = new Set(openOrders.map((o) => o.id));
   const paidCartTokens = new Set<string>();
   for (const e of payLinks) {
@@ -711,15 +830,29 @@ async function collectCards(
       continue;
     }
     const zone = cart.zoneCode;
-    if (zone === "LONG_NUONG" && bookingIdsInCartItems(cart.items).length) {
+    if (bookingIdsInCartItems(cart.items).some((id) => bookingIdSet.has(id))) {
       continue;
     }
     const promo = parseCartPromoLines(cart.items);
     const bill =
       promo.itemLines.join(", ") || formatVnd(cart.totalVnd);
-    const bucket = cartBucket(cart.status, zone, cart.adminNote);
+    const approvedAt = readApprovedAt(cart.items, cart.approvedAt);
+    const bucket = cartBucket(
+      cart.status,
+      zone,
+      cart.adminNote,
+      cart.items,
+      approvedAt,
+      now
+    );
     if (opts.historyLimit === 0 && bucket === "history") continue;
-    const detailLines = [...promo.itemLines];
+    const spaLive =
+      bucket === "active" &&
+      spaZone(zone) &&
+      (cart.status === "OPEN" || cart.status === "USED");
+    const spaNames = spaLive ? spaServiceNames(cart.items) : [];
+    const spaEnd = spaLive ? spaEndsAt(approvedAt, cart.items) : null;
+    const detailLines = spaLive ? [] : [...promo.itemLines];
     if (cart.adminNote && cart.status === "REJECTED") {
       detailLines.push(`Lý do: ${cart.adminNote}`);
     }
@@ -729,26 +862,28 @@ async function collectCards(
       zoneCode: zone,
       zoneName: cart.zoneName || zone,
       title: cart.zoneName || zone,
-      subtitle: bill,
+      subtitle: spaLive ? spaNames.join(", ") || "Đang dùng" : bill,
       dateLabel: dateLabel(cart.createdAt, bucket === "history"),
-      timeLabel: hm(cart.createdAt),
+      timeLabel:
+        spaLive && spaEnd && approvedAt
+          ? `${hm(approvedAt)} – ${hm(spaEnd)}`
+          : hm(cart.createdAt),
       resourceName: null,
       partySize: null,
       status: cart.status,
-      statusLabel: cartStatusLabel(cart.status, zone, cart.adminNote),
-      statusTone: cartStatusTone(cart.status),
+      statusLabel: spaLive ? "Đang dùng" : cartStatusLabel(cart.status),
+      statusTone: spaLive ? "ok" : cartStatusTone(cart.status),
       accent: accentFor(zone),
-      href:
-        cart.status === "OPEN" || cart.status === "PENDING_APPROVAL"
-          ? `/q/${cart.token}`
-          : "/activity",
-      showQrHint: cart.status === "OPEN" || cart.status === "PENDING_APPROVAL",
-      remainingLabel: null,
+      href: "/activity",
+      showQrHint: false,
+      qrToken: null,
+      remainingLabel:
+        spaLive && spaEnd ? remainingBetween(spaEnd, now) : null,
       referenceId: cart.token,
       bucket,
       detailLines,
-      promoLabel: promo.promoLabel,
-      totalLabel: formatVnd(cart.totalVnd),
+      promoLabel: spaLive ? null : promo.promoLabel,
+      totalLabel: spaLive ? null : formatVnd(cart.totalVnd),
       sortAt: cart.createdAt.getTime(),
     });
   }
@@ -787,7 +922,9 @@ async function collectCards(
       status: e.operationalStatus,
       statusLabel:
         e.operationalStatus === "COMPLETED"
-          ? "Đã sử dụng"
+          ? timedVisitZone(zone)
+            ? "Thanh toán thành công"
+            : "Đã sử dụng"
           : e.operationalStatus === "CANCELLED"
             ? "Đã huỷ"
             : e.operationalStatus,
@@ -830,43 +967,33 @@ export async function getBookingCardDetail(customerId: string, bookingId: string
   if (!b) return null;
   const now = new Date();
   const bucket = bookingBucket(b.status, b.startAt, b.endAt, now);
+  const zone = b.service.serviceCode;
+  const statusLabel =
+    bucket === "active" && timedVisitZone(zone)
+      ? inUseLabel(zone)
+      : bucket === "history" &&
+          timedVisitZone(zone) &&
+          !["CANCELLED", "NO_SHOW"].includes(b.status)
+        ? "Thanh toán thành công"
+        : bookingStatusLabel(b.status, zone);
   return {
     id: b.id,
     bookingCode: b.bookingCode,
-    zoneCode: b.service.serviceCode,
+    zoneCode: zone,
     zoneName: b.service.serviceName,
-    resourceName: b.resource?.name || null,
+    resourceName: hideTableName(zone) ? null : b.resource?.name || null,
     startAt: b.startAt.toISOString(),
     endAt: b.endAt.toISOString(),
     partySize: b.partySize,
     status: b.status,
-    statusLabel: bookingStatusLabel(b.status, b.service.serviceCode),
+    statusLabel,
     notes: b.notes,
     source: b.source,
     createdAt: b.createdAt.toISOString(),
     bucket,
     remainingLabel:
       bucket === "active" ? remainingBetween(b.endAt, now) : null,
-    showQrHint:
-      b.service.serviceCode === "LONG_NUONG"
-        ? false
-        : ["PENDING", "CONFIRMED"].includes(b.status),
-    qrToken:
-      b.service.serviceCode === "LONG_NUONG"
-        ? null
-        : await cartTokenForBookingId(customerId, b.id),
+    showQrHint: false,
+    qrToken: null,
   };
-}
-
-async function cartTokenForBookingId(customerId: string, bookingId: string) {
-  const carts = await prisma.appServiceCart.findMany({
-    where: {
-      customerId,
-      status: { in: ["PENDING_APPROVAL", "OPEN"] },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-    select: { token: true, status: true, items: true },
-  });
-  return cartTokenForBooking(bookingId, carts);
 }

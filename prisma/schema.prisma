@@ -881,6 +881,8 @@ model AppServiceCart {
   /// Ảnh bill giấy. Bắt buộc trước khi chốt đơn.
   billPhoto   String?
   billPhotoAt DateTime?
+  /// Set when staff duyệt (or the cart is created already paid). Spa duration starts here.
+  approvedAt  DateTime?
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt

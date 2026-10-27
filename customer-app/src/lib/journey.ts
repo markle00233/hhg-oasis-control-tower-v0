@@ -162,7 +162,9 @@ export async function buildTodayAndHistory(customerId: string) {
 
   const historyByDate: Record<string, JourneyItem[]> = {};
   for (const item of history) {
-    const key = new Date(item.occurredAt).toLocaleDateString("vi-VN");
+    const key = new Date(item.occurredAt).toLocaleDateString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh",
+    });
     if (!historyByDate[key]) historyByDate[key] = [];
     historyByDate[key].push(item);
   }
@@ -188,7 +190,7 @@ export async function buildTodayAndHistory(customerId: string) {
     zoneName: b.service.serviceName,
     occurredAt: b.startAt.toISOString(),
     status: b.status,
-    summary: `${b.bookingCode} · ${new Date(b.startAt).toLocaleString("vi-VN")} → ${new Date(b.endAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} · ${b.partySize} khách`,
+    summary: `${b.bookingCode} · ${new Date(b.startAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} → ${new Date(b.endAt).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })} · ${b.partySize} khách`,
     referenceId: b.id,
     detail: {
       endAt: b.endAt.toISOString(),

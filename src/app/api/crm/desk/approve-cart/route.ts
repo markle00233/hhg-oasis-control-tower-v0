@@ -1,16 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
 import { CART_STATUS } from "@/lib/cart-status";
-import { deskZoneAliases } from "@/lib/desk-zones";
+import { deskZoneAliases, miaOlympicSector } from "@/lib/desk-zones";
 import { releaseLongNuongTableHold } from "@/lib/long-nuong-activate";
 import { awardCheckInPoints } from "@/lib/points";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
+/** Kept on the cart items so the customer clock starts at duyệt, not at send. */
+function stampCartApprovedAt(items: unknown, at: Date): Prisma.InputJsonValue {
+  const rows = Array.isArray(items)
+    ? items.filter(
+        (row) =>
+          !row ||
+          typeof row !== "object" ||
+          (row as { id?: string }).id !== "__approvedAt"
+      )
+    : [];
+  rows.push({ id: "__approvedAt", approvedAt: at.toISOString() });
+  return rows as Prisma.InputJsonValue;
+}
+
 /**
- * Staff: approve (OPEN) or reject (REJECTED + adminNote).
- * Body: { zone, token, action?: "approve"|"reject", reason? }
+ * Staff: approve (OPEN), reject (REJECTED + adminNote),
+ * or finalize (USED) after kế toán đã kiểm chứng từ.
+ * Body: { zone, token, action?: "approve"|"reject"|"finalize", reason? }
  */
 export async function POST(req: NextRequest) {
   try {
@@ -19,10 +35,13 @@ export async function POST(req: NextRequest) {
     const token = String(body.token || body.cartToken || "")
       .trim()
       .replace(/^.*\/q\//, "");
+    const rawAction = String(body.action || "approve").trim().toLowerCase();
     const action =
-      String(body.action || "approve").trim().toLowerCase() === "reject"
+      rawAction === "reject"
         ? "reject"
-        : "approve";
+        : rawAction === "finalize"
+          ? "finalize"
+          : "approve";
     const reason = String(body.reason || body.adminNote || "")
       .trim()
       .slice(0, 500);
@@ -52,6 +71,7 @@ export async function POST(req: NextRequest) {
         totalVnd: true,
         items: true,
         adminNote: true,
+        billPhotoAt: true,
         customerId: true,
         expiresAt: true,
         customer: {
@@ -78,6 +98,44 @@ export async function POST(req: NextRequest) {
         { error: `Yêu cầu thuộc khu ${cart.zoneCode}, không phải quầy này.` },
         { status: 403 }
       );
+    }
+
+    if (action === "finalize") {
+      if (!miaOlympicSector(cart.zoneCode)) {
+        return NextResponse.json(
+          { error: "Khu này chưa chốt đơn tại đây." },
+          { status: 400 }
+        );
+      }
+      if (cart.status === CART_STATUS.USED) {
+        return NextResponse.json({
+          ok: true,
+          already: true,
+          cart: serialize(cart),
+          customer: cart.customer,
+        });
+      }
+      if (cart.status !== CART_STATUS.OPEN) {
+        return NextResponse.json(
+          { error: "Duyệt đơn trước khi chốt." },
+          { status: 409 }
+        );
+      }
+      if (!cart.billPhotoAt) {
+        return NextResponse.json(
+          { error: "Bổ sung chứng từ trước khi chốt." },
+          { status: 400 }
+        );
+      }
+      const updated = await prisma.appServiceCart.update({
+        where: { id: cart.id },
+        data: { status: CART_STATUS.USED },
+      });
+      return NextResponse.json({
+        ok: true,
+        cart: serialize(updated),
+        customer: cart.customer,
+      });
     }
 
     if (action === "approve") {
@@ -129,9 +187,15 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      const approvedAt = new Date();
       const updated = await prisma.appServiceCart.update({
         where: { id: cart.id },
-        data: { status: CART_STATUS.OPEN, adminNote: null },
+        data: {
+          status: CART_STATUS.OPEN,
+          adminNote: null,
+          approvedAt,
+          items: stampCartApprovedAt(cart.items, approvedAt),
+        },
       });
 
       if (cart.zoneCode.toUpperCase() === "LONG_NUONG") {
@@ -149,7 +213,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Gói tháng: duyệt → OPEN QR; gắn VIP khi NV quét (resolve-qr).
+      // Gói tháng: duyệt thành công; gắn VIP khi NV quét QR khách.
 
       const pts = await awardCheckInPoints({
         customerId: cart.customerId,

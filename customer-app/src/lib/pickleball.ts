@@ -6,7 +6,97 @@ export const PICKLEBALL_PRICE_VND = 200_000;
 /** Minutes before end → yellow “sắp hết giờ” */
 export const ENDING_SOON_MIN = 20;
 
-export type CourtVisualStatus = "available" | "occupied" | "ending_soon";
+export type CourtVisualStatus =
+  | "available"
+  | "reserved"
+  | "occupied"
+  | "ending_soon"
+  | "blocked";
+
+/** Open check-in with no end time counts as live for this long, then the board treats it as stale. */
+export const OPEN_SESSION_ASSUME_MIN = 90;
+
+export const LIVE_BOOKING_STATUSES = [
+  "PENDING",
+  "CONFIRMED",
+  "ARRIVED",
+  "CHECKED_IN",
+  "IN_SERVICE",
+] as const;
+
+const ON_COURT_STATUSES = new Set(["ARRIVED", "CHECKED_IN", "IN_SERVICE"]);
+const HOLD_STATUSES = new Set(["PENDING", "CONFIRMED"]);
+
+function later(current: number | null, next: number) {
+  return current == null || next > current ? next : current;
+}
+
+/**
+ * What the customer board should show right now.
+ * A stuck resource status of OCCUPIED is not enough — the court is busy only
+ * while a booking or check-in actually covers the current time.
+ * A reservation that covers now is "reserved", not "someone is playing".
+ */
+export function courtLiveState(opts: {
+  resourceStatus: string;
+  now: Date;
+  session?: {
+    startAt: Date;
+    endAt: Date | null;
+    bookingId?: string | null;
+  } | null;
+  bookings: { id: string; startAt: Date; endAt: Date; status: string }[];
+}): { status: CourtVisualStatus; freeAt: Date | null } {
+  if (opts.resourceStatus === "BLOCKED") {
+    return { status: "blocked", freeAt: null };
+  }
+
+  const nowMs = opts.now.getTime();
+  let onCourtEnd: number | null = null;
+  let holdEnd: number | null = null;
+
+  for (const booking of opts.bookings) {
+    if (booking.startAt.getTime() > nowMs || booking.endAt.getTime() <= nowMs) {
+      continue;
+    }
+    if (ON_COURT_STATUSES.has(booking.status)) {
+      onCourtEnd = later(onCourtEnd, booking.endAt.getTime());
+    } else if (HOLD_STATUSES.has(booking.status)) {
+      holdEnd = later(holdEnd, booking.endAt.getTime());
+    }
+  }
+
+  const session = opts.session;
+  if (session && session.startAt.getTime() <= nowMs) {
+    const linked = session.bookingId
+      ? opts.bookings.find((b) => b.id === session.bookingId)
+      : undefined;
+    const linkedLive =
+      linked &&
+      (ON_COURT_STATUSES.has(linked.status) || HOLD_STATUSES.has(linked.status));
+    const explicitEnd = linkedLive ? linked.endAt : session.endAt;
+    let sessionEnd: number | null = null;
+    if (explicitEnd && explicitEnd.getTime() > nowMs) {
+      sessionEnd = explicitEnd.getTime();
+    } else if (!explicitEnd) {
+      const assumeEnd =
+        session.startAt.getTime() + OPEN_SESSION_ASSUME_MIN * 60 * 1000;
+      if (assumeEnd > nowMs) sessionEnd = assumeEnd;
+    }
+    if (sessionEnd != null) onCourtEnd = later(onCourtEnd, sessionEnd);
+  }
+
+  const freeMs = onCourtEnd ?? holdEnd;
+  if (freeMs == null) return { status: "available", freeAt: null };
+
+  const freeAt = new Date(freeMs);
+  const minsLeft = (freeMs - nowMs) / (60 * 1000);
+  if (minsLeft > 0 && minsLeft <= ENDING_SOON_MIN) {
+    return { status: "ending_soon", freeAt };
+  }
+  if (onCourtEnd != null) return { status: "occupied", freeAt };
+  return { status: "reserved", freeAt };
+}
 
 export function formatVnd(n: number) {
   return new Intl.NumberFormat("vi-VN").format(n) + "đ";
@@ -134,17 +224,21 @@ export function buildTimeOptions(
   return out;
 }
 
-/**
- * Day schedule: free gaps + booked ranges (actual start/end, not fixed slots).
- */
-export function buildDaySchedule(
+export type DayScheduleRow = {
+  key: string;
+  label: string;
+  startAt: string;
+  endAt: string;
+  kind: "free" | "busy" | "selected";
+};
+
+function mergeBusy(
   dayKey: string,
   bookings: { startAt: string; endAt: string }[]
 ) {
   const open = atLocal(dayKey, PICKLEBALL_OPEN_MIN).getTime();
   const close = atLocal(dayKey, PICKLEBALL_CLOSE_MIN).getTime();
-
-  const sorted = [...bookings]
+  const sorted = bookings
     .map((b) => ({
       start: Math.max(open, new Date(b.startAt).getTime()),
       end: Math.min(close, new Date(b.endAt).getTime()),
@@ -152,60 +246,106 @@ export function buildDaySchedule(
     .filter((b) => b.end > b.start)
     .sort((a, b) => a.start - b.start);
 
-  // Merge overlaps
   const merged: { start: number; end: number }[] = [];
   for (const b of sorted) {
     const last = merged[merged.length - 1];
-    if (last && b.start <= last.end) {
-      last.end = Math.max(last.end, b.end);
-    } else {
-      merged.push({ ...b });
-    }
+    if (last && b.start <= last.end) last.end = Math.max(last.end, b.end);
+    else merged.push({ start: b.start, end: b.end });
   }
+  return { open, close, merged };
+}
 
-  type Row = {
-    key: string;
-    label: string;
-    startAt: string;
-    endAt: string;
-    kind: "free" | "busy";
-  };
+/**
+ * Day schedule: free gaps + booked ranges (actual start/end, not fixed slots).
+ * A chosen range is split out of the free gap so the rest of that gap stays "trống".
+ */
+export function buildDaySchedule(
+  dayKey: string,
+  bookings: { startAt: string; endAt: string }[],
+  selection?: { startAt: string; endAt: string } | null
+) {
+  const { open, close, merged } = mergeBusy(dayKey, bookings);
   const labelTs = (ts: number) => {
     const d = new Date(ts);
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
+  const selStart = selection ? new Date(selection.startAt).getTime() : null;
+  const selEnd = selection ? new Date(selection.endAt).getTime() : null;
 
-  const rows: Row[] = [];
+  const rows: DayScheduleRow[] = [];
+  const push = (start: number, end: number, kind: DayScheduleRow["kind"]) => {
+    if (end <= start) return;
+    rows.push({
+      key: `${kind}-${start}`,
+      label: `${labelTs(start)} – ${labelTs(end)}`,
+      startAt: new Date(start).toISOString(),
+      endAt: new Date(end).toISOString(),
+      kind,
+    });
+  };
+  const pushFree = (start: number, end: number) => {
+    if (selStart == null || selEnd == null || selEnd <= start || selStart >= end) {
+      push(start, end, "free");
+      return;
+    }
+    const chosenStart = Math.max(start, selStart);
+    const chosenEnd = Math.min(end, selEnd);
+    push(start, chosenStart, "free");
+    push(chosenStart, chosenEnd, "selected");
+    push(chosenEnd, end, "free");
+  };
+
   let cursor = open;
   for (const b of merged) {
-    if (b.start > cursor) {
-      rows.push({
-        key: `free-${cursor}`,
-        label: `${labelTs(cursor)} – ${labelTs(b.start)}`,
-        startAt: new Date(cursor).toISOString(),
-        endAt: new Date(b.start).toISOString(),
-        kind: "free",
-      });
-    }
-    rows.push({
-      key: `busy-${b.start}`,
-      label: `${labelTs(b.start)} – ${labelTs(b.end)}`,
-      startAt: new Date(b.start).toISOString(),
-      endAt: new Date(b.end).toISOString(),
-      kind: "busy",
-    });
+    if (b.start > cursor) pushFree(cursor, b.start);
+    push(b.start, b.end, "busy");
     cursor = Math.max(cursor, b.end);
   }
-  if (cursor < close) {
-    rows.push({
-      key: `free-${cursor}`,
-      label: `${labelTs(cursor)} – ${labelTs(close)}`,
-      startAt: new Date(cursor).toISOString(),
-      endAt: new Date(close).toISOString(),
-      kind: "free",
-    });
-  }
+  if (cursor < close) pushFree(cursor, close);
   return rows;
+}
+
+/** Next open stretch after `now`. `until` is set when another booking starts before close. */
+export function nextFreeGap(
+  dayKey: string,
+  bookings: { startAt: string; endAt: string }[],
+  now = new Date()
+): { from: string; until: string | null; startsNow: boolean } | null {
+  const { close, merged } = mergeBusy(dayKey, bookings);
+  const nowMs = now.getTime();
+  let cursor = nowMs;
+  for (const block of merged) {
+    if (block.end <= nowMs) continue;
+    if (block.start > cursor) return gapBetween(cursor, block.start, close, nowMs);
+    cursor = block.end;
+  }
+  if (cursor < close) return gapBetween(cursor, close, close, nowMs);
+  return null;
+}
+
+function gapBetween(fromMs: number, untilMs: number, close: number, nowMs: number) {
+  return {
+    from: formatTimeLabel(new Date(fromMs).toISOString()),
+    until:
+      untilMs >= close - 1000
+        ? null
+        : formatTimeLabel(new Date(untilMs).toISOString()),
+    startsNow: fromMs <= nowMs,
+  };
+}
+
+/** Short line under a court tile. */
+export function courtBoardNote(
+  status: CourtVisualStatus,
+  dayKey: string,
+  bookings: { startAt: string; endAt: string }[],
+  now = new Date()
+) {
+  if (status === "blocked") return "Chọn giờ khác";
+  const gap = nextFreeGap(dayKey, bookings, now);
+  if (!gap) return status === "available" ? "" : "Hết chỗ hôm nay";
+  if (gap.startsNow) return gap.until ? `đến ${gap.until}` : "";
+  return gap.until ? `Trống ${gap.from}–${gap.until}` : `Trống ${gap.from}`;
 }
 
 export function rangeConflicts(
@@ -272,23 +412,42 @@ export function validateBookRange(
 }
 
 export function courtTone(status: CourtVisualStatus) {
+  if (status === "blocked") {
+    return { bg: "#e2e8f0", fg: "#334155", label: "Tạm khóa" };
+  }
   if (status === "occupied") {
-    return {
-      bg: "#fecaca", // pale red
-      fg: "#7f1d1d",
-      label: "Đang chơi",
-    };
+    return { bg: "#fecaca", fg: "#7f1d1d", label: "Có khách" };
+  }
+  if (status === "reserved") {
+    return { bg: "#dbeafe", fg: "#1e3a8a", label: "Đã có giờ" };
   }
   if (status === "ending_soon") {
-    return {
-      bg: "#fef08a", // pale yellow
-      fg: "#713f12",
-      label: "Sắp hết giờ",
-    };
+    return { bg: "#fef08a", fg: "#713f12", label: "Sắp trống" };
   }
-  return {
-    bg: "#bbf7d0", // pale green
-    fg: "#14532d",
-    label: "Còn trống",
-  };
+  return { bg: "#bbf7d0", fg: "#14532d", label: "Trống" };
+}
+
+const LIVE_STATUS = new Set<string>(LIVE_BOOKING_STATUSES);
+
+/** Keep a check-in's booking on the day list when the day query missed it. */
+export function withSessionBooking<T extends { id: string; status: string }>(
+  bookings: T[],
+  sessionBooking: T | null | undefined
+) {
+  if (!sessionBooking || !LIVE_STATUS.has(sessionBooking.status)) return bookings;
+  if (bookings.some((b) => b.id === sessionBooking.id)) return bookings;
+  return [...bookings, sessionBooking];
+}
+
+export function formatHmVietnam(d: Date) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Asia/Ho_Chi_Minh",
+  }).formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value || "";
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return `${hour}:${get("minute")}`;
 }

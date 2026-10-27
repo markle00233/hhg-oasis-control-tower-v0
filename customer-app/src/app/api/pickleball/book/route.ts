@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionCustomer } from "@/lib/session";
-import { priceForRange } from "@/lib/pickleball";
+import {
+  LIVE_BOOKING_STATUSES,
+  courtLiveState,
+  formatHmVietnam,
+  priceForRange,
+} from "@/lib/pickleball";
+import { formatVnDateTime, formatVnTime } from "@/lib/vn-time";
 import {
   CART_STATUS,
   createServiceCart,
@@ -64,9 +70,7 @@ export async function POST(req: NextRequest) {
     const conflict = await prisma.appBooking.findFirst({
       where: {
         resourceId: court.id,
-        status: {
-          in: ["PENDING", "CONFIRMED", "ARRIVED", "CHECKED_IN", "IN_SERVICE"],
-        },
+        status: { in: [...LIVE_BOOKING_STATUSES] },
         startAt: { lt: endAt },
         endAt: { gt: startAt },
       },
@@ -78,29 +82,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (court.status === "OCCUPIED" || court.status === "BLOCKED") {
-      const overlapsNow =
-        startAt.getTime() <= Date.now() && endAt.getTime() > Date.now();
-      if (overlapsNow) {
+    const now = new Date();
+    const overlapsNow = startAt.getTime() <= now.getTime() && endAt.getTime() > now.getTime();
+    if (overlapsNow && court.status === "BLOCKED") {
+      return NextResponse.json(
+        { error: "Sân tạm khóa. Chọn khung giờ khác." },
+        { status: 409 }
+      );
+    }
+    // Booking overlaps are already rejected above. This only catches a live
+    // check-in that has no booking row (a stuck OCCUPIED flag does not).
+    if (overlapsNow && court.status === "OCCUPIED") {
+      const session = await prisma.appResourceSession.findFirst({
+        where: { resourceId: court.id, status: "OCCUPIED" },
+        orderBy: { startAt: "desc" },
+      });
+      const live = courtLiveState({
+        resourceStatus: court.status,
+        now,
+        session,
+        bookings: [],
+      });
+      if (live.status !== "available") {
+        const until = live.freeAt ? ` đến ${formatHmVietnam(live.freeAt)}` : "";
         return NextResponse.json(
-          { error: "Sân đang được sử dụng. Chọn khung giờ khác." },
+          { error: `Sân đang có khách${until}. Chọn khung giờ khác.` },
           { status: 409 }
         );
       }
     }
 
     const totalVnd = priceForRange(startAt.toISOString(), endAt.toISOString());
-    const slotLabel = `${startAt.toLocaleString("vi-VN", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })}–${endAt.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })}`;
+    const slotLabel = `${formatVnDateTime(startAt)}–${formatVnTime(endAt)}`;
 
     const booking = await prisma.appBooking.create({
       data: {
