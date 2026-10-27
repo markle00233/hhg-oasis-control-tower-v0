@@ -8,7 +8,9 @@ import { PrismaClient } from "@prisma/client";
 import { ADMIN_PANEL_USERNAME } from "../src/lib/admin-panel";
 import { ensureAdminPanelUser } from "../src/lib/ensure-admin-panel";
 
+/** Fill missing keys only. Vercel already provides DATABASE_URL; a local file must not replace it. */
 function loadEnvFiles() {
+  const fromFiles: Record<string, string> = {};
   for (const name of [".env", ".env.local"]) {
     const p = resolve(process.cwd(), name);
     if (!existsSync(p)) continue;
@@ -25,8 +27,11 @@ function loadEnvFiles() {
       ) {
         val = val.slice(1, -1);
       }
-      process.env[key] = val;
+      fromFiles[key] = val;
     }
+  }
+  for (const [key, val] of Object.entries(fromFiles)) {
+    if (process.env[key] === undefined) process.env[key] = val;
   }
 }
 
@@ -39,7 +44,13 @@ async function main() {
   const prisma = new PrismaClient();
   try {
     const action = await ensureAdminPanelUser(prisma);
-    console.log(`[ensure-admin-panel] ${action} ${ADMIN_PANEL_USERNAME}`);
+    let host = "unknown";
+    try {
+      host = new URL(process.env.DATABASE_URL || "").host;
+    } catch {
+      host = "unparsed";
+    }
+    console.log(`[ensure-admin-panel] ${action} ${ADMIN_PANEL_USERNAME} @ ${host}`);
   } finally {
     await prisma.$disconnect();
   }

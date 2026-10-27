@@ -172,13 +172,12 @@ export function OrderQrSuccess({
 
       {pending ? (
         <div className="mt-6 w-full max-w-sm rounded-[28px] bg-amber-50 p-5 shadow-soft ring-1 ring-amber-200/80">
-          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-[3px] border-amber-200 border-t-amber-600" />
-          <p className="mt-4 font-display text-xl font-semibold text-oasis-ink">
+          <p className="font-display text-xl font-semibold text-oasis-ink">
             Đang chờ duyệt…
           </p>
           <p className="mt-2 text-sm text-oasis-mute">
             Quầy đã nhận yêu cầu. Giữ màn hình hoặc tắt hộp này — vé vẫn hiện
-            loading ở trang cá nhân.
+            ở trang cá nhân.
           </p>
           <button
             type="button"

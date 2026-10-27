@@ -36,6 +36,7 @@ export default function HomePage() {
   const [active, setActive] = useState<ServiceCardViewModel[]>([]);
   const [upcoming, setUpcoming] = useState<ServiceCardViewModel[]>([]);
   const [error, setError] = useState("");
+  const [cardReady, setCardReady] = useState(false);
 
   useEffect(() => {
     router.prefetch("/qr");
@@ -43,46 +44,77 @@ export default function HomePage() {
     router.prefetch("/activity");
     router.prefetch("/account");
     let cancelled = false;
-    (async () => {
-      const [sumRes, meRes] = await Promise.all([
-        fetch("/api/cards/summary", { cache: "no-store" }),
-        fetch("/api/auth/me", { cache: "no-store" }),
-      ]);
-      if (sumRes.status === 401) {
-        router.replace("/");
-        return;
-      }
-      const data = await sumRes.json();
-      if (!sumRes.ok) {
-        if (!cancelled) setError(data.error || "Không tải được Home");
-        return;
-      }
-      if (cancelled) return;
-      setName(data.customer?.fullName || "");
-      setPointsBalance(
-        typeof data.customer?.pointsBalance === "number"
-          ? data.customer.pointsBalance
-          : 0
-      );
-      setActive(data.active || []);
-      setUpcoming(data.upcoming || []);
 
-      if (meRes.ok) {
-        const me = await meRes.json();
-        if (!cancelled && me.customer) {
-          setVip(!!me.customer.vip);
-          setVipPlanLabel(me.customer.vipPlanLabel || null);
-          setMembershipTier(me.customer.membershipTier || null);
-          setMembershipPackageId(me.customer.membershipPackageId || null);
-          setVipExpiresLabel(me.customer.vipExpiresLabel || null);
-          if (typeof me.customer.pointsBalance === "number") {
-            setPointsBalance(me.customer.pointsBalance);
-          }
+    async function load(first: boolean) {
+      const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+      if (meRes.status === 401) {
+        router.replace("/");
+        return true;
+      }
+      const sumRes = first
+        ? await fetch("/api/cards/summary", { cache: "no-store" })
+        : null;
+      if (sumRes?.status === 401) {
+        router.replace("/");
+        return true;
+      }
+      const me = meRes.ok ? await meRes.json() : null;
+      const data = sumRes ? await sumRes.json() : null;
+      if (cancelled) return true;
+      if (sumRes && !sumRes.ok) {
+        setError(data?.error || "Không tải được Home");
+        setCardReady(true);
+        return true;
+      }
+      const customer = me?.customer;
+      if (data) {
+        setName(data.customer?.fullName || "");
+        setActive(data.active || []);
+        setUpcoming(data.upcoming || []);
+      }
+      if (typeof customer?.pointsBalance === "number") {
+        setPointsBalance(customer.pointsBalance);
+      } else if (typeof data?.customer?.pointsBalance === "number") {
+        setPointsBalance(data.customer.pointsBalance);
+      }
+      const activeVip = !!customer?.vip;
+      if (customer) {
+        setVip(activeVip);
+        setVipPlanLabel(customer.vipPlanLabel || null);
+        setMembershipTier(customer.membershipTier || null);
+        setMembershipPackageId(customer.membershipPackageId || null);
+        setVipExpiresLabel(customer.vipExpiresLabel || null);
+      }
+      setCardReady(true);
+      return activeVip;
+    }
+
+    void (async () => {
+      let activeVip = false;
+      try {
+        activeVip = await load(true);
+      } catch {
+        if (!cancelled) setCardReady(true);
+      }
+      while (!cancelled && !activeVip) {
+        await new Promise((resolve) => window.setTimeout(resolve, 4000));
+        if (cancelled || document.visibilityState === "hidden") continue;
+        try {
+          activeVip = await load(false);
+        } catch {
+          /* keep the card, try again */
         }
       }
     })();
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || cancelled) return;
+      void load(false).catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [router]);
 
@@ -96,39 +128,77 @@ export default function HomePage() {
         packageId={membershipPackageId}
       />
       <div className="animate-rise space-y-5">
-        <header className="flex items-center gap-3">
+        {!cardReady ? (
+          <header
+            className="h-[5.5rem] animate-pulse rounded-[28px] bg-[#e8e6e1]"
+            aria-hidden
+          />
+        ) : null}
+        {cardReady ? (
+        <header
+          className={`relative flex items-center gap-3 rounded-[28px] p-4 shadow-soft ${
+            vip ? "bg-black" : "bg-[#e8e6e1]"
+          }`}
+        >
+          {vip ? (
+            <div
+              className="pointer-events-none absolute inset-0 overflow-hidden rounded-[28px]"
+              aria-hidden
+            >
+              <div className="vip-smoke-field" />
+            </div>
+          ) : null}
           <Link
             href="/qr"
-            className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-oasis-deep text-sm font-black leading-none text-oasis-sand shadow-soft"
+            className="relative grid h-14 w-14 shrink-0 place-items-center rounded-[18px] bg-oasis-deep text-sm font-black leading-none text-oasis-sand"
             aria-label="My Oasis QR"
             title="My Oasis QR"
           >
             QR
           </Link>
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <p className="text-[11px] font-bold uppercase leading-none tracking-[0.14em] text-oasis-mute">
+          <div className="relative min-w-0 flex-1">
+            <p
+              className={`text-[11px] font-bold uppercase tracking-[0.2em] ${
+                vip ? "text-[#f6e27a]/75" : "text-oasis-mute"
+              }`}
+            >
               {greeting()}
             </p>
-            <p className="truncate font-display text-xl font-semibold leading-none text-oasis-ink">
+            <p
+              className={`mt-1 truncate font-display text-2xl font-semibold leading-tight ${
+                vip
+                  ? "text-[#f6e27a] [text-shadow:0_0_16px_rgba(243,217,138,0.65)]"
+                  : "text-oasis-ink"
+              }`}
+            >
               {name || "Khách HHG Oasis"}
             </p>
-            <p className="font-mono text-sm font-semibold leading-none text-oasis-moss">
+            <p
+              className={`mt-1 font-display text-lg font-semibold leading-none ${
+                vip ? "text-[#d4af37]" : "text-oasis-moss"
+              }`}
+            >
               {pointsBalance} điểm
             </p>
             {vip && vipPlanLabel ? (
-              <p className="text-[11px] font-bold leading-none text-oasis-moss">
+              <p className="mt-1 text-[11px] font-bold leading-none text-[#f6e27a] [text-shadow:0_0_16px_rgba(243,217,138,0.65)]">
                 {vipPlanLabel}
               </p>
             ) : null}
           </div>
           <Link
             href="/account"
-            className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-oasis-moss/15 text-sm font-black leading-none text-oasis-moss"
+            className={`relative grid h-12 w-12 shrink-0 place-items-center rounded-full text-sm font-black leading-none shadow-soft ${
+              vip
+                ? "bg-[#d4af37]/15 text-[#f6e27a]"
+                : "bg-white text-oasis-moss"
+            }`}
             aria-label="Account"
           >
             {name ? name.trim().charAt(0).toUpperCase() : "U"}
           </Link>
         </header>
+        ) : null}
 
         <section className="space-y-5">
           <div className="flex items-end justify-between">

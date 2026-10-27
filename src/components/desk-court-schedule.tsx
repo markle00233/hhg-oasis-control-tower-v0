@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DeskBookingEdit } from "@/components/desk-booking-edit";
 import {
   COURT_COLORS,
   formatVnd,
@@ -95,6 +96,7 @@ export function DeskCourtSchedule({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [editBookingId, setEditBookingId] = useState<string | null>(null);
   const [form, setForm] = useState({
     resourceId: "",
     fullName: "",
@@ -413,10 +415,22 @@ export function DeskCourtSchedule({
                       ((endM - startM) / 60) * HOUR_HEIGHT - 4
                     );
                     const online = (b.source || "").toUpperCase() === "CUSTOMER";
+                    const locked =
+                      b.status === "IN_SERVICE" ||
+                      b.status === "COMPLETED" ||
+                      b.status === "CANCELLED" ||
+                      b.status === "NO_SHOW";
                     return (
                       <div
                         key={b.id}
-                        title={`${b.customerName || "Khách"} · ${sourceLabel(b.source)}`}
+                        title={
+                          locked
+                            ? `${b.customerName || "Khách"} · ${sourceLabel(b.source)}`
+                            : `${b.customerName || "Khách"} · bấm để sửa giờ / sân`
+                        }
+                        onClick={() => {
+                          if (!locked) setEditBookingId(b.id);
+                        }}
                         style={{
                           position: "absolute",
                           left: 4,
@@ -433,6 +447,7 @@ export function DeskCourtSchedule({
                           color: col.fg,
                           boxShadow: "0 2px 8px rgba(15,23,42,.08)",
                           zIndex: 1,
+                          cursor: locked ? "default" : "pointer",
                         }}
                       >
                         <div style={{ fontWeight: 800, lineHeight: 1.2 }}>
@@ -488,6 +503,42 @@ export function DeskCourtSchedule({
       <p style={{ margin: "10px 0 0", fontSize: 12, color: "#64748b" }}>
         Viền xanh dương = order từ app · viền cam = nhân viên ghi tại quầy
       </p>
+
+      {editBookingId ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,.45)",
+            zIndex: 80,
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+          }}
+          onClick={() => setEditBookingId(null)}
+        >
+          <div
+            style={{ width: "min(520px, 100%)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DeskBookingEdit
+              zone={zone}
+              bookingId={editBookingId}
+              onSaved={() => {
+                void load();
+                onChanged?.();
+              }}
+            />
+            <button
+              type="button"
+              style={{ ...navBtn, marginTop: 8 }}
+              onClick={() => setEditBookingId(null)}
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {formOpen ? (
         <div

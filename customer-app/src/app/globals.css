@@ -98,6 +98,8 @@ body.theme-m12 .bg-white\/70 {
     radial-gradient(78% 82% at 58% 96%, rgba(243, 217, 138, 0.5), transparent 70%),
     radial-gradient(52% 62% at 96% 38%, rgba(255, 248, 220, 0.32), transparent 70%);
   animation: vip-smoke 9s ease-in-out infinite;
+  /* Own layer: the drift stays transform/opacity and does not repaint the type. */
+  will-change: transform, opacity;
 }
 
 @keyframes vip-pop {
@@ -130,6 +132,10 @@ body.theme-m12 .bg-white\/70 {
   .vip-pop,
   .vip-smoke-field {
     animation: none;
+    will-change: auto;
+  }
+  .vip-smoke-field {
+    opacity: 0.55;
   }
 }
 

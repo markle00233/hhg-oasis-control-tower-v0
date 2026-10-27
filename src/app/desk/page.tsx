@@ -46,6 +46,7 @@ import {
   zoneHasResources,
   type DeskZone,
 } from "@/lib/desk-zones";
+import { DeskBookingEdit } from "@/components/desk-booking-edit";
 import { DeskCourtSchedule } from "@/components/desk-court-schedule";
 import { DeskVipSubscribers } from "@/components/desk-vip-subscribers";
 import { DeskResourceGrid } from "@/components/desk-resource-grid";
@@ -5751,6 +5752,13 @@ export default function DeskAdministrationPage() {
                       billEvidenceFrozen(guestCart)
                     )}
                   </div>
+                ) : null}
+                {zone === "LONG_NUONG" || zone === "PICKLEBALL" ? (
+                  <DeskBookingEdit
+                    zone={zone}
+                    token={guestCart.token}
+                    onSaved={() => void load()}
+                  />
                 ) : null}
                 {(() => {
                   const draft = spaDraftRows();

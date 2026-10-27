@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DateChipRow } from "@/components/DateChipRow";
 import { Shell } from "@/components/Shell";
 import { OrderQrSuccess } from "@/components/OrderQrSuccess";
 import { isValidPhone } from "@/lib/phone";
@@ -396,31 +397,12 @@ export default function LongNuongBookPage() {
                 <h3 className="mt-6 text-sm font-bold text-slate-700">
                   Ngày tháng năm
                 </h3>
-                <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                  {dates.map((d) => {
-                    const on = d.key === dateKey;
-                    return (
-                      <button
-                        key={d.key}
-                        type="button"
-                        onClick={() => setDateKey(d.key)}
-                        className={`flex h-[4.5rem] w-16 shrink-0 flex-col items-center justify-center rounded-2xl text-sm font-bold ${
-                          on
-                            ? "bg-[#9a3412] text-white"
-                            : "bg-white text-[#64748b] shadow-sm"
-                        }`}
-                      >
-                        <span className="text-[10px] uppercase tracking-wide">
-                          {d.weekday}
-                        </span>
-                        <span className="text-lg leading-none">{d.dayNum}</span>
-                        <span className="mt-0.5 text-[9px] opacity-80">
-                          {padMonth(d.date)}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <DateChipRow
+                  dates={dates}
+                  value={dateKey}
+                  onChange={setDateKey}
+                  activeClassName="bg-[#9a3412] text-white"
+                />
                 {dateMeta ? (
                   <p className="mt-2 text-xs font-semibold text-slate-500">
                     {dateMeta.label}
@@ -569,10 +551,6 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="text-right text-sm font-bold">{value}</span>
     </div>
   );
-}
-
-function padMonth(d: Date) {
-  return `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
 function fmtRange(startAt: string, endAt: string) {

