@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAdmin } from "@/lib/auth";
+import { activeCrmMemberships } from "@/lib/crm-membership";
+import {
+  customerHasLoginAccount,
+  deskSegmentOf,
+} from "@/lib/desk-segment";
 import { prisma } from "@/lib/prisma";
 
-/** Khách app (QR pass) — CRM › Khách lẻ. Chưa có tên → hiển thị ID. */
+/** Khách app (QR pass). Chưa có tên → hiển thị ID. */
 export async function GET(req: NextRequest) {
   const gate = await requireSystemAdmin();
   if ("error" in gate) return gate.error;
@@ -40,8 +45,11 @@ export async function GET(req: NextRequest) {
           username: true,
           status: true,
           phone: true,
+          phoneNormalized: true,
           shortId: true,
           segment: true,
+          vipExpiresAt: true,
+          vipPlanLabel: true,
           intendedServices: true,
           adminConfirmedAt: true,
           createdAt: true,
@@ -71,13 +79,23 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
+    const crm = await activeCrmMemberships(
+      rows.map((c) => c.phoneNormalized || "").filter((p): p is string => !!p)
+    );
+
     return NextResponse.json({
       ok: true,
       days,
       total,
       customers: rows.map((c) => {
         const last = c.events[0];
-        const segment = c.segment === "MEMBER" ? "MEMBER" : "WALK_IN";
+        const marked = deskSegmentOf({
+          segment: c.segment,
+          vipExpiresAt: c.vipExpiresAt,
+          vipPlanLabel: c.vipPlanLabel,
+          hasAccount: customerHasLoginAccount(c),
+          crmMember: !!(c.phoneNormalized && crm.has(c.phoneNormalized)),
+        });
         return {
           id: c.id,
           customerCode: c.customerCode,
@@ -85,8 +103,8 @@ export async function GET(req: NextRequest) {
           status: c.status,
           phone: c.phone,
           shortId: c.shortId,
-          segment,
-          segmentLabel: segment === "MEMBER" ? "Member" : "Khách lẻ",
+          segment: marked.segment,
+          segmentLabel: marked.segmentLabel,
           intendedServices: c.intendedServices,
           adminConfirmedAt: c.adminConfirmedAt,
           createdAt: c.createdAt,

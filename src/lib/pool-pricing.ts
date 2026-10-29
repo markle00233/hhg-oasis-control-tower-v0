@@ -1,4 +1,8 @@
-import { getPoolItem, type PoolMenuItem } from "@/lib/olympic-pool-menu";
+import {
+  getPoolItem,
+  isVipPoolPackage,
+  type PoolMenuItem,
+} from "@/lib/olympic-pool-menu";
 import { sameDayMembershipDiscountVnd } from "@/lib/same-day-membership";
 
 export type PoolCartLine = { itemId: string; qty: number };
@@ -50,7 +54,7 @@ export function computePoolPricing(
       accessorySubtotalVnd += lineSubtotalVnd;
       accessoryQty += qty;
     }
-    if (item.category === "goi-thang") {
+    if (item.category === "goi-thang" && !isVipPoolPackage(item.id)) {
       membershipSubtotalVnd += lineSubtotalVnd;
     }
     lines.push({

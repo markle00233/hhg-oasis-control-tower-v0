@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
+import {
+  customerHasLoginAccount,
+  deskSegmentOf,
+} from "@/lib/desk-segment";
 import { prisma } from "@/lib/prisma";
 
-/** Xác nhận tài khoản tại quầy + ghi dịch vụ sẽ dùng + Member/Khách lẻ. */
+/** Xác nhận tài khoản tại quầy + ghi dịch vụ sẽ dùng. */
 export async function PATCH(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -64,6 +68,13 @@ export async function PATCH(
       acknowledged = result.count;
     }
 
+    const marked = deskSegmentOf({
+      segment: updated.segment,
+      vipExpiresAt: updated.vipExpiresAt,
+      vipPlanLabel: updated.vipPlanLabel,
+      hasAccount: customerHasLoginAccount(updated),
+    });
+
     return NextResponse.json({
       ok: true,
       acknowledged,
@@ -71,8 +82,8 @@ export async function PATCH(
         id: updated.id,
         phone: updated.phone,
         shortId: updated.shortId,
-        segment: updated.segment,
-        segmentLabel: updated.segment === "MEMBER" ? "Member" : "Khách lẻ",
+        segment: marked.segment,
+        segmentLabel: marked.segmentLabel,
         intendedServices: updated.intendedServices
           ? JSON.parse(updated.intendedServices)
           : [],

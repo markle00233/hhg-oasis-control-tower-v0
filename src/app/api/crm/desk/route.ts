@@ -14,6 +14,10 @@ import {
   miaOlympicSector,
 } from "@/lib/desk-zones";
 import {
+  customerHasLoginAccount,
+  deskSegmentOf,
+} from "@/lib/desk-segment";
+import {
   isOlympicPackageId,
   OLYMPIC_PACKAGE_IDS,
   vipStartedAtFromExpiry,
@@ -26,6 +30,52 @@ import {
   formatVnDateTime,
   withVnBookingClock,
 } from "@/lib/revise-booking";
+
+const STAFF_ID_KEYS = [
+  "verifiedByUserId",
+  "createdByStaffId",
+  "staffUserId",
+] as const;
+const staffNameCache = new Map<string, string>();
+
+function eventMeta(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+async function rememberStaffNames(ids: Set<string>) {
+  const missing: string[] = [];
+  for (const id of ids) {
+    if (id && !staffNameCache.has(id)) missing.push(id);
+  }
+  if (!missing.length) return;
+  const users = await prisma.user.findMany({
+    where: { id: { in: missing } },
+    select: { id: true, displayName: true, username: true },
+  });
+  const found = new Set<string>();
+  for (const u of users) {
+    found.add(u.id);
+    staffNameCache.set(u.id, u.displayName?.trim() || u.username || "");
+  }
+  for (const id of missing) {
+    if (!found.has(id)) staffNameCache.set(id, "");
+  }
+}
+
+function staffFromMeta(meta: Record<string, unknown>) {
+  const written =
+    typeof meta.staffName === "string" ? meta.staffName.trim() : "";
+  if (written && written.toLowerCase() !== "desk") return written;
+  for (const key of STAFF_ID_KEYS) {
+    const id = meta[key];
+    if (typeof id !== "string") continue;
+    const name = staffNameCache.get(id);
+    if (name) return name;
+  }
+  return null;
+}
 
 /** Quầy — mỗi yêu cầu QR = 1 dòng (không ghi đè cùng khách). */
 function vnDayBounds(ymd: string) {
@@ -199,8 +249,7 @@ export async function GET(req: NextRequest) {
     }
 
     /**
-     * Khách có cart PENDING/OPEN phải hiện để Duyệt — kể cả thiếu SĐT.
-     * (Trước đây `phoneNormalized: { not: null }` làm mất đặt bàn Lòng Nướng / QR.)
+     * Khách có cart hoặc lần quét trong ca phải hiện — kể cả đơn khách lẻ không SĐT.
      */
     const rows = await prisma.appCustomer.findMany({
       where: {
@@ -217,7 +266,6 @@ export async function GET(req: NextRequest) {
             },
           },
           {
-            phoneNormalized: { not: null },
             events: {
               some: {
                 createdAt: {
@@ -315,6 +363,8 @@ export async function GET(req: NextRequest) {
             status: true,
             totalVnd: true,
             createdAt: true,
+            createdById: true,
+            service: { select: { serviceCode: true } },
             items: {
               select: {
                 itemId: true,
@@ -558,6 +608,21 @@ export async function GET(req: NextRequest) {
         for (const b of found) bookingClocks.set(b.id, b);
       }
 
+      const staffIds = new Set<string>();
+      for (const c of rows) {
+        for (const o of c.orders) {
+          if (o.createdById) staffIds.add(o.createdById);
+        }
+        for (const e of c.events) {
+          const meta = eventMeta(e.metadata);
+          for (const key of STAFF_ID_KEYS) {
+            const id = meta[key];
+            if (typeof id === "string" && id) staffIds.add(id);
+          }
+        }
+      }
+      await rememberStaffNames(staffIds);
+
       const arrivals = rows
       .map((c) => {
         const crmMember = !!(
@@ -566,11 +631,14 @@ export async function GET(req: NextRequest) {
         const vipActive =
           String(c.segment || "").toUpperCase() === "VIP" &&
           (!c.vipExpiresAt || c.vipExpiresAt.getTime() > Date.now());
-        const segment = vipActive
-          ? "VIP"
-          : c.segment === "MEMBER" || crmMember
-            ? "MEMBER"
-            : "WALK_IN";
+        const marked = deskSegmentOf({
+          segment: c.segment,
+          vipExpiresAt: c.vipExpiresAt,
+          vipPlanLabel: c.vipPlanLabel,
+          hasAccount: customerHasLoginAccount(c),
+          crmMember,
+        });
+        const segment = marked.segment;
         const crmMem =
           (c.phoneNormalized && membershipByPhone.get(c.phoneNormalized)) ||
           null;
@@ -636,6 +704,7 @@ export async function GET(req: NextRequest) {
               meta.manualDiscountNote.trim()
                 ? meta.manualDiscountNote.trim()
                 : null,
+            staffName: staffFromMeta(meta),
             ticketItems: orderItems.map((i) => {
               const row = i as {
                 name?: string;
@@ -678,6 +747,8 @@ export async function GET(req: NextRequest) {
           at: o.createdAt,
           status: o.status,
           totalVnd: o.totalVnd,
+          serviceCode: o.service?.serviceCode,
+          staffName: o.createdById ? staffNameCache.get(o.createdById) || null : null,
           items: o.items.map((i) => ({
             itemId: i.itemId,
             nameVi: i.nameVi,
@@ -745,6 +816,7 @@ export async function GET(req: NextRequest) {
           (c.customerCode ? String(c.customerCode).slice(-6) : null);
         const fullName =
           (c.fullName && c.fullName.trim()) ||
+          (/^anon-/i.test(c.username || "") ? "Khách lẻ" : null) ||
           c.username ||
           c.customerCode ||
           null;
@@ -756,12 +828,7 @@ export async function GET(req: NextRequest) {
           phone,
           shortId,
           segment,
-          segmentLabel:
-            segment === "VIP"
-              ? "VIP"
-              : segment === "MEMBER"
-                ? "Member"
-                : "Khách lẻ",
+          segmentLabel: marked.segmentLabel,
           vipStartedAt: c.vipStartedAt || packageStart.get(c.id) || null,
           pointsBalance: c.pointsBalance ?? 0,
           swimBonusLeft: (() => {

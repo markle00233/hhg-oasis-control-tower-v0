@@ -167,6 +167,81 @@ export const POOL_MENU: PoolMenuItem[] = [
   },
 ];
 
+/** Vé lẻ + gói Hồ VIP. Phụ kiện và lượt tự chọn dùng chung với Olympic. */
+const VIP_PACKAGE_NOTE = "Tổng phí cả kỳ hạn";
+
+function vipPackage(
+  months: 1 | 3 | 6 | 12,
+  who: "child" | "adult",
+  priceVnd: number
+): PoolMenuItem {
+  const label = who === "child" ? "trẻ em" : "người lớn";
+  return {
+    id: `vip-${months}m-${who}`,
+    category: "goi-thang",
+    nameVi: `Gói VIP ${months} tháng — ${label}`,
+    priceVnd,
+    note: VIP_PACKAGE_NOTE,
+  };
+}
+
+export const VIP_POOL_MENU: PoolMenuItem[] = [
+  {
+    id: "vip-u13-day",
+    category: "tre-em",
+    nameVi: "Vé lẻ VIP — dưới 1,3m",
+    nameEn: "VIP day ticket · under 1.3m",
+    priceVnd: 300_000,
+    note: "Trẻ em · không giới hạn thời gian",
+  },
+  {
+    id: "vip-o13-day",
+    category: "nguoi-lon",
+    nameVi: "Vé lẻ VIP — từ 1,3m",
+    nameEn: "VIP day ticket · 1.3m+",
+    priceVnd: 379_000,
+    note: "Người lớn · không giới hạn thời gian",
+  },
+  vipPackage(1, "child", 1_000_000),
+  vipPackage(1, "adult", 1_300_000),
+  vipPackage(3, "child", 2_700_000),
+  vipPackage(3, "adult", 3_400_000),
+  vipPackage(6, "child", 4_800_000),
+  vipPackage(6, "adult", 6_000_000),
+  vipPackage(12, "child", 7_700_000),
+  vipPackage(12, "adult", 9_600_000),
+];
+
+/** Phụ kiện và lượt tự chọn không đổi khi chuyển Olympic / VIP. */
+export function isSharedPoolCategory(category: string) {
+  return category === "phu-kien" || category === "tu-chon";
+}
+
+export function isVipPoolItem(id: string | null | undefined) {
+  return String(id || "").startsWith("vip-");
+}
+
+export function isVipPoolPackage(id: string | null | undefined) {
+  return /^vip-(1|3|6|12)m-/.test(String(id || ""));
+}
+
+/** Vé lẻ (Olympic hoặc VIP). Không gồm gói tháng, phụ kiện, lượt tự chọn. */
+export function isPoolDayTicket(id: string | null | undefined) {
+  const item = getPoolItem(String(id || ""));
+  return !!item && (item.category === "tre-em" || item.category === "nguoi-lon");
+}
+
+export function poolItemsForService(
+  service: "olympic" | "vip",
+  category: string
+) {
+  if (isSharedPoolCategory(category)) {
+    return POOL_MENU.filter((item) => item.category === category);
+  }
+  const source = service === "vip" ? VIP_POOL_MENU : POOL_MENU;
+  return source.filter((item) => item.category === category);
+}
+
 export function formatPoolPrice(item: PoolMenuItem) {
   if (item.priceVnd <= 0) return "0đ";
   if (item.priceAltVnd) {
@@ -176,5 +251,9 @@ export function formatPoolPrice(item: PoolMenuItem) {
 }
 
 export function getPoolItem(id: string) {
-  return POOL_MENU.find((i) => i.id === id) || null;
+  return (
+    POOL_MENU.find((i) => i.id === id) ||
+    VIP_POOL_MENU.find((i) => i.id === id) ||
+    null
+  );
 }

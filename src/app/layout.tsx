@@ -1,3 +1,6 @@
+import "./globals.css";
+import { ScrollbarFade } from "@/components/scrollbar-fade";
+
 const isAdminAllplace =
   process.env.NEXT_PUBLIC_APP_SURFACE === "adminAllplace";
 
@@ -16,6 +19,7 @@ export default function RootLayout({
   return (
     <html lang="vi">
       <body style={{ margin: 0, fontFamily: "system-ui, sans-serif" }}>
+        <ScrollbarFade />
         {children}
       </body>
     </html>

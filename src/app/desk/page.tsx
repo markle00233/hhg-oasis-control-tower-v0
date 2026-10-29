@@ -17,17 +17,21 @@ import {
 } from "@/lib/spa-menu";
 import {
   POOL_CATEGORIES,
-  POOL_MENU,
   POOL_SWIM_BONUS_ID,
   formatPoolPrice,
+  getPoolItem,
+  isPoolDayTicket,
+  poolItemsForService,
+  type PoolMenuItem,
 } from "@/lib/olympic-pool-menu";
 import {
   MIA_MEMBERSHIP_DISC_PREFIX,
-  isOlympicMembershipActive,
+  isOlympicPackageId,
   miaOiDiscountPercentForPlanLabel,
   miaOiMembershipDiscountVnd,
   segmentAtTime,
 } from "@/lib/olympic-membership";
+import { badgeForPlanLabel, deskSegmentLabel, isVipSubscriptionLabel } from "@/lib/desk-segment";
 import { ADMIN_PANEL_PASSWORD, ADMIN_PANEL_USERNAME } from "@/lib/admin-panel";
 import { computePoolPricing } from "@/lib/pool-pricing";
 import { printPoolBill } from "@/lib/pool-bill-print";
@@ -122,6 +126,8 @@ type Scan = {
   deskBundleId?: string | null;
   manualDiscountVnd?: number | null;
   manualDiscountNote?: string | null;
+  /** Nhân viên xác thực / mở đơn. */
+  staffName?: string | null;
 };
 
 type DayOrder = {
@@ -129,6 +135,8 @@ type DayOrder = {
   at: string;
   status: string;
   totalVnd: number;
+  serviceCode?: string;
+  staffName?: string | null;
   items: {
     itemId?: string;
     nameVi: string;
@@ -160,6 +168,16 @@ type GuestCartPreview = {
   hasPointsRedeem?: boolean;
 };
 
+function segmentMarkStyle(segment: string): {
+  background: string;
+  color: string;
+} {
+  if (segment === "VIP") return { background: "#fef3c7", color: "#92400e" };
+  if (segment === "MEMBER") return { background: "#dbeafe", color: "#1d4ed8" };
+  if (segment === "WALK_IN") return { background: "#ffedd5", color: "#9a3412" };
+  return { background: "#f1f5f9", color: "#334155" };
+}
+
 type Arrival = {
   id: string;
   customerCode: string;
@@ -168,7 +186,7 @@ type Arrival = {
   shortId: string | null;
   segment: string;
   segmentLabel: string;
-  /** Current package start. Orders before this stay Khách lẻ. */
+  /** Current package start. Orders before this stay Khách. */
   vipStartedAt?: string | null;
   pointsBalance?: number;
   /** Lượt tự chọn còn lại của học viên bơi cùng SĐT. */
@@ -234,15 +252,91 @@ type DeskTicket = {
   hasPointsRedeem: boolean;
   /** Điểm cộng từ đơn này (10.000đ sau giảm = 1 điểm) */
   pointsEarned: number;
-  /** both = một lần lưu hồ + mía. */
-  orderKind?: "both" | "mia" | "olympic" | "other";
+  /** both = một lần lưu hồ + mía. vip = đơn khu VIP. */
+  orderKind?: "both" | "mia" | "olympic" | "vip" | "other";
   /** Đơn đồ uống khi dòng là hồ + mía. Undo vẫn dùng scan hồ. */
   miaOrderId?: string | null;
   /** Cùng lần lưu hồ + mía (client bundle id). */
   deskBundleId?: string | null;
   manualDiscountVnd?: number;
   manualDiscountNote?: string | null;
+  staffName?: string | null;
 };
+
+type DeskZoneFilter = "all" | "both" | "mia" | "olympic" | "vip";
+type DeskOrderSort =
+  | "time-desc"
+  | "time-asc"
+  | "price-desc"
+  | "price-asc"
+  | "staff"
+  | "name";
+
+const DESK_ZONE_FILTERS: { id: DeskZoneFilter; label: string }[] = [
+  { id: "all", label: "Tất cả" },
+  { id: "both", label: "Mía Ơi + Olympic" },
+  { id: "mia", label: "Mía Ơi" },
+  { id: "olympic", label: "Olympic" },
+  { id: "vip", label: "VIP" },
+];
+
+const DESK_ORDER_SORTS: { id: DeskOrderSort; label: string }[] = [
+  { id: "time-desc", label: "Mới nhất" },
+  { id: "time-asc", label: "Cũ nhất" },
+  { id: "price-desc", label: "Cao đến thấp" },
+  { id: "price-asc", label: "Thấp đến cao" },
+  { id: "staff", label: "Nhân viên đứng ca" },
+  { id: "name", label: "Tên khách" },
+];
+
+const SORT_GROUP: Record<DeskOrderSort, string> = {
+  "time-desc": "time",
+  "time-asc": "time",
+  "price-desc": "price",
+  "price-asc": "price",
+  staff: "staff",
+  name: "name",
+};
+
+/** Add a sort, or replace the other direction of the same kind. Click again to clear it. */
+function toggleOrderSort(current: DeskOrderSort[], next: DeskOrderSort) {
+  const group = SORT_GROUP[next];
+  const idx = current.findIndex((id) => SORT_GROUP[id] === group);
+  if (idx >= 0 && current[idx] === next) {
+    const removed = current.filter((_, i) => i !== idx);
+    return removed.length ? removed : current;
+  }
+  if (idx >= 0) {
+    const copy = [...current];
+    copy[idx] = next;
+    return copy;
+  }
+  return [...current, next];
+}
+
+const DESK_PACKAGE_FILTERS: { id: string; label: string }[] = [
+  "oly-1m",
+  "oly-3m",
+  "oly-6m",
+  "oly-12m",
+  "vip-1m-child",
+  "vip-1m-adult",
+  "vip-3m-child",
+  "vip-3m-adult",
+  "vip-6m-child",
+  "vip-6m-adult",
+  "vip-12m-child",
+  "vip-12m-adult",
+]
+  .map((id) => {
+    const item = getPoolItem(id);
+    return item ? { id, label: item.nameVi } : null;
+  })
+  .filter((row): row is { id: string; label: string } => !!row);
+
+const PACKAGE_LABEL = new Map(
+  DESK_PACKAGE_FILTERS.map((p) => [p.id, p.label])
+);
 
 function orderSettled(t: DeskTicket) {
   const status = t.cart?.status;
@@ -419,15 +513,33 @@ function poolHistoryTicket(t: DeskTicket) {
   return isOlympicPoolScanCode(code);
 }
 
-function ticketSide(t: DeskTicket): "mia" | "olympic" | "other" {
+function isVipOrderCode(code: string | null | undefined) {
+  const z = String(code || "")
+    .trim()
+    .toUpperCase();
+  return z === "VIP" || z === "VIP_RESORT";
+}
+
+function ticketSide(t: DeskTicket): "mia" | "olympic" | "vip" | "other" {
+  const deskZone = String(t.scan?.deskOrderZone || "").toUpperCase();
+  const code = String(t.scan?.serviceCode || t.cart?.zoneCode || "").toUpperCase();
+  const orderCode = t.orderId
+    ? t.arrival.todayOrders?.find((o) => o.id === t.orderId)?.serviceCode
+    : "";
+  if (
+    isVipOrderCode(deskZone) ||
+    isVipOrderCode(code) ||
+    isVipOrderCode(t.cart?.zoneCode) ||
+    isVipOrderCode(orderCode)
+  ) {
+    return "vip";
+  }
   const text = `${t.billText || ""} ${t.billItems.map((i) => i.nameVi).join(" ")}`.trim();
   const hasBill =
     t.billItems.length > 0 || (text !== "" && text !== "—" && text !== "-");
   if (!hasBill) return "other";
-  const deskZone = String(t.scan?.deskOrderZone || "").toUpperCase();
   if (deskZone === "MIA_OI") return "mia";
   if (deskZone === "OLYMPIC_POOL" || deskZone === "OLYMPIC") return "olympic";
-  const code = String(t.scan?.serviceCode || t.cart?.zoneCode || "").toUpperCase();
   const event = String(t.scan?.eventType || "").toUpperCase();
   if (event === "POOL_ORDER") return "olympic";
   if (event === "MIA_OI_ORDER" || code === "MIA_OI") return "mia";
@@ -444,6 +556,58 @@ function ticketTime(t: DeskTicket) {
   const raw = t.scanAt || "";
   const n = raw ? new Date(raw).getTime() : 0;
   return Number.isFinite(n) ? n : 0;
+}
+
+function ticketStaffName(t: DeskTicket) {
+  return String(t.staffName || t.scan?.staffName || "").trim();
+}
+
+function ticketHasPackage(t: DeskTicket, itemId: string) {
+  const name = PACKAGE_LABEL.get(itemId) || "";
+  if (t.cart?.items.some((i) => i.id === itemId)) return true;
+  if (t.scan?.ticketItems?.some((i) => i.itemId === itemId)) return true;
+  if (name && t.billItems.some((i) => i.nameVi === name)) return true;
+  const orderIds = new Set(
+    [t.orderId, t.miaOrderId].filter((id): id is string => !!id)
+  );
+  if (!orderIds.size) return false;
+  return (t.arrival.todayOrders || []).some(
+    (o) => orderIds.has(o.id) && o.items.some((i) => i.itemId === itemId)
+  );
+}
+
+function foldVi(s: string) {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase();
+}
+
+function compareOne(a: DeskTicket, b: DeskTicket, sort: DeskOrderSort) {
+  if (sort === "time-asc") return ticketTime(a) - ticketTime(b);
+  if (sort === "time-desc") return ticketTime(b) - ticketTime(a);
+  if (sort === "price-asc") return (a.billTotal || 0) - (b.billTotal || 0);
+  if (sort === "price-desc") return (b.billTotal || 0) - (a.billTotal || 0);
+  if (sort === "staff") {
+    const as = ticketStaffName(a);
+    const bs = ticketStaffName(b);
+    if (!as && bs) return 1;
+    if (as && !bs) return -1;
+    return as.localeCompare(bs, "vi");
+  }
+  return String(a.arrival.fullName || "").localeCompare(
+    String(b.arrival.fullName || ""),
+    "vi"
+  );
+}
+
+function compareDeskTickets(a: DeskTicket, b: DeskTicket, sorts: DeskOrderSort[]) {
+  for (const sort of sorts) {
+    const diff = compareOne(a, b, sort);
+    if (diff) return diff;
+  }
+  return a.key.localeCompare(b.key);
 }
 
 /** Gộp vé hồ + đồ uống đã lưu cùng một lần thành 1 dòng. */
@@ -478,6 +642,10 @@ function mergeOrderPair(a: DeskTicket, b: DeskTicket): DeskTicket {
       [a.promoLabel, b.promoLabel].filter((p) => p && p !== "—").join(" · ") ||
       "—",
     orderKind: "both",
+    staffName:
+      [a.staffName, b.staffName, a.scan?.staffName, b.scan?.staffName]
+        .map((n) => String(n || "").trim())
+        .find(Boolean) || null,
     miaOrderId:
       a.miaOrderId ||
       b.miaOrderId ||
@@ -893,6 +1061,7 @@ function buildDeskTickets(
         hasPointsRedeem: promoView.hasPointsRedeem,
         pointsEarned: pointsFromSubtotal(bill.totalVnd ?? 0),
         deskBundleId: bill.deskBundleId || null,
+        staffName: bill.staffName || null,
         ...manualDiscountFields(bill),
       });
     }
@@ -946,6 +1115,7 @@ function buildDeskTickets(
         hasPointsRedeem: orderPromo.hasPointsRedeem,
         pointsEarned: pointsFromSubtotal(order.totalVnd),
         deskBundleId: scan?.deskBundleId || null,
+        staffName: order.staffName || scan?.staffName || null,
         ...manualDiscountFields(scan),
       });
     }
@@ -995,6 +1165,7 @@ function buildDeskTickets(
         hasPointsRedeem: scanPromo.hasPointsRedeem,
         pointsEarned: pointsFromSubtotal(scan.totalVnd ?? 0),
         deskBundleId: scan.deskBundleId || null,
+        staffName: scan.staffName || null,
         ...manualDiscountFields(scan),
       });
     }
@@ -1048,6 +1219,7 @@ function buildDeskTickets(
         hasVoucher: false,
         hasPointsRedeem: false,
         pointsEarned: 0,
+        staffName: scan.staffName || null,
       });
     }
   }
@@ -1139,9 +1311,17 @@ export default function DeskAdministrationPage() {
     Record<string, Record<string, number>>
   >({});
   const [orderMsg, setOrderMsg] = useState("");
-  const [orderFilter, setOrderFilter] = useState<
-    "all" | "both" | "mia" | "olympic"
-  >("all");
+  const [orderFilter, setOrderFilter] = useState<DeskZoneFilter>("all");
+  const [packageFilter, setPackageFilter] = useState("");
+  const [orderSorts, setOrderSorts] = useState<DeskOrderSort[]>(["time-desc"]);
+  const [staffQuery, setStaffQuery] = useState("");
+  const [nameQuery, setNameQuery] = useState("");
+  const [listMenu, setListMenu] = useState<
+    null | "zone" | "package" | "sort"
+  >(null);
+  const listMenuRef = useRef<HTMLDivElement>(null);
+  /** Vé và gói tháng trên quầy hồ. Phụ kiện không đổi theo nút này. */
+  const [poolService, setPoolService] = useState<"olympic" | "vip">("olympic");
   const [ordering, setOrdering] = useState(false);
   const [billViewer, setBillViewer] = useState<string | null>(null);
   const [billBusyToken, setBillBusyToken] = useState<string | null>(null);
@@ -1171,6 +1351,7 @@ export default function DeskAdministrationPage() {
       fullName: string;
       phone: string;
       shortId: string;
+      segment: string;
       segmentLabel: string;
     }[]
   >([]);
@@ -1242,9 +1423,44 @@ export default function DeskAdministrationPage() {
   );
 
   const visibleTickets = useMemo(() => {
-    if (!isMiaOlympic || orderFilter === "all") return groupedTickets;
-    return groupedTickets.filter((t) => t.orderKind === orderFilter);
-  }, [groupedTickets, isMiaOlympic, orderFilter]);
+    let rows = groupedTickets;
+    if (isMiaOlympic && orderFilter !== "all") {
+      rows =
+        orderFilter === "both"
+          ? rows.filter(
+              (t) => t.orderKind === "both" || t.orderKind === "vip"
+            )
+          : rows.filter((t) => t.orderKind === orderFilter);
+    }
+    if (isMiaOlympic && packageFilter) {
+      rows = rows.filter((t) => ticketHasPackage(t, packageFilter));
+    }
+    if (orderSorts.includes("staff") && staffQuery.trim()) {
+      const q = foldVi(staffQuery.trim());
+      rows = rows.filter((t) => foldVi(ticketStaffName(t)).includes(q));
+    }
+    if (orderSorts.includes("name") && nameQuery.trim()) {
+      const q = foldVi(nameQuery.trim());
+      rows = rows.filter((t) =>
+        foldVi(t.arrival.fullName || "").includes(q)
+      );
+    }
+    const sorts: DeskOrderSort[] = orderSorts.length
+      ? orderSorts
+      : ["time-desc"];
+    if (!isMiaOlympic || (sorts.length === 1 && sorts[0] === "time-desc")) {
+      return rows;
+    }
+    return [...rows].sort((a, b) => compareDeskTickets(a, b, sorts));
+  }, [
+    groupedTickets,
+    isMiaOlympic,
+    orderFilter,
+    packageFilter,
+    orderSorts,
+    staffQuery,
+    nameQuery,
+  ]);
 
   const guestTickets = useMemo(() => {
     if (!selected) return [];
@@ -1402,6 +1618,22 @@ export default function DeskAdministrationPage() {
       setError(e instanceof Error ? e.message : "Load failed");
     }
   }, [zone, viewDate]);
+
+  useEffect(() => {
+    if (!listMenu) return;
+    function onDown(e: MouseEvent) {
+      if (!listMenuRef.current?.contains(e.target as Node)) setListMenu(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setListMenu(null);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [listMenu]);
 
   useEffect(() => {
     if (!isSpa) return;
@@ -1801,7 +2033,7 @@ export default function DeskAdministrationPage() {
         await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
         throw new Error(
           sectorLogin
-            ? `Tài khoản này không phải quầy ${MIA_OLYMPIC_LABEL}. Dùng MIAOI, GYM, ADMINISTRATIONMIAOI, ADMINISTRATIONGYM hoặc ${ADMIN_PANEL_USERNAME}.`
+            ? `Tài khoản này không phải quầy ${MIA_OLYMPIC_LABEL}. Dùng MIAOI, GYM, VIP, ADMINISTRATIONMIAOI, ADMINISTRATIONGYM, ADMINISTRATIONVIP hoặc ${ADMIN_PANEL_USERNAME}.`
             : `Tài khoản này không phải khu ${picked.name}. Dùng ${picked.username}, ${zoneAdminUsername(picked.username)} hoặc ${ADMIN_PANEL_USERNAME}.`
         );
       }
@@ -1872,11 +2104,11 @@ export default function DeskAdministrationPage() {
     if (pick) applyGuestCart(pick);
   }
 
-  async function submitCreateGuest() {
+  async function submitCreateGuest(anonymous = false) {
     if (!zone || createGuestBusy) return;
     const fullName = guestName.trim();
     const phone = guestPhone.trim();
-    if (!fullName || !phone) {
+    if (!anonymous && (!fullName || !phone)) {
       setCreateGuestError("Nhập đủ tên và số điện thoại.");
       return;
     }
@@ -1886,11 +2118,11 @@ export default function DeskAdministrationPage() {
       const res = await fetch("/api/crm/desk/create-guest", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          zone,
-          fullName,
-          phone,
-        }),
+        body: JSON.stringify(
+          anonymous
+            ? { zone, anonymous: true, fullName }
+            : { zone, fullName, phone }
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không tạo được khách");
@@ -1911,10 +2143,10 @@ export default function DeskAdministrationPage() {
         segmentLabel?: string;
       };
       const fromList = list.find((a) => a.id === cust.id);
-      const segment =
-        cust.segment === "VIP" || fromList?.segment === "VIP"
-          ? "VIP"
-          : "WALK_IN";
+      const segment = String(
+        cust.segment || fromList?.segment || (anonymous ? "WALK_IN" : "ACCOUNT")
+      );
+      const segmentLabel = cust.segmentLabel || deskSegmentLabel(segment);
       const scanEventId = String(data.scanEventId || "");
       const fallbackScan: Scan | null = scanEventId
         ? {
@@ -1932,6 +2164,10 @@ export default function DeskAdministrationPage() {
       const arrival: Arrival = fromList
         ? {
             ...fromList,
+            segment,
+            segmentLabel,
+            fullName: cust.fullName || fromList.fullName,
+            phone: cust.phone ?? fromList.phone,
             todayScans:
               fallbackScan &&
               !fromList.todayScans.some((s) => s.id === fallbackScan.id)
@@ -1945,8 +2181,7 @@ export default function DeskAdministrationPage() {
             phone: cust.phone,
             shortId: cust.shortId,
             segment,
-            segmentLabel:
-              cust.segmentLabel || (segment === "VIP" ? "VIP" : "Khách lẻ"),
+            segmentLabel,
             updatedAt: new Date().toISOString(),
             lastVisitAt: new Date().toISOString(),
             pendingAdmin: true,
@@ -1964,6 +2199,8 @@ export default function DeskAdministrationPage() {
       );
       setGuestName("");
       setGuestPhone("");
+      setGuestSearch("");
+      setGuestHits([]);
       setCreateGuestOpen(false);
       setOrderMsg(data.message || "Đã mở đơn. Chọn món / vé rồi xác thực.");
     } catch (e) {
@@ -2111,24 +2348,25 @@ export default function DeskAdministrationPage() {
           planLabel?: string;
           expiresAt?: string;
         } | null;
+        const fromPlan = membership?.planLabel
+          ? badgeForPlanLabel(membership.planLabel)
+          : null;
         const segment =
-          membership?.planLabel ||
-          cust.segment === "VIP" ||
-          fromList?.segment === "VIP"
-            ? "VIP"
-            : cust.segment === "MEMBER" || fromList?.segment === "MEMBER"
-              ? "MEMBER"
-              : "WALK_IN";
+          fromPlan?.segment ||
+          fromList?.segment ||
+          (cust.segment === "VIP" || cust.segment === "MEMBER"
+            ? cust.segment
+            : cust.segment === "WALK_IN"
+              ? "WALK_IN"
+              : "ACCOUNT");
+        const segmentLabel =
+          fromPlan?.segmentLabel ||
+          deskSegmentLabel(segment, fromList?.segmentLabel || "Khách");
         const arrival: Arrival = fromList
           ? {
               ...fromList,
               segment,
-              segmentLabel:
-                segment === "VIP"
-                  ? "VIP"
-                  : segment === "MEMBER"
-                    ? "Member"
-                    : fromList.segmentLabel,
+              segmentLabel,
               ...(membership?.planLabel
                 ? {
                     packageLabel: membership.planLabel,
@@ -2144,12 +2382,7 @@ export default function DeskAdministrationPage() {
               phone: cust.phone,
               shortId: cust.shortId,
               segment,
-              segmentLabel:
-                segment === "VIP"
-                  ? "VIP"
-                  : segment === "MEMBER"
-                    ? "Member"
-                    : "Khách lẻ",
+              segmentLabel,
               packageLabel: membership?.planLabel || null,
               packageExpiresAt: membership?.expiresAt || null,
               updatedAt: new Date().toISOString(),
@@ -2259,15 +2492,23 @@ export default function DeskAdministrationPage() {
       : "Khách không có lượt tự chọn từ gói bơi.";
   }
 
+  /** App package still on the account (Gói Olympic or Gói VIP). Desk badge is Member/VIP, not the stored flag. */
+  function activeAppPackageLabel() {
+    if (!selected?.packageLabel || !selected.packageExpiresAt) return null;
+    const label = selected.packageLabel;
+    if (!/olympic/i.test(label) && !isVipSubscriptionLabel(label)) return null;
+    const exp = new Date(selected.packageExpiresAt).getTime();
+    if (Number.isNaN(exp) || exp <= Date.now()) return null;
+    return label.replace(/^\s*gói\s+/i, "");
+  }
+
+  /** Server rejects another Olympic package while any app package is still active. Tickets and gói VIP stay open. */
+  function olympicPackageBlocked(itemId: string) {
+    return isOlympicPackageId(itemId) && !!activeAppPackageLabel();
+  }
+
   function setScanQty(scanId: string, itemId: string, qty: number) {
-    const item = getPoolItemById(itemId);
-    if (
-      qty > 0 &&
-      item?.category === "goi-thang" &&
-      olympicMembershipLocked()
-    ) {
-      return;
-    }
+    if (qty > 0 && olympicPackageBlocked(itemId)) return;
     const cap = itemId === POOL_SWIM_BONUS_ID ? swimBonusCap() : 99;
     const nextQty = Math.min(qty, cap);
     setScanCarts((prev) => {
@@ -2281,19 +2522,18 @@ export default function DeskAdministrationPage() {
     });
   }
 
-  function olympicMembershipLocked() {
-    if (!selected) return false;
-    return isOlympicMembershipActive({
-      segment: selected.segment,
-      vipExpiresAt: selected.packageExpiresAt,
-    });
-  }
-
   function guestHasSameDayOlympicOrder() {
     return (selected?.todayOrders || []).some((o) => {
       const st = String(o.status || "").toUpperCase();
       return st !== "CANCELLED" && st !== "PENDING" && st !== "SUBMITTED";
     });
+  }
+
+  function poolSameDay(lines: { itemId: string }[]) {
+    return (
+      guestHasSameDayOlympicOrder() ||
+      lines.some((line) => isPoolDayTicket(line.itemId))
+    );
   }
 
   function scanCartTotal(scanId: string) {
@@ -2302,7 +2542,7 @@ export default function DeskAdministrationPage() {
       .filter(([, q]) => q > 0)
       .map(([itemId, qty]) => ({ itemId, qty }));
     const priced = computePoolPricing(lines, {
-      sameDayMembership: guestHasSameDayOlympicOrder(),
+      sameDayMembership: poolSameDay(lines),
     });
     const qty = priced.lines.reduce((s, l) => s + l.qty, 0);
     return {
@@ -2315,7 +2555,106 @@ export default function DeskAdministrationPage() {
   }
 
   function getPoolItemById(id: string) {
-    return POOL_MENU.find((i) => i.id === id) || null;
+    return getPoolItem(id);
+  }
+
+  function scanCartLines(scanId: string) {
+    return Object.entries(scanCarts[scanId] || {})
+      .filter(([, qty]) => qty > 0)
+      .map(([itemId, qty]) => ({ itemId, qty }));
+  }
+
+  function poolMenuPriceLine(
+    item: PoolMenuItem,
+    scanId: string,
+    membershipHeld: boolean,
+    showNote: boolean
+  ) {
+    const price =
+      item.category === "goi-thang" &&
+      poolService === "olympic" &&
+      poolSameDay(scanCartLines(scanId)) &&
+      !membershipHeld
+        ? `${Math.round((item.priceVnd * 0.9) / 1000)}K (−10%)`
+        : item.id.startsWith("vip-")
+          ? formatVnd(item.priceVnd)
+          : formatPoolPrice(item);
+    const duration = item.durationMin ? ` · ${item.durationMin}'` : "";
+    const note =
+      item.note && (showNote || item.id.startsWith("vip-")) ? ` · ${item.note}` : "";
+    return `${price}${duration}${note}`;
+  }
+
+  function poolServiceButtons(margin = "0") {
+    return (
+      <div style={{ display: "flex", gap: 6, flexShrink: 0, margin }}>
+        {(
+          [
+            ["olympic", "Olympic"],
+            ["vip", "VIP"],
+          ] as const
+        ).map(([id, label]) => {
+          const on = poolService === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => selectPoolService(id)}
+              style={{
+                border: on ? "1px solid #0c4a6e" : "1px solid #bae6fd",
+                background: on ? "#0c4a6e" : "#fff",
+                color: on ? "#fff" : "#0c4a6e",
+                borderRadius: 999,
+                height: 28,
+                padding: "0 12px",
+                fontWeight: 800,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function accessoryDiscountNote() {
+    const gear = boardPoolTotals();
+    if (gear.accessoryDiscount > 0) {
+      return (
+        <p
+          style={{
+            margin: "0 0 8px",
+            fontSize: 12,
+            fontWeight: 800,
+            color: "#047857",
+          }}
+        >
+          ✓ Đang giảm −10% phần phụ kiện (−{formatVnd(gear.accessoryDiscount)})
+        </p>
+      );
+    }
+    if (gear.accessoryQty === 1) {
+      return (
+        <p
+          style={{
+            margin: "0 0 8px",
+            fontSize: 12,
+            fontWeight: 700,
+            color: "#9a3412",
+          }}
+        >
+          Thêm 1 món nữa để −10% phần phụ kiện.
+        </p>
+      );
+    }
+    return null;
+  }
+
+  function selectPoolService(next: "olympic" | "vip") {
+    setPoolService(next);
   }
 
   /** Lines already on an approved Olympic cart — not a second purchase. */
@@ -2386,12 +2725,14 @@ export default function DeskAdministrationPage() {
     const fromCart = approvedCartPoolLines();
     const items =
       mode === "cart" ? fromCart : mergePoolLines(fromCart, added);
-    if (
-      olympicMembershipLocked() &&
-      items.some((i) => getPoolItemById(i.itemId)?.category === "goi-thang")
-    ) {
+    if (items.some((i) => olympicPackageBlocked(i.itemId))) {
+      const until = selected?.packageExpiresAt
+        ? new Date(selected.packageExpiresAt).toLocaleDateString("vi-VN")
+        : "";
       setError(
-        "Khách đang dùng gói hội viên. Hết hạn mới chọn gói mới."
+        `Khách đang dùng gói ${activeAppPackageLabel() || "hội viên"}${
+          until ? ` đến ${until}` : ""
+        }. Hết hạn mới chọn gói Olympic mới.`
       );
       return;
     }
@@ -2479,15 +2820,16 @@ export default function DeskAdministrationPage() {
         ? new Date(data.membership.expiresAt).toLocaleDateString("vi-VN")
         : "";
       const memNote = data.membership?.planLabel
-        ? ` · gói ${data.membership.planLabel}${memUntil ? ` đến ${memUntil}` : ""}`
+        ? ` · gói ${data.membership.planLabel.replace(/^\s*gói\s+/i, "")}${memUntil ? ` đến ${memUntil}` : ""}`
         : "";
       if (data.membership?.planLabel) {
+        const badge = badgeForPlanLabel(data.membership.planLabel);
         setSelected((prev) =>
           prev
             ? {
                 ...prev,
-                segment: "VIP",
-                segmentLabel: "VIP",
+                segment: badge.segment,
+                segmentLabel: badge.segmentLabel,
                 packageLabel: data.membership.planLabel,
                 packageExpiresAt: data.membership.expiresAt || prev.packageExpiresAt,
               }
@@ -3305,16 +3647,9 @@ export default function DeskAdministrationPage() {
   }
 
   function deskMiaMembershipPercent() {
-    if (!isMiaOi || !selected) return 0;
-    if (
-      !isOlympicMembershipActive({
-        segment: selected.segment,
-        vipExpiresAt: selected.packageExpiresAt,
-      })
-    ) {
-      return 0;
-    }
-    return miaOiDiscountPercentForPlanLabel(selected.packageLabel);
+    if (!isMiaOi || !activeAppPackageLabel()) return 0;
+    if (!/olympic/i.test(selected?.packageLabel || "")) return 0;
+    return miaOiDiscountPercentForPlanLabel(selected?.packageLabel);
   }
 
   function focusedPoolScan() {
@@ -3340,16 +3675,23 @@ export default function DeskAdministrationPage() {
   function boardPoolTotals() {
     const lines = focusedPoolLines();
     if (!lines.length) {
-      return { sum: 0, qty: 0, accessoryDiscount: 0, membershipDiscount: 0 };
+      return {
+        sum: 0,
+        qty: 0,
+        accessoryDiscount: 0,
+        membershipDiscount: 0,
+        accessoryQty: 0,
+      };
     }
     const priced = computePoolPricing(lines, {
-      sameDayMembership: guestHasSameDayOlympicOrder(),
+      sameDayMembership: poolSameDay(lines),
     });
     return {
       sum: priced.totalVnd,
       qty: priced.lines.reduce((s, l) => s + l.qty, 0),
       accessoryDiscount: priced.accessoryDiscountVnd,
       membershipDiscount: priced.membershipDiscountVnd,
+      accessoryQty: priced.accessoryQty,
     };
   }
 
@@ -3490,8 +3832,8 @@ export default function DeskAdministrationPage() {
       notes.push(
         `✓ Phụ kiện ≥2 món: −10% phụ kiện (−${formatVnd(pool.accessoryDiscount)})`
       );
-    } else if (pool.qty > 0) {
-      notes.push("Phụ kiện: chọn ≥2 món mới −10% (chỉ phần phụ kiện)");
+    } else if (pool.accessoryQty === 1) {
+      notes.push("Phụ kiện: thêm 1 món nữa để −10% (chỉ phần phụ kiện)");
     }
     if (pool.membershipDiscount > 0) {
       notes.push(
@@ -4055,10 +4397,12 @@ export default function DeskAdministrationPage() {
               </>
             ) : miaOlympicSector(picked.code) ? (
               <>
-                Acc khu: <strong>MIAOI</strong> hoặc <strong>GYM</strong>
+                Acc khu: <strong>MIAOI</strong>, <strong>GYM</strong> hoặc{" "}
+                <strong>VIP</strong>
                 <br />
                 Acc admin khu: <strong>ADMINISTRATIONMIAOI</strong> /{" "}
-                <strong>ADMINISTRATIONGYM</strong> · mk <strong>12345678</strong>
+                <strong>ADMINISTRATIONGYM</strong> /{" "}
+                <strong>ADMINISTRATIONVIP</strong> · mk <strong>12345678</strong>
               </>
             ) : (
               <>
@@ -4190,7 +4534,7 @@ export default function DeskAdministrationPage() {
               style={{ ...styles.actionBtn, background: "#7c2d12" }}
               onClick={() => setResourceMapOpen(true)}
             >
-              {zone === "VIP_RESORT" ? "Sơ đồ VIP" : "Sơ đồ bàn"}
+              Sơ đồ bàn
             </button>
           ) : null}
           <div
@@ -4291,42 +4635,204 @@ export default function DeskAdministrationPage() {
       </header>
       {isMiaOlympic ? (
         <div
+          ref={listMenuRef}
           style={{
             display: "flex",
-            gap: 6,
+            gap: 8,
             flexWrap: "wrap",
             justifyContent: "flex-end",
             margin: "0 0 12px",
+            position: "relative",
+            zIndex: 20,
           }}
         >
           {(
             [
-              ["all", "All"],
-              ["both", "Mía Ơi + Olympic"],
-              ["mia", "Mía Ơi"],
-              ["olympic", "Olympic"],
-            ] as const
-          ).map(([id, label]) => {
-            const on = orderFilter === id;
+              {
+                id: "zone" as const,
+                value:
+                  DESK_ZONE_FILTERS.find((f) => f.id === orderFilter)?.label ||
+                  "Tất cả",
+                active: orderFilter !== "all" || listMenu === "zone",
+                options: DESK_ZONE_FILTERS.map((f) => ({
+                  id: f.id,
+                  label: f.label,
+                  on: orderFilter === f.id,
+                  search: "",
+                })),
+              },
+              {
+                id: "package" as const,
+                value:
+                  DESK_PACKAGE_FILTERS.find((p) => p.id === packageFilter)
+                    ?.label || "Tất cả",
+                active: !!packageFilter || listMenu === "package",
+                options: [
+                  { id: "", label: "Tất cả", on: !packageFilter, search: "" },
+                  ...DESK_PACKAGE_FILTERS.map((p) => ({
+                    id: p.id,
+                    label: p.label,
+                    on: packageFilter === p.id,
+                    search: "",
+                  })),
+                ],
+              },
+              {
+                id: "sort" as const,
+                value:
+                  orderSorts
+                    .map(
+                      (id) => DESK_ORDER_SORTS.find((s) => s.id === id)?.label
+                    )
+                    .filter(Boolean)
+                    .join(" · ") || "Mới nhất",
+                active:
+                  orderSorts.length !== 1 ||
+                  orderSorts[0] !== "time-desc" ||
+                  listMenu === "sort",
+                options: DESK_ORDER_SORTS.map((s) => ({
+                  id: s.id,
+                  label: s.label,
+                  on: orderSorts.includes(s.id),
+                  search:
+                    s.id === "staff" ? "staff" : s.id === "name" ? "name" : "",
+                })),
+              },
+            ]
+          ).map((menu) => {
+            const open = listMenu === menu.id;
             return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setOrderFilter(id)}
-                style={{
-                  border: on ? "1px solid #1e3a5f" : "1px solid #cbd5e1",
-                  background: on ? "#1e3a5f" : "#fff",
-                  color: on ? "#fff" : "#0f172a",
-                  borderRadius: 999,
-                  height: 30,
-                  padding: "0 12px",
-                  fontWeight: 800,
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                {label}
-              </button>
+              <div key={menu.id} style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() =>
+                    setListMenu((cur) => (cur === menu.id ? null : menu.id))
+                  }
+                  style={{
+                    border: menu.active
+                      ? "1px solid #1e3a5f"
+                      : "1px solid #cbd5e1",
+                    background: menu.active ? "#1e3a5f" : "#fff",
+                    color: menu.active ? "#fff" : "#0f172a",
+                    borderRadius: 999,
+                    height: 34,
+                    padding: "0 14px",
+                    fontWeight: 800,
+                    fontSize: 12,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span>{menu.value}</span>
+                  <span aria-hidden style={{ fontSize: 10, opacity: 0.8 }}>
+                    {open ? "▴" : "▾"}
+                  </span>
+                </button>
+                {open ? (
+                  <div
+                    role="menu"
+                    style={{
+                      position: "absolute",
+                      top: 40,
+                      right: 0,
+                      minWidth: menu.id === "package" ? 280 : 220,
+                      maxHeight: menu.id === "package" ? 360 : undefined,
+                      overflowY: menu.id === "package" ? "auto" : undefined,
+                      background: "#fff",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 14,
+                      boxShadow: "0 16px 40px rgba(15,23,42,.16)",
+                      padding: 6,
+                      zIndex: 30,
+                      display: menu.id === "sort" ? "flex" : undefined,
+                      flexDirection: menu.id === "sort" ? "column" : undefined,
+                      gap: menu.id === "sort" ? 8 : undefined,
+                    }}
+                  >
+                    {menu.options.map((opt) => (
+                      <div key={opt.id}>
+                        <button
+                          type="button"
+                          role={
+                            menu.id === "sort" ? "menuitemcheckbox" : "menuitemradio"
+                          }
+                          aria-checked={opt.on}
+                          onClick={() => {
+                            if (menu.id === "zone") {
+                              setOrderFilter(opt.id as DeskZoneFilter);
+                              setListMenu(null);
+                              return;
+                            }
+                            if (menu.id === "package") {
+                              setPackageFilter(opt.id);
+                              setListMenu(null);
+                              return;
+                            }
+                            setOrderSorts((cur) =>
+                              toggleOrderSort(cur, opt.id as DeskOrderSort)
+                            );
+                          }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            border: 0,
+                            borderRadius: 10,
+                            background: opt.on ? "#1e3a5f" : "transparent",
+                            color: opt.on ? "#fff" : "#0f172a",
+                            fontWeight: 700,
+                            fontSize: 13,
+                            padding: "9px 12px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                        {opt.search && opt.on ? (
+                          <input
+                            type="search"
+                            value={
+                              opt.search === "staff" ? staffQuery : nameQuery
+                            }
+                            placeholder={
+                              opt.search === "staff"
+                                ? "Tìm nhân viên"
+                                : "Tìm tên khách"
+                            }
+                            aria-label={
+                              opt.search === "staff"
+                                ? "Tìm nhân viên đứng ca"
+                                : "Tìm tên khách"
+                            }
+                            onChange={(e) => {
+                              if (opt.search === "staff") {
+                                setStaffQuery(e.target.value);
+                              } else {
+                                setNameQuery(e.target.value);
+                              }
+                            }}
+                            style={{
+                              display: "block",
+                              width: "calc(100% - 12px)",
+                              margin: "8px 6px 0",
+                              boxSizing: "border-box",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: 8,
+                              padding: "7px 10px",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: "#0f172a",
+                            }}
+                          />
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             );
           })}
         </div>
@@ -4683,8 +5189,8 @@ export default function DeskAdministrationPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: 20 }}>Tạo đơn</h2>
                 <p style={{ ...styles.mute, marginTop: 4 }}>
-                  Khách lẻ tại quầy. Đăng nhập app: SĐT + mật khẩu là số điện
-                  thoại. VIP chỉ khi khách đăng ký gói.
+                  Có tài khoản: tìm hoặc nhập họ tên và SĐT. Mật khẩu app là
+                  số điện thoại. Khách không đăng ký: tạo đơn khách lẻ.
                 </p>
               </div>
               <button
@@ -4757,10 +5263,7 @@ export default function DeskAdministrationPage() {
                             marginLeft: 8,
                             fontSize: 11,
                             fontWeight: 800,
-                            color:
-                              hit.segmentLabel === "VIP"
-                                ? "#1d4ed8"
-                                : "#64748b",
+                            color: segmentMarkStyle(hit.segment || "").color,
                           }}
                         >
                           {hit.segmentLabel}
@@ -4780,7 +5283,8 @@ export default function DeskAdministrationPage() {
                     ))
                   ) : (
                     <p style={{ ...styles.mute, margin: 0, padding: 10 }}>
-                      Không thấy khách. Nhập họ tên + SĐT bên dưới để tạo mới.
+                      Không thấy khách. Nhập họ tên + SĐT để tạo tài khoản,
+                      hoặc tạo đơn khách lẻ.
                     </p>
                   )}
                 </div>
@@ -4826,9 +5330,23 @@ export default function DeskAdministrationPage() {
                 disabled={
                   !guestName.trim() || !guestPhone.trim() || createGuestBusy
                 }
-                onClick={() => void submitCreateGuest()}
+                onClick={() => void submitCreateGuest(false)}
               >
                 {createGuestBusy ? "Đang tạo…" : "Tạo đơn"}
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.ghost,
+                  width: "100%",
+                  fontWeight: 800,
+                  color: "#9a3412",
+                  opacity: createGuestBusy ? 0.45 : 1,
+                }}
+                disabled={createGuestBusy}
+                onClick={() => void submitCreateGuest(true)}
+              >
+                {createGuestBusy ? "Đang tạo…" : "Khách lẻ · không tài khoản"}
               </button>
             </div>
           </div>
@@ -4913,7 +5431,7 @@ export default function DeskAdministrationPage() {
         <DeskCourtSchedule zone={zone} onChanged={() => void load()} />
       ) : null}
 
-      {/* Modal sơ đồ bàn / VIP — Spa không dùng giường */}
+      {/* Modal sơ đồ bàn — Spa không dùng giường */}
       {resourceMapOpen &&
       zone &&
       zone !== "SAUNA" &&
@@ -4958,7 +5476,7 @@ export default function DeskAdministrationPage() {
               }}
             >
               <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>
-                {zone === "VIP_RESORT" ? "Sơ đồ VIP" : "Sơ đồ bàn"}
+                Sơ đồ bàn
               </h2>
               <button
                 type="button"
@@ -4992,6 +5510,7 @@ export default function DeskAdministrationPage() {
           <thead>
             <tr>
               <th style={styles.th}>Họ tên</th>
+              <th style={styles.th}>Nhân viên đứng ca</th>
               <th style={styles.th}>SĐT</th>
               <th style={styles.th}>ID</th>
               <th style={styles.th}>Tạo / Quét</th>
@@ -5009,14 +5528,19 @@ export default function DeskAdministrationPage() {
             {visibleTickets.length === 0 ? (
               <tr>
                 <td
-                  colSpan={(hasCatalog ? 10 : 9) - (isMiaOi ? 1 : 0)}
+                  colSpan={(hasCatalog ? 11 : 10) - (isMiaOi ? 1 : 0)}
                   style={{ ...styles.td, color: "#64748b", padding: 28 }}
                 >
                   {viewDate
                     ? `Không có khách vào / yêu cầu tại ${zoneName} ngày ${viewDate.split("-").reverse().join("/")}.`
-                    : orderFilter !== "all"
-                      ? "Không có đơn cho bộ lọc này."
-                      : `Chưa có khách gửi yêu cầu / quét QR ${zoneName} trong 12 giờ.`}
+                    : (orderSorts.includes("staff") && staffQuery.trim()) ||
+                        (orderSorts.includes("name") && nameQuery.trim())
+                      ? "Không có đơn khớp từ khóa."
+                      : packageFilter
+                        ? "Không có đơn cho gói này."
+                        : orderFilter !== "all"
+                        ? "Không có đơn cho bộ lọc này."
+                        : `Chưa có khách gửi yêu cầu / quét QR ${zoneName} trong 12 giờ.`}
                 </td>
               </tr>
             ) : (
@@ -5056,6 +5580,9 @@ export default function DeskAdministrationPage() {
                     <td style={{ ...styles.td, fontWeight: 700, whiteSpace: "nowrap" }}>
                       {a.fullName || "—"}
                     </td>
+                    <td style={{ ...styles.td, whiteSpace: "nowrap", fontWeight: 700 }}>
+                      {ticketStaffName(t) || "—"}
+                    </td>
                     <td style={{ ...styles.td, whiteSpace: "nowrap" }}>
                       {a.phone || "—"}
                     </td>
@@ -5074,10 +5601,7 @@ export default function DeskAdministrationPage() {
                       <span
                         style={{
                           ...styles.pill,
-                          background:
-                            shown.segment === "MEMBER" ? "#dbeafe" : "#f1f5f9",
-                          color:
-                            shown.segment === "MEMBER" ? "#1d4ed8" : "#334155",
+                          ...segmentMarkStyle(shown.segment),
                         }}
                       >
                         {shown.segmentLabel}
@@ -5547,14 +6071,24 @@ export default function DeskAdministrationPage() {
                 <p style={styles.mute}>
                   SĐT <strong>{selected.phone || "—"}</strong> · ID{" "}
                   <strong>{selected.shortId || "—"}</strong> ·{" "}
-                  {selected.segmentLabel}
+                  <span
+                    style={{
+                      ...styles.pill,
+                      ...segmentMarkStyle(selected.segment),
+                    }}
+                  >
+                    {selected.segmentLabel}
+                  </span>
                   {isMiaOlympic && typeof selected.pointsBalance === "number"
                     ? ` · ${selected.pointsBalance} điểm`
                     : ""}
                 </p>
                 {selected.packageLabel ? (
                   <p style={{ ...styles.mute, marginTop: 4 }}>
-                    Gói <strong>{selected.packageLabel}</strong>
+                    Gói{" "}
+                    <strong>
+                      {selected.packageLabel.replace(/^\s*gói\s+/i, "")}
+                    </strong>
                     {selected.packageExpiresAt
                       ? ` · đến ${new Date(
                           selected.packageExpiresAt
@@ -5849,16 +6383,27 @@ export default function DeskAdministrationPage() {
                       background: "#f0f9ff",
                     }}
                   >
-                    <p
+                    <div
                       style={{
-                        margin: "0 0 6px",
-                        fontWeight: 800,
-                        color: "#0c4a6e",
-                        fontSize: 15,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        margin: "0 0 8px",
                       }}
                     >
-                      1 · Hồ Olympic — Vé / phụ kiện
-                    </p>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontWeight: 800,
+                          color: "#0c4a6e",
+                          fontSize: 15,
+                        }}
+                      >
+                        1 · {poolService === "vip" ? "Hồ VIP" : "Hồ Olympic"} — Vé / gói
+                      </p>
+                      {poolServiceButtons()}
+                    </div>
                     <p
                       style={{
                         margin: "0 0 8px",
@@ -5868,8 +6413,9 @@ export default function DeskAdministrationPage() {
                         fontWeight: 600,
                       }}
                     >
-                      Giảm: phụ kiện ≥2 món → −10% phần phụ kiện · gói tháng
-                      cùng ngày vé bơi → −10% gói. Không giảm: vé bơi lẻ.
+                      {poolService === "vip"
+                        ? "Vé lẻ VIP không giới hạn thời gian. Giá gói tháng là tổng phí cả kỳ."
+                        : "Gói tháng cùng ngày vé bơi → −10% gói. Không giảm: vé bơi lẻ."}
                     </p>
                     {focusedPoolScanId ? (
                       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#0369a1" }}>
@@ -5887,13 +6433,14 @@ export default function DeskAdministrationPage() {
                         overflow: "auto",
                       }}
                     >
-                      {POOL_CATEGORIES.map((cat) => {
-                        const items = POOL_MENU.filter(
-                          (item) => item.category === cat.id
-                        );
+                      {POOL_CATEGORIES.filter((cat) => cat.id !== "phu-kien").map((cat) => {
+                        const items = poolItemsForService(poolService, cat.id);
                         if (!items.length) return null;
+                        const appPackage = activeAppPackageLabel();
                         const membershipHeld =
-                          cat.id === "goi-thang" && olympicMembershipLocked();
+                          cat.id === "goi-thang" &&
+                          poolService === "olympic" &&
+                          !!appPackage;
                         const scanId = BOARD_POOL_KEY;
                         const bonusCap = swimBonusCap();
                         return (
@@ -5931,7 +6478,7 @@ export default function DeskAdministrationPage() {
                                   fontWeight: 700,
                                 }}
                               >
-                                Đang dùng gói hội viên — hết hạn mới chọn gói mới.
+                                Đang dùng gói {appPackage}. Hết hạn mới chọn gói Olympic mới. Vé và gói VIP vẫn thêm được.
                               </p>
                             ) : null}
                             {items.map((item) => {
@@ -5957,10 +6504,12 @@ export default function DeskAdministrationPage() {
                                     <div
                                       style={{ fontSize: 12, color: "#64748b" }}
                                     >
-                                      {formatPoolPrice(item)}
-                                      {item.durationMin
-                                        ? ` · ${item.durationMin}'`
-                                        : ""}
+                                      {poolMenuPriceLine(
+                                        item,
+                                        scanId,
+                                        membershipHeld,
+                                        false
+                                      )}
                                     </div>
                                   </div>
                                   <div
@@ -6009,9 +6558,103 @@ export default function DeskAdministrationPage() {
                     </div>
                   </div>
                 ) : null}
+                {isMiaOlympic ? (
+                  <div
+                    style={{
+                      marginTop: 0,
+                      marginBottom: 14,
+                      padding: 14,
+                      borderRadius: 16,
+                      border: "1px solid #e7e5e4",
+                      background: "#fff",
+                    }}
+                  >
+                    <p
+                      style={{
+                        margin: "0 0 6px",
+                        fontWeight: 800,
+                        color: "#1c1917",
+                        fontSize: 15,
+                      }}
+                    >
+                      2 · Phụ kiện
+                    </p>
+                    <p
+                      style={{
+                        margin: "0 0 8px",
+                        fontSize: 12,
+                        color: "#57534e",
+                        lineHeight: 1.45,
+                        fontWeight: 600,
+                      }}
+                    >
+                      Cùng giá cho Olympic và VIP. Mua từ 02 món → −10% phần phụ kiện.
+                      Vé và gói không giảm.
+                    </p>
+                    {accessoryDiscountNote()}
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        maxHeight: 220,
+                        overflow: "auto",
+                      }}
+                    >
+                      {poolItemsForService(poolService, "phu-kien").map((item) => {
+                        const q = scanQty(BOARD_POOL_KEY, item.id);
+                        return (
+                          <div key={item.id} style={styles.menuRow}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700 }}>{item.nameVi}</div>
+                              <div style={{ fontSize: 12, color: "#64748b" }}>
+                                {formatPoolPrice(item)}
+                              </div>
+                            </div>
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                style={styles.qtyBtn}
+                                disabled={q <= 0}
+                                onClick={() =>
+                                  setScanQty(BOARD_POOL_KEY, item.id, q - 1)
+                                }
+                              >
+                                −
+                              </button>
+                              <span
+                                style={{
+                                  width: 22,
+                                  textAlign: "center",
+                                  fontWeight: 800,
+                                }}
+                              >
+                                {q}
+                              </span>
+                              <button
+                                type="button"
+                                style={styles.qtyBtn}
+                                onClick={() =>
+                                  setScanQty(BOARD_POOL_KEY, item.id, q + 1)
+                                }
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 <p style={{ marginTop: isMiaOlympic ? 8 : 18, marginBottom: 8, fontWeight: 800 }}>
                   {isMiaOlympic
-                    ? "2 · Mía Ơi — Đồ uống"
+                    ? "3 · Mía Ơi — Đồ uống"
                     : isMiaOi && miaCartOpen()
                       ? "Gọi thêm — tuỳ chọn"
                       : spaCartEditable()
@@ -6600,15 +7243,20 @@ export default function DeskAdministrationPage() {
                               Mua thêm — tuỳ chọn
                             </p>
                           ) : null}
+                          {poolServiceButtons("0 0 10px")}
                           <div style={{ display: "grid", gap: 8 }}>
                             {POOL_CATEGORIES.map((cat) => {
-                              const items = POOL_MENU.filter(
-                                (item) => item.category === cat.id
+                              const items = poolItemsForService(
+                                poolService,
+                                cat.id
                               );
                               if (!items.length) return null;
-                              const sameDay = guestHasSameDayOlympicOrder();
+                              const sameDay = poolSameDay(scanCartLines(s.id));
+                              const appPackage = activeAppPackageLabel();
                               const membershipHeld =
-                                cat.id === "goi-thang" && olympicMembershipLocked();
+                                cat.id === "goi-thang" &&
+                                poolService === "olympic" &&
+                                !!appPackage;
                               const bonusCap = swimBonusCap();
                               const membershipUntil = selected?.packageExpiresAt
                                 ? new Date(selected.packageExpiresAt).toLocaleDateString(
@@ -6628,7 +7276,10 @@ export default function DeskAdministrationPage() {
                                     }}
                                   >
                                     {cat.nameVi}
-                                    {cat.id === "goi-thang" && sameDay && !membershipHeld
+                                    {cat.id === "goi-thang" &&
+                                    poolService === "olympic" &&
+                                    sameDay &&
+                                    !membershipHeld
                                       ? " · −10% cùng ngày với đơn Olympic"
                                       : ""}
                                   </p>
@@ -6653,8 +7304,8 @@ export default function DeskAdministrationPage() {
                                         color: "#9a3412",
                                       }}
                                     >
-                                      Đang dùng {selected?.packageLabel || "gói hội viên"}
-                                      {membershipUntil ? ` đến ${membershipUntil}` : ""}. Hết hạn mới chọn gói mới.
+                                      Đang dùng gói {appPackage}
+                                      {membershipUntil ? ` đến ${membershipUntil}` : ""}. Hết hạn mới chọn gói Olympic mới. Vé và gói VIP vẫn thêm được.
                                     </p>
                                   ) : null}
                                   {items.map((item) => {
@@ -6689,15 +7340,7 @@ export default function DeskAdministrationPage() {
                                               color: "#64748b",
                                             }}
                                           >
-                                            {item.category === "goi-thang" &&
-                                            sameDay &&
-                                            !blocked
-                                              ? `${Math.round((item.priceVnd * 0.9) / 1000)}K (−10%)`
-                                              : formatPoolPrice(item)}
-                                            {item.durationMin
-                                              ? ` · ${item.durationMin}'`
-                                              : ""}
-                                            {item.note ? ` · ${item.note}` : ""}
+                                            {poolMenuPriceLine(item, s.id, blocked, true)}
                                           </div>
                                         </div>
                                         <div

@@ -10,11 +10,14 @@ export async function findCustomerByIdentityToken(token: string) {
       id: true,
       customerCode: true,
       fullName: true,
+      username: true,
       phone: true,
       phoneNormalized: true,
       phoneLast4: true,
       shortId: true,
       segment: true,
+      vipExpiresAt: true,
+      vipPlanLabel: true,
     },
   });
 }

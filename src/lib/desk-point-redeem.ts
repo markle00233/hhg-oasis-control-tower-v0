@@ -28,6 +28,7 @@ export function isDeskRedeemDrink(itemId: string) {
 }
 
 export function isDeskRedeemTicket(itemId: string) {
+  if (String(itemId).startsWith("vip-")) return false;
   const item = getPoolItem(itemId);
   return !!item && (item.category === "tre-em" || item.category === "nguoi-lon");
 }

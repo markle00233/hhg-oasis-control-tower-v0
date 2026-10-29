@@ -221,8 +221,8 @@ export function isOlympicPackageId(id: string) {
 }
 
 /**
- * Account is VIP now, but an order placed before this package started
- * still shows as Khách lẻ.
+ * Package is active now, but an order placed before it started
+ * still shows as Khách (they already had an account).
  */
 export function segmentAtTime(opts: {
   segment?: string | null;
@@ -233,17 +233,25 @@ export function segmentAtTime(opts: {
   const segment = String(opts.segment || "WALK_IN").toUpperCase();
   const label =
     opts.segmentLabel ||
-    (segment === "VIP" ? "VIP" : segment === "MEMBER" ? "Member" : "Khách lẻ");
-  if (segment !== "VIP") return { segment, segmentLabel: label };
-  if (!opts.vipStartedAt || !opts.at) {
-    return { segment: "VIP", segmentLabel: "VIP" };
-  }
+    (segment === "VIP"
+      ? "VIP"
+      : segment === "MEMBER"
+        ? "Member"
+        : segment === "ACCOUNT"
+          ? "Khách"
+          : "Khách lẻ");
+  const current =
+    segment === "VIP"
+      ? { segment: "VIP", segmentLabel: "VIP" }
+      : segment === "MEMBER"
+        ? { segment: "MEMBER", segmentLabel: "Member" }
+        : { segment, segmentLabel: label };
+  if (segment !== "VIP" && segment !== "MEMBER") return current;
+  if (!opts.vipStartedAt || !opts.at) return current;
   const start = new Date(opts.vipStartedAt).getTime();
   const when = new Date(opts.at).getTime();
-  if (Number.isNaN(start) || Number.isNaN(when) || when >= start) {
-    return { segment: "VIP", segmentLabel: "VIP" };
-  }
-  return { segment: "WALK_IN", segmentLabel: "Khách lẻ" };
+  if (Number.isNaN(start) || Number.isNaN(when) || when >= start) return current;
+  return { segment: "ACCOUNT", segmentLabel: "Khách" };
 }
 
 export async function applyOlympicMembership(

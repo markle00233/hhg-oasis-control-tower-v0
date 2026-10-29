@@ -16,17 +16,17 @@ export const DESK_ZONES: DeskZone[] = [
     name: "Mía Ơi · Hồ Olympic",
     username: "MIAOI",
   },
-  { code: "VIP_RESORT", name: "VIP", username: "VIP" },
   { code: "PICKLEBALL", name: "Pickleball", username: "PICKLEBALL" },
   { code: "SAUNA", name: "HHG Oasis Spa", username: "SPA" },
   { code: "LONG_NUONG", name: "Lòng Nướng Chí Phèo", username: "LONGNUONG" },
   { code: "SWIM_LESSON", name: "Khách học bơi", username: "HOCBOI" },
 ];
 
-/** Acc GYM vẫn vào cùng quầy Mía·Olympic (không hiện ô riêng). */
+/** Acc cũ vẫn vào quầy Mía·Olympic (không hiện ô riêng). */
 export const LEGACY_DESK_USERNAMES: Record<string, string> = {
   GYM: "MIA_OLYMPIC",
   MIAOI: "MIA_OLYMPIC",
+  VIP: "MIA_OLYMPIC",
 };
 
 /** Quầy danh sách học viên — không dùng bảng duyệt QR thông thường. */
@@ -34,15 +34,15 @@ export function isSwimLessonDesk(code: string) {
   return code.trim().toUpperCase() === "SWIM_LESSON";
 }
 
-/** Zone uses resource grid (courts / tables / VIP). Spa = chỉ bán dịch vụ, không sơ đồ giường. */
+/** Zone uses resource grid (courts / tables). Spa = chỉ bán dịch vụ, không sơ đồ giường. */
 export function zoneHasResources(code: string) {
   const c = code.toUpperCase();
-  return c === "PICKLEBALL" || c === "LONG_NUONG" || c === "VIP_RESORT";
+  return c === "PICKLEBALL" || c === "LONG_NUONG";
 }
 
 export function getDeskZone(code: string): DeskZone | null {
   const c = code.trim().toUpperCase();
-  if (c === "MIA_OI" || c === "OLYMPIC_POOL" || c === "OLYMPIC" || c === "MIA_OLYMPIC") {
+  if (miaOlympicSector(c)) {
     return DESK_ZONES.find((z) => z.code === "MIA_OLYMPIC") || null;
   }
   return DESK_ZONES.find((z) => z.code === c) || null;
@@ -58,7 +58,9 @@ export function parseZoneAdminUsername(username: string): DeskZone | null {
   if (!u.startsWith("ADMINISTRATION")) return null;
   const rest = u.slice("ADMINISTRATION".length);
   if (!rest) return null;
-  if (rest === "GYM" || rest === "MIAOI") return getDeskZone("MIA_OLYMPIC");
+  if (rest === "GYM" || rest === "MIAOI" || rest === "VIP") {
+    return getDeskZone("MIA_OLYMPIC");
+  }
   return DESK_ZONES.find((z) => z.username === rest) || null;
 }
 
@@ -100,6 +102,9 @@ export const MIA_OLYMPIC_SECTOR = [
   "MIA_OI",
   "OLYMPIC_POOL",
   "OLYMPIC",
+  /** Khu VIP nằm trong hồ — không còn quầy riêng. */
+  "VIP",
+  "VIP_RESORT",
 ] as const;
 export const MIA_OLYMPIC_LABEL = "Mía Ơi · Hồ Olympic";
 
@@ -127,15 +132,40 @@ export function sameDeskSector(a: string, b: string) {
 export function deskZoneAliases(zone: string): string[] {
   const z = zone.trim().toUpperCase();
   if (miaOlympicSector(z)) {
-    return ["MIA_OLYMPIC", "MIA_OI", "OLYMPIC_POOL", "OLYMPIC"];
+    return [
+      "MIA_OLYMPIC",
+      "MIA_OI",
+      "OLYMPIC_POOL",
+      "OLYMPIC",
+      "VIP",
+      "VIP_RESORT",
+    ];
   }
   const map: Record<string, string[]> = {
     SAUNA: ["SAUNA", "SPA"],
     SPA: ["SPA", "SAUNA"],
-    VIP_RESORT: ["VIP_RESORT", "VIP"],
-    VIP: ["VIP", "VIP_RESORT"],
     RESORT_POOL: ["RESORT_POOL", "RESORT"],
     RESORT: ["RESORT", "RESORT_POOL"],
   };
   return Array.from(new Set(map[z] || [z]));
+}
+
+/** Mã khu quầy → serviceCode khi tạo lần quét / walk-in. */
+export function deskZoneServiceCode(zone: string) {
+  const map: Record<string, string> = {
+    PICKLEBALL: "PICKLEBALL",
+    SPA: "SPA",
+    MIA_OI: "MIA_OI",
+    MIA_OLYMPIC: "OLYMPIC_POOL",
+    VIP: "OLYMPIC_POOL",
+    VIP_RESORT: "OLYMPIC_POOL",
+    OLYMPIC: "OLYMPIC_POOL",
+    OLYMPIC_POOL: "OLYMPIC_POOL",
+    RESORT: "RESORT_POOL",
+    RESORT_POOL: "RESORT_POOL",
+    LONG_NUONG: "LONG_NUONG",
+    SAUNA: "SAUNA",
+  };
+  const key = zone.trim().toUpperCase();
+  return map[key] || key;
 }
