@@ -747,7 +747,7 @@ export async function GET(req: NextRequest) {
           at: o.createdAt,
           status: o.status,
           totalVnd: o.totalVnd,
-          serviceCode: o.service.serviceCode,
+          serviceCode: o.service?.serviceCode,
           staffName: o.createdById ? staffNameCache.get(o.createdById) || null : null,
           items: o.items.map((i) => ({
             itemId: i.itemId,

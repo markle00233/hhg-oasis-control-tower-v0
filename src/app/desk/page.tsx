@@ -1445,7 +1445,9 @@ export default function DeskAdministrationPage() {
         foldVi(t.arrival.fullName || "").includes(q)
       );
     }
-    const sorts = orderSorts.length ? orderSorts : ["time-desc"];
+    const sorts: DeskOrderSort[] = orderSorts.length
+      ? orderSorts
+      : ["time-desc"];
     if (!isMiaOlympic || (sorts.length === 1 && sorts[0] === "time-desc")) {
       return rows;
     }
