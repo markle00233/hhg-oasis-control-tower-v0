@@ -38,9 +38,6 @@ export function MembershipUpgrade({
   const [busyTier, setBusyTier] = useState<MembershipTier | null>(null);
   const [error, setError] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [profileBusy, setProfileBusy] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [draftPhone, setDraftPhone] = useState("");
   const [sameDayDiscount, setSameDayDiscount] = useState(false);
   const [success, setSuccess] = useState<{
     token: string;
@@ -65,11 +62,6 @@ export function MembershipUpgrade({
         setSameDayDiscount(!!data.customer.sameDayMembershipDiscount);
         if (fullName && phone) {
           setProfile({ fullName, phone, shortId });
-          setDraftName(fullName);
-          setDraftPhone(phone);
-        } else {
-          setDraftName(fullName || customerName || "");
-          setDraftPhone(phone);
         }
       } catch {
         /* ignore */
@@ -83,37 +75,6 @@ export function MembershipUpgrade({
   const profileReady = !!(profile?.fullName && profile?.phone);
   const isLocked = !!locked;
 
-  async function saveProfile(): Promise<Profile | null> {
-    setProfileBusy(true);
-    setError("");
-    try {
-      const res = await fetch("/api/me/profile", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          fullName: draftName.trim(),
-          phone: draftPhone.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Không lưu được hồ sơ");
-      const next: Profile = {
-        fullName: String(data.customer?.fullName || draftName).trim(),
-        phone: String(data.customer?.phone || draftPhone).trim(),
-        shortId: String(
-          data.customer?.phoneLast4 || data.customer?.shortId || ""
-        ).trim(),
-      };
-      setProfile(next);
-      return next;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Lưu hồ sơ thất bại");
-      return null;
-    } finally {
-      setProfileBusy(false);
-    }
-  }
-
   async function upgrade(tier: MembershipTier) {
     if (busyTier || isLocked) return;
     const pkg = OLYMPIC_MONTHLY.find((p) => p.id === packageIdFromTier(tier));
@@ -122,19 +83,16 @@ export function MembershipUpgrade({
     setBusyTier(tier);
     setError("");
     try {
-      let ready = profile;
-      if (!ready?.fullName || !ready?.phone) {
-        ready = await saveProfile();
-        if (!ready) return;
-      }
+      const ready = profile;
       const res = await fetch("/api/me/cart", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           zoneCode: "OLYMPIC_POOL",
           zoneName: "Hồ Olympic · Nâng cấp hội viên",
-          guestFullName: ready.fullName,
-          guestPhone: ready.phone,
+          ...(ready
+            ? { guestFullName: ready.fullName, guestPhone: ready.phone }
+            : {}),
           items: [
             {
               id: pkg.id,
@@ -157,9 +115,11 @@ export function MembershipUpgrade({
         payload: data.payload || null,
         title: `Nâng cấp ${copy.title}`,
         lines: [
-          `${ready.fullName} · ${ready.phone}${
-            ready.shortId ? ` · ID ${ready.shortId}` : ""
-          }`,
+          ready
+            ? `${ready.fullName} · ${ready.phone}${
+                ready.shortId ? ` · ID ${ready.shortId}` : ""
+              }`
+            : customerName || "Tài khoản đã đăng ký",
           sameDayDiscount
             ? `Thanh toán 1 lần: ${payLabel} (−10% cùng ngày với đơn bơi, giá gốc ${copy.payOnce})`
             : `Thanh toán 1 lần: ${copy.payOnce}`,
@@ -225,40 +185,6 @@ export function MembershipUpgrade({
               : "Trong thời gian dùng gói không nâng cấp / hạ gói."}{" "}
             Hết hạn → về gói thường → mới được chọn gói mới.
           </p>
-        </div>
-      ) : null}
-
-      {!isLocked && !profileReady ? (
-        <div className="space-y-2 rounded-[22px] bg-white/80 p-4 shadow-soft">
-          <p className="text-sm font-semibold text-oasis-ink">
-            Nhập họ tên + SĐT trước khi Upgrade
-          </p>
-          <p className="text-xs text-oasis-mute">
-            Quầy cần thấy đúng tên, ID và số điện thoại trên yêu cầu duyệt.
-          </p>
-          <input
-            type="text"
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            placeholder="Họ và tên"
-            className="h-11 w-full rounded-2xl border border-oasis-ink/10 bg-white px-3 text-sm outline-none focus:border-oasis-moss"
-          />
-          <input
-            type="tel"
-            inputMode="numeric"
-            value={draftPhone}
-            onChange={(e) => setDraftPhone(e.target.value)}
-            placeholder="Số điện thoại"
-            className="h-11 w-full rounded-2xl border border-oasis-ink/10 bg-white px-3 text-sm outline-none focus:border-oasis-moss"
-          />
-          <button
-            type="button"
-            disabled={profileBusy || !draftName.trim() || !draftPhone.trim()}
-            onClick={() => void saveProfile()}
-            className="h-11 w-full rounded-2xl bg-oasis-moss text-sm font-bold text-white disabled:opacity-50"
-          >
-            {profileBusy ? "…" : "Lưu hồ sơ"}
-          </button>
         </div>
       ) : null}
 
@@ -347,7 +273,7 @@ export function MembershipUpgrade({
               </ul>
               <button
                 type="button"
-                disabled={isLocked || !!busyTier || profileBusy}
+                disabled={isLocked || !!busyTier}
                 onClick={() => void upgrade(t)}
                 className="mt-3 h-11 w-full rounded-2xl bg-[#1e3a8a] text-sm font-bold text-white disabled:opacity-60"
               >

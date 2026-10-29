@@ -17,8 +17,10 @@ const BILL_PHOTO_ZONES = new Set([
   "SPA",
   "SAUNA",
   "MIA_OI",
+  "MIA_OLYMPIC",
   "OLYMPIC_POOL",
   "OLYMPIC",
+  "VIP",
   "VIP_RESORT",
   "GYM",
   "RESORT_POOL",
@@ -31,20 +33,40 @@ export function zoneRequiresBillPhoto(zone: string | null | undefined) {
 }
 export const BILL_PHOTO_LOCKED = "Đơn đã chốt, không đổi được ảnh bill.";
 
+/** Đơn đã lưu trên lần quét, không có giỏ. */
+export const EVENT_BILL_PREFIX = "event:";
+
+export function eventBillToken(eventId: string) {
+  return `${EVENT_BILL_PREFIX}${eventId}`;
+}
+
+export function eventIdFromBillToken(token: string) {
+  return token.startsWith(EVENT_BILL_PREFIX)
+    ? token.slice(EVENT_BILL_PREFIX.length)
+    : "";
+}
+
+/** Khách xoá / từ chối / hết hạn — không gắn chứng từ. */
+export function billOrderClosed(status?: string | null) {
+  const s = (status || "").toUpperCase();
+  return s === "CANCELLED" || s === "REJECTED" || s === "EXPIRED";
+}
+
 const IN_SERVICE_ZONES = new Set(["LONG_NUONG", "SAUNA", "SPA"]);
 
-/** Đơn đã chốt hoặc đã đóng — không thêm / không đổi ảnh bill. */
+/**
+ * Ảnh đã có trên đơn đã chốt thì không đổi.
+ * Đơn chưa có ảnh vẫn bổ sung được sau khi thanh toán xong.
+ * Đơn đóng (huỷ / từ chối / hết hạn) không gắn chứng từ.
+ */
 export function billEvidenceFrozen(cart: {
   status?: string | null;
   adminNote?: string | null;
   zoneCode?: string | null;
 }): boolean {
-  const status = (cart.status || "").toUpperCase();
-  if (status === "CANCELLED" || status === "REJECTED" || status === "EXPIRED") {
-    return true;
-  }
+  if (billOrderClosed(cart.status)) return true;
   if ((cart.adminNote || "").trim() === "Đã dùng") return true;
   const zone = (cart.zoneCode || "").toUpperCase();
   if (IN_SERVICE_ZONES.has(zone)) return false;
-  return status === "USED";
+  return (cart.status || "").toUpperCase() === "USED";
 }

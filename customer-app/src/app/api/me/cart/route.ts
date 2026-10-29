@@ -15,6 +15,10 @@ import {
 import { prisma } from "@/lib/prisma";
 import { isStaffScanVoucher } from "@/lib/voucher-pass";
 import { bookingIdsInItems, relabelItemNames } from "@/lib/vn-time";
+import {
+  officialOlympicOrderItem,
+  olympicOrderQtyLocked,
+} from "@/lib/service-catalogs";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "sin1";
@@ -114,6 +118,25 @@ export async function POST(req: NextRequest) {
 
     if (!zoneCode) {
       return NextResponse.json({ error: "Thiếu khu vực." }, { status: 400 });
+    }
+
+    if (
+      zoneCode === "OLYMPIC_POOL" ||
+      zoneCode === "OLYMPIC" ||
+      zoneCode === "MIA_OLYMPIC"
+    ) {
+      items = items.map((item) => {
+        const id = String(item.id || "");
+        const official = officialOlympicOrderItem(id);
+        if (!official) return item;
+        return {
+          ...item,
+          nameVi: official.nameVi,
+          priceVnd: official.priceVnd,
+          note: official.note,
+          qty: olympicOrderQtyLocked(id) ? 1 : item.qty,
+        };
+      });
     }
 
     // Đồng bộ họ tên + SĐT nếu client gửi kèm (Upgrade / checkin thiếu hồ sơ).

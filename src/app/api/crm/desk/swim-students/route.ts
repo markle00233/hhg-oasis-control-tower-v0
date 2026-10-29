@@ -25,6 +25,7 @@ function serialize(row: {
   bonusVisitsLeft: number;
   status: string;
   note: string | null;
+  createdByName: string | null;
   billPhotoAt: Date | null;
   startedAt: Date;
   expiresAt: Date | null;
@@ -43,6 +44,7 @@ function serialize(row: {
     bonusVisitsLeft: row.bonusVisitsLeft,
     status: row.status,
     note: row.note,
+    createdByName: row.createdByName,
     hasBillPhoto: Boolean(row.billPhotoAt),
     startedAt: row.startedAt,
     expiresAt: row.expiresAt,
@@ -63,6 +65,7 @@ const STUDENT_LIST_SELECT = {
   bonusVisitsLeft: true,
   status: true,
   note: true,
+  createdByName: true,
   billPhotoAt: true,
   startedAt: true,
   expiresAt: true,
@@ -116,6 +119,7 @@ export async function GET(req: NextRequest) {
               { phone: { contains: q } },
               { phoneNormalized: { contains: q.replace(/\D/g, "") } },
               { packageLabel: { contains: q, mode: "insensitive" } },
+              { createdByName: { contains: q, mode: "insensitive" } },
             ],
           }
         : {}),
@@ -211,6 +215,7 @@ export async function POST(req: NextRequest) {
         bonusVisitsLeft: pkg.bonusVisits,
         status: "ACTIVE",
         note,
+        createdByName: gate.user.displayName?.trim() || gate.user.username,
         billPhoto,
         billPhotoAt: now,
         startedAt: now,

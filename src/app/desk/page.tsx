@@ -21,6 +21,7 @@ import {
   formatPoolPrice,
   getPoolItem,
   isPoolDayTicket,
+  monthPackageFilters,
   poolItemsForService,
   type PoolMenuItem,
 } from "@/lib/olympic-pool-menu";
@@ -83,7 +84,12 @@ import {
   isDeskRedeemTicket,
   type RedeemableLine,
 } from "@/lib/desk-point-redeem";
-import { billEvidenceFrozen, zoneRequiresBillPhoto } from "@/lib/bill-photo";
+import {
+  billEvidenceFrozen,
+  billOrderClosed,
+  eventBillToken,
+  zoneRequiresBillPhoto,
+} from "@/lib/bill-photo";
 import { deskVoucherCut } from "@/lib/hhg-vouchers";
 
 /** Tạm ẩn nút sơ đồ bàn Lòng Nướng. Đặt true khi mở lại. */
@@ -128,6 +134,7 @@ type Scan = {
   manualDiscountNote?: string | null;
   /** Nhân viên xác thực / mở đơn. */
   staffName?: string | null;
+  hasBillPhoto?: boolean;
 };
 
 type DayOrder = {
@@ -160,6 +167,7 @@ type GuestCartPreview = {
   status?: string;
   adminNote?: string | null;
   hasBillPhoto?: boolean;
+  staffName?: string | null;
   createdAt?: string;
   expiresAt?: string;
   billText?: string;
@@ -280,6 +288,16 @@ const DESK_ZONE_FILTERS: { id: DeskZoneFilter; label: string }[] = [
   { id: "vip", label: "VIP" },
 ];
 
+const PICKLE_COURTS = Array.from({ length: 6 }, (_, i) => {
+  const n = String(i + 1).padStart(2, "0");
+  return { id: `COURT_${n}`, label: `Sân ${n}` };
+});
+
+const LONG_NUONG_TABLES = Array.from({ length: 30 }, (_, i) => {
+  const n = String(i + 1).padStart(2, "0");
+  return { id: `TABLE_${n}`, label: `Bàn ${n}` };
+});
+
 const DESK_ORDER_SORTS: { id: DeskOrderSort; label: string }[] = [
   { id: "time-desc", label: "Mới nhất" },
   { id: "time-asc", label: "Cũ nhất" },
@@ -314,25 +332,7 @@ function toggleOrderSort(current: DeskOrderSort[], next: DeskOrderSort) {
   return [...current, next];
 }
 
-const DESK_PACKAGE_FILTERS: { id: string; label: string }[] = [
-  "oly-1m",
-  "oly-3m",
-  "oly-6m",
-  "oly-12m",
-  "vip-1m-child",
-  "vip-1m-adult",
-  "vip-3m-child",
-  "vip-3m-adult",
-  "vip-6m-child",
-  "vip-6m-adult",
-  "vip-12m-child",
-  "vip-12m-adult",
-]
-  .map((id) => {
-    const item = getPoolItem(id);
-    return item ? { id, label: item.nameVi } : null;
-  })
-  .filter((row): row is { id: string; label: string } => !!row);
+const DESK_PACKAGE_FILTERS = monthPackageFilters();
 
 const PACKAGE_LABEL = new Map(
   DESK_PACKAGE_FILTERS.map((p) => [p.id, p.label])
@@ -560,6 +560,65 @@ function ticketTime(t: DeskTicket) {
 
 function ticketStaffName(t: DeskTicket) {
   return String(t.staffName || t.scan?.staffName || "").trim();
+}
+
+function ticketItemIds(t: DeskTicket) {
+  const ids = new Set<string>();
+  for (const item of t.cart?.items || []) {
+    if (item.id && !item.id.startsWith("__")) ids.add(item.id);
+  }
+  for (const item of t.scan?.ticketItems || []) {
+    if (item.itemId) ids.add(item.itemId);
+  }
+  const orderIds = new Set(
+    [t.orderId, t.miaOrderId].filter((id): id is string => !!id)
+  );
+  for (const order of t.arrival.todayOrders || []) {
+    if (!orderIds.has(order.id)) continue;
+    for (const item of order.items) {
+      if (item.itemId) ids.add(item.itemId);
+    }
+  }
+  return ids;
+}
+
+function ticketMatchesSector(t: DeskTicket, zone: string, filterId: string) {
+  const ids = ticketItemIds(t);
+  const z = zone.toUpperCase();
+  if (z === "SAUNA" || z === "SPA") {
+    const allowed = SPA_MENU.filter((item) => item.category === filterId);
+    if (allowed.some((item) => ids.has(item.id))) return true;
+    const names = new Set(allowed.map((item) => item.nameVi));
+    return t.billItems.some((item) => names.has(item.nameVi));
+  }
+  if (z === "PICKLEBALL") {
+    if (ids.has(`court-${filterId}`)) return true;
+    const label = PICKLE_COURTS.find((court) => court.id === filterId)?.label;
+    return !!label && t.billItems.some((item) => item.nameVi.startsWith(label));
+  }
+  if (z === "LONG_NUONG") {
+    if (ids.has(`table-${filterId}`)) return true;
+    const label = LONG_NUONG_TABLES.find((table) => table.id === filterId)?.label;
+    return (
+      !!label &&
+      (t.billItems.some((item) => item.nameVi.includes(label)) ||
+        t.billText.includes(label))
+    );
+  }
+  return true;
+}
+
+function sectorServiceFilters(zone: string) {
+  const z = zone.toUpperCase();
+  if (z === "SAUNA" || z === "SPA") {
+    return SPA_CATEGORIES.map((category) => ({
+      id: category.id,
+      label: category.nameVi,
+    }));
+  }
+  if (z === "PICKLEBALL") return PICKLE_COURTS;
+  if (z === "LONG_NUONG") return LONG_NUONG_TABLES;
+  return [];
 }
 
 function ticketHasPackage(t: DeskTicket, itemId: string) {
@@ -1017,6 +1076,11 @@ function buildDeskTickets(
               ? claimed.totalVnd
               : cart.totalVnd
         ),
+        staffName:
+          cart.staffName ||
+          confirmed?.staffName ||
+          claimed?.staffName ||
+          null,
         ...manualDiscountFields(confirmed),
       });
     }
@@ -1313,11 +1377,12 @@ export default function DeskAdministrationPage() {
   const [orderMsg, setOrderMsg] = useState("");
   const [orderFilter, setOrderFilter] = useState<DeskZoneFilter>("all");
   const [packageFilter, setPackageFilter] = useState("");
+  const [serviceFilter, setServiceFilter] = useState("");
   const [orderSorts, setOrderSorts] = useState<DeskOrderSort[]>(["time-desc"]);
   const [staffQuery, setStaffQuery] = useState("");
   const [nameQuery, setNameQuery] = useState("");
   const [listMenu, setListMenu] = useState<
-    null | "zone" | "package" | "sort"
+    null | "zone" | "package" | "service" | "sort"
   >(null);
   const listMenuRef = useRef<HTMLDivElement>(null);
   /** Vé và gói tháng trên quầy hồ. Phụ kiện không đổi theo nút này. */
@@ -1401,6 +1466,12 @@ export default function DeskAdministrationPage() {
   const isSpa = zone === "SAUNA";
   const isPool = zone === "OLYMPIC_POOL" || isMiaOlympic;
   const isLongNuong = zone === "LONG_NUONG";
+  const serviceOptions = zone ? sectorServiceFilters(zone) : [];
+
+  useEffect(() => {
+    setServiceFilter("");
+    setListMenu(null);
+  }, [zone]);
   /** Menu phía trên — gộp Mía+Hồ hoặc Spa. Hồ riêng vẫn bán vé dưới từng lần quét. */
   const hasCatalog = isMiaOi || isSpa;
   const title = dashboardTitle(zoneName || "…");
@@ -1435,6 +1506,9 @@ export default function DeskAdministrationPage() {
     if (isMiaOlympic && packageFilter) {
       rows = rows.filter((t) => ticketHasPackage(t, packageFilter));
     }
+    if (!isMiaOlympic && serviceFilter && zone) {
+      rows = rows.filter((t) => ticketMatchesSector(t, zone, serviceFilter));
+    }
     if (orderSorts.includes("staff") && staffQuery.trim()) {
       const q = foldVi(staffQuery.trim());
       rows = rows.filter((t) => foldVi(ticketStaffName(t)).includes(q));
@@ -1448,7 +1522,7 @@ export default function DeskAdministrationPage() {
     const sorts: DeskOrderSort[] = orderSorts.length
       ? orderSorts
       : ["time-desc"];
-    if (!isMiaOlympic || (sorts.length === 1 && sorts[0] === "time-desc")) {
+    if (sorts.length === 1 && sorts[0] === "time-desc") {
       return rows;
     }
     return [...rows].sort((a, b) => compareDeskTickets(a, b, sorts));
@@ -1457,6 +1531,8 @@ export default function DeskAdministrationPage() {
     isMiaOlympic,
     orderFilter,
     packageFilter,
+    serviceFilter,
+    zone,
     orderSorts,
     staffQuery,
     nameQuery,
@@ -1880,12 +1956,12 @@ export default function DeskAdministrationPage() {
     frozen = false,
     status?: string | null
   ) {
-    if (!token) return null;
-    if (frozen && !has) return null;
+    if (!token || billOrderClosed(status)) return null;
+    const canEdit = !frozen || !has;
     const canFinalize = isMiaOi && has && status === "OPEN";
     return (
       <div style={styles.billRow} onClick={(e) => e.stopPropagation()}>
-        {frozen ? null : (
+        {canEdit ? (
           <label
             title="CK: chụp màn hình chuyển khoản. Tiền mặt: ảnh bill in từ Fabi. Làm trong ca."
             style={styles.billBtn}
@@ -1907,7 +1983,7 @@ export default function DeskAdministrationPage() {
               }}
             />
           </label>
-        )}
+        ) : null}
         {has ? (
           <button
             type="button"
@@ -1938,6 +2014,32 @@ export default function DeskAdministrationPage() {
         ) : null}
       </div>
     );
+  }
+
+  function renderTicketBill(t: DeskTicket) {
+    if (t.cart?.token && zoneRequiresBillPhoto(t.cart.zoneCode || zone)) {
+      return renderBillCapture(
+        t.cart.token,
+        !!t.cart.hasBillPhoto,
+        proofPartial(t.cart.status, t.cart.hasBillPhoto),
+        billEvidenceFrozen(t.cart),
+        t.cart.status
+      );
+    }
+    const code = t.scan?.serviceCode || zone;
+    if (
+      t.orderStatus === "ordered" &&
+      t.scan?.id &&
+      zoneRequiresBillPhoto(code)
+    ) {
+      return renderBillCapture(
+        eventBillToken(t.scan.id),
+        !!t.scan.hasBillPhoto,
+        false,
+        false
+      );
+    }
+    return null;
   }
 
   async function submitReject() {
@@ -4633,7 +4735,7 @@ export default function DeskAdministrationPage() {
           </button>
         </div>
       </header>
-      {isMiaOlympic ? (
+      {zone ? (
         <div
           ref={listMenuRef}
           style={{
@@ -4648,6 +4750,8 @@ export default function DeskAdministrationPage() {
         >
           {(
             [
+              ...(isMiaOlympic
+                ? [
               {
                 id: "zone" as const,
                 value:
@@ -4677,6 +4781,33 @@ export default function DeskAdministrationPage() {
                   })),
                 ],
               },
+                ]
+                : []),
+              ...(serviceOptions.length
+                ? [
+                    {
+                      id: "service" as const,
+                      value:
+                        serviceOptions.find((item) => item.id === serviceFilter)
+                          ?.label || "Tất cả",
+                      active: !!serviceFilter || listMenu === "service",
+                      options: [
+                        {
+                          id: "",
+                          label: "Tất cả",
+                          on: !serviceFilter,
+                          search: "",
+                        },
+                        ...serviceOptions.map((item) => ({
+                          id: item.id,
+                          label: item.label,
+                          on: serviceFilter === item.id,
+                          search: "",
+                        })),
+                      ],
+                    },
+                  ]
+                : []),
               {
                 id: "sort" as const,
                 value:
@@ -4739,8 +4870,14 @@ export default function DeskAdministrationPage() {
                       top: 40,
                       right: 0,
                       minWidth: menu.id === "package" ? 280 : 220,
-                      maxHeight: menu.id === "package" ? 360 : undefined,
-                      overflowY: menu.id === "package" ? "auto" : undefined,
+                      maxHeight:
+                        menu.id === "package" || menu.id === "service"
+                          ? 360
+                          : undefined,
+                      overflowY:
+                        menu.id === "package" || menu.id === "service"
+                          ? "auto"
+                          : undefined,
                       background: "#fff",
                       border: "1px solid #e2e8f0",
                       borderRadius: 14,
@@ -4768,6 +4905,11 @@ export default function DeskAdministrationPage() {
                             }
                             if (menu.id === "package") {
                               setPackageFilter(opt.id);
+                              setListMenu(null);
+                              return;
+                            }
+                            if (menu.id === "service") {
+                              setServiceFilter(opt.id);
                               setListMenu(null);
                               return;
                             }
@@ -5536,8 +5678,10 @@ export default function DeskAdministrationPage() {
                     : (orderSorts.includes("staff") && staffQuery.trim()) ||
                         (orderSorts.includes("name") && nameQuery.trim())
                       ? "Không có đơn khớp từ khóa."
-                      : packageFilter
-                        ? "Không có đơn cho gói này."
+                      : packageFilter || serviceFilter
+                        ? packageFilter
+                          ? "Không có đơn cho gói này."
+                          : "Không có đơn cho bộ lọc này."
                         : orderFilter !== "all"
                         ? "Không có đơn cho bộ lọc này."
                         : `Chưa có khách gửi yêu cầu / quét QR ${zoneName} trong 12 giờ.`}
@@ -5548,10 +5692,6 @@ export default function DeskAdministrationPage() {
                 const a = t.arrival;
                 const needApprove = t.needsApproval;
                 const cartTok = t.cart?.token || "";
-                const partialProof = proofPartial(
-                  t.cart?.status,
-                  t.cart?.hasBillPhoto
-                );
                 const ci = t.checkInUi;
                 const settled = orderSettled(t);
                 const shown = segmentAtTime({
@@ -5617,16 +5757,7 @@ export default function DeskAdministrationPage() {
                         lineHeight: 1.4,
                       }}
                     >
-                      {t.cart?.token &&
-                      zoneRequiresBillPhoto(t.cart.zoneCode || zone)
-                        ? renderBillCapture(
-                            t.cart.token,
-                            !!t.cart.hasBillPhoto,
-                            partialProof,
-                            billEvidenceFrozen(t.cart),
-                            t.cart.status
-                          )
-                        : null}
+                      {renderTicketBill(t)}
                       {t.billTotal != null && t.billTotal > 0 ? (
                         <div
                           style={{
@@ -6250,7 +6381,8 @@ export default function DeskAdministrationPage() {
                   </span>
                 ) : null}
                 </div>
-                {zoneRequiresBillPhoto(guestCart.zoneCode || zone) ? (
+                {zoneRequiresBillPhoto(guestCart.zoneCode || zone) &&
+                !billOrderClosed(guestCart.status) ? (
                   <div style={{ marginTop: 8 }}>
                     {renderBillCapture(
                       guestCart.token,

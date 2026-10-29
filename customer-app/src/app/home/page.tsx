@@ -25,6 +25,8 @@ export default function HomePage() {
   const [name, setName] = useState("");
   const [pointsBalance, setPointsBalance] = useState(0);
   const [vip, setVip] = useState(false);
+  const [goldCard, setGoldCard] = useState(false);
+  const [goldPlan, setGoldPlan] = useState<string | null>(null);
   const [vipPlanLabel, setVipPlanLabel] = useState<string | null>(null);
   const [membershipTier, setMembershipTier] = useState<MembershipTier | null>(
     null
@@ -80,6 +82,8 @@ export default function HomePage() {
       const activeVip = !!customer?.vip;
       if (customer) {
         setVip(activeVip);
+        setGoldCard(customer.nameCardGold ?? activeVip);
+        setGoldPlan(customer.nameCardPlan ?? null);
         setVipPlanLabel(customer.vipPlanLabel || null);
         setMembershipTier(customer.membershipTier || null);
         setMembershipPackageId(customer.membershipPackageId || null);
@@ -156,10 +160,10 @@ export default function HomePage() {
         {cardReady ? (
         <header
           className={`relative flex items-center gap-3 rounded-[28px] p-4 shadow-soft ${
-            vip ? "bg-black" : "bg-[#e8e6e1]"
+            goldCard ? "bg-black" : "bg-[#e8e6e1]"
           }`}
         >
-          {vip ? (
+          {goldCard ? (
             <div
               className="pointer-events-none absolute inset-0 overflow-hidden rounded-[28px]"
               aria-hidden
@@ -178,14 +182,14 @@ export default function HomePage() {
           <div className="relative min-w-0 flex-1">
             <p
               className={`text-[11px] font-bold uppercase tracking-[0.2em] ${
-                vip ? "text-[#f6e27a]/75" : "text-oasis-mute"
+                goldCard ? "text-[#f6e27a]/75" : "text-oasis-mute"
               }`}
             >
               {greeting()}
             </p>
             <p
               className={`mt-1 truncate font-display text-2xl font-semibold leading-tight ${
-                vip
+                goldCard
                   ? "text-[#f6e27a] [text-shadow:0_0_16px_rgba(243,217,138,0.65)]"
                   : "text-oasis-ink"
               }`}
@@ -194,21 +198,21 @@ export default function HomePage() {
             </p>
             <p
               className={`mt-1 font-display text-lg font-semibold leading-none ${
-                vip ? "text-[#d4af37]" : "text-oasis-moss"
+                goldCard ? "text-[#d4af37]" : "text-oasis-moss"
               }`}
             >
               {pointsBalance} điểm
             </p>
-            {vip && vipPlanLabel ? (
+            {goldCard && goldPlan ? (
               <p className="mt-1 text-[11px] font-bold leading-none text-[#f6e27a] [text-shadow:0_0_16px_rgba(243,217,138,0.65)]">
-                {vipPlanLabel}
+                {goldPlan}
               </p>
             ) : null}
           </div>
           <Link
             href="/account"
             className={`relative grid h-12 w-12 shrink-0 place-items-center rounded-full text-sm font-black leading-none shadow-soft ${
-              vip
+              goldCard
                 ? "bg-[#d4af37]/15 text-[#f6e27a]"
                 : "bg-white text-oasis-moss"
             }`}

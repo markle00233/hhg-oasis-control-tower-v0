@@ -5,7 +5,13 @@ import {
   packageIdFromTier,
   tierFromPlanLabel,
 } from "@/lib/membership-theme";
-import { isVipActive, vipExpiryLabel } from "@/lib/vip";
+import { isSameDayMembershipEligible } from "@/lib/same-day-membership";
+import {
+  findActiveVipPackageLabel,
+  isMemberSubscriptionActive,
+  isVipActive,
+  vipExpiryLabel,
+} from "@/lib/vip";
 
 export const preferredRegion = "sin1";
 export const dynamic = "force-dynamic";
@@ -57,19 +63,21 @@ export async function GET() {
     : vipPlanLabel && vipExpiresAt
       ? vipExpiryLabel(vipExpiresAt)
       : null;
+  const member = isMemberSubscriptionActive({ segment, vipExpiresAt });
+  const [vipPackageLabel, sameDayMembershipDiscount] = await Promise.all([
+    vip || member ? null : findActiveVipPackageLabel(customer.id),
+    vip
+      ? false
+      : isSameDayMembershipEligible(prisma, { id: customer.id }),
+  ]);
+  /** Member package and Gói VIP share one black-gold name card. */
+  const nameCardGold = vip || member || Boolean(vipPackageLabel);
+  const nameCardPlan =
+    (vip ? vipPlanLabel : member ? packageLabel : vipPackageLabel) || null;
   const membershipTier = vip ? tierFromPlanLabel(vipPlanLabel) : null;
   const membershipPackageId = membershipTier
     ? packageIdFromTier(membershipTier)
     : null;
-
-  const { isSameDayMembershipEligible } = await import(
-    "@/lib/same-day-membership"
-  );
-  const sameDayMembershipDiscount = vip
-    ? false
-    : await isSameDayMembershipEligible(prisma, {
-        id: customer.id,
-      });
 
   return NextResponse.json({
     authenticated: true,
@@ -95,6 +103,8 @@ export async function GET() {
       membershipPackageId,
       /** Còn hạn gói → khoá upgrade / downgrade */
       membershipLocked: vip,
+      nameCardGold,
+      nameCardPlan,
       /** −10% gói tháng nếu đã có đơn vé bơi hôm nay */
       sameDayMembershipDiscount,
     },

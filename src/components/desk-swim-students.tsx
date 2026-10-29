@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SWIM_PACKAGES,
   formatSwimPrice,
@@ -19,6 +19,7 @@ type Student = {
   bonusVisitsLeft: number;
   status: string;
   note: string | null;
+  createdByName: string | null;
   hasBillPhoto: boolean;
   updatedAt: string;
 };
@@ -158,6 +159,8 @@ export function DeskSwimStudents({
   const [students, setStudents] = useState<Student[]>([]);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("ACTIVE");
+  const [packageFilter, setPackageFilter] = useState("");
+  const [sort, setSort] = useState("time-desc");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fullName, setFullName] = useState("");
@@ -187,6 +190,29 @@ export function DeskSwimStudents({
       setError(e instanceof Error ? e.message : "Lỗi tải");
     }
   }, [q, statusFilter]);
+
+  const visibleStudents = useMemo(() => {
+    const rows = packageFilter
+      ? students.filter((student) => student.packageId === packageFilter)
+      : students;
+    const sorted = [...rows];
+    sorted.sort((a, b) => {
+      if (sort === "time-asc") {
+        return a.updatedAt.localeCompare(b.updatedAt);
+      }
+      if (sort === "name") {
+        return a.fullName.localeCompare(b.fullName, "vi");
+      }
+      if (sort === "package") {
+        return a.packageLabel.localeCompare(b.packageLabel, "vi");
+      }
+      if (sort === "staff") {
+        return (a.createdByName || "").localeCompare(b.createdByName || "", "vi");
+      }
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
+    return sorted;
+  }, [students, packageFilter, sort]);
 
   useEffect(() => {
     const delay = q.trim() ? 280 : 0;
@@ -536,6 +562,29 @@ export function DeskSwimStudents({
             onChange={(e) => setQ(e.target.value)}
           />
           <select
+            style={{ ...styles.select, maxWidth: 220 }}
+            value={packageFilter}
+            onChange={(e) => setPackageFilter(e.target.value)}
+          >
+            <option value="">Tất cả gói</option>
+            {SWIM_PACKAGES.map((pkg) => (
+              <option key={pkg.id} value={pkg.id}>
+                {pkg.programLabel} · {pkg.name}
+              </option>
+            ))}
+          </select>
+          <select
+            style={{ ...styles.select, maxWidth: 180 }}
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+          >
+            <option value="time-desc">Mới nhất</option>
+            <option value="time-asc">Cũ nhất</option>
+            <option value="name">Tên khách</option>
+            <option value="package">Gói</option>
+            <option value="staff">Nhân viên đứng ca</option>
+          </select>
+          <select
             style={{ ...styles.select, maxWidth: 160 }}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -549,7 +598,7 @@ export function DeskSwimStudents({
             Làm mới
           </button>
           <span style={{ ...styles.mute, margin: 0 }}>
-            {students.length} học viên
+            {visibleStudents.length} học viên
           </span>
         </div>
 
@@ -562,6 +611,7 @@ export function DeskSwimStudents({
             <thead>
               <tr>
                 <th style={styles.th}>Họ tên</th>
+                <th style={styles.th}>Nhân viên đứng ca</th>
                 <th style={styles.th}>SĐT</th>
                 <th style={styles.th}>Gói</th>
                 <th style={styles.th}>Buổi</th>
@@ -571,14 +621,14 @@ export function DeskSwimStudents({
               </tr>
             </thead>
             <tbody>
-              {students.length === 0 ? (
+              {visibleStudents.length === 0 ? (
                 <tr>
-                  <td style={styles.td} colSpan={7}>
+                  <td style={styles.td} colSpan={8}>
                     Chưa có học viên. Thêm ở form trên.
                   </td>
                 </tr>
               ) : (
-                students.map((s) => (
+                visibleStudents.map((s) => (
                   <tr key={s.id}>
                     <td style={{ ...styles.td, fontWeight: 700 }}>
                       {s.fullName}
@@ -588,6 +638,7 @@ export function DeskSwimStudents({
                         </div>
                       ) : null}
                     </td>
+                    <td style={styles.td}>{s.createdByName || "—"}</td>
                     <td style={styles.td}>{s.phone || "—"}</td>
                     <td style={styles.td}>{s.packageLabel}</td>
                     <td style={{ ...styles.td, fontWeight: 800 }}>

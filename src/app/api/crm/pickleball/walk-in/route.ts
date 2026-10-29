@@ -209,6 +209,8 @@ export async function POST(req: NextRequest) {
         },
       ],
       ttlHours: 24,
+      staffName: gate.user.displayName?.trim() || gate.user.username,
+      staffUserId: gate.user.id,
     });
 
     let sessionId: string | null = null;

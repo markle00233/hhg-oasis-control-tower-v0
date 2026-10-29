@@ -32,6 +32,8 @@ export async function createServiceCart(opts: {
   discountVnd?: number;
   /** PENDING_APPROVAL | OPEN */
   status?: string;
+  staffName?: string;
+  staffUserId?: string;
 }) {
   const items = opts.items
     .map((i) => ({
@@ -51,6 +53,20 @@ export async function createServiceCart(opts: {
     Math.max(0, Math.round(Number(opts.discountVnd) || 0))
   );
   const totalVnd = Math.max(0, subtotal - discountVnd);
+  const storedItems =
+    opts.staffName || opts.staffUserId
+      ? [
+          ...items,
+          {
+            id: "__staff",
+            nameVi: "staff",
+            qty: 1,
+            priceVnd: 0,
+            staffName: opts.staffName || "",
+            staffUserId: opts.staffUserId || "",
+          },
+        ]
+      : items;
   const ttlHours = opts.ttlHours ?? 48;
   const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
   const status =
@@ -65,7 +81,7 @@ export async function createServiceCart(opts: {
           customerId: opts.customerId,
           zoneCode: opts.zoneCode,
           zoneName: opts.zoneName || null,
-          items,
+          items: storedItems,
           totalVnd,
           status,
           ...(status === CART_STATUS.OPEN ? { approvedAt: new Date() } : {}),

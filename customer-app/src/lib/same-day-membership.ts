@@ -1,3 +1,5 @@
+import { formatVndCompact } from "./service-catalogs";
+
 /** −10% gói tháng nếu đăng ký sau khi đã có đơn bơi cùng ngày (VN). */
 
 export const SAME_DAY_MEMBERSHIP_DISCOUNT_RATE = 0.1;
@@ -50,16 +52,7 @@ export function sameDayMembershipPriceVnd(baseVnd: number) {
 }
 
 export function formatMembershipPayLabel(vnd: number) {
-  const n = Math.max(0, Math.round(Number(vnd) || 0));
-  if (n >= 1_000_000) {
-    const tr = n / 1_000_000;
-    const s = tr
-      .toFixed(2)
-      .replace(/\.?0+$/, "")
-      .replace(".", ",");
-    return `${s}tr`;
-  }
-  return `${Math.round(n / 1000)}K`;
+  return formatVndCompact(vnd);
 }
 
 /** Minimal Prisma surface — keep loose so real PrismaClient assigns cleanly. */
