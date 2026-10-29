@@ -225,6 +225,13 @@ export function isVipPoolPackage(id: string | null | undefined) {
   return /^vip-(1|3|6|12)m-/.test(String(id || ""));
 }
 
+/** Gói tháng đang bán, cùng thứ tự trên quầy và admin. */
+export function monthPackageFilters(): { id: string; label: string }[] {
+  const olympic = POOL_MENU.filter((item) => item.category === "goi-thang");
+  const vip = VIP_POOL_MENU.filter((item) => isVipPoolPackage(item.id));
+  return [...olympic, ...vip].map((item) => ({ id: item.id, label: item.nameVi }));
+}
+
 /** Vé lẻ (Olympic hoặc VIP). Không gồm gói tháng, phụ kiện, lượt tự chọn. */
 export function isPoolDayTicket(id: string | null | undefined) {
   const item = getPoolItem(String(id || ""));

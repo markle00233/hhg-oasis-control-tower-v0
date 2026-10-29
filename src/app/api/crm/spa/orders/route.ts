@@ -25,6 +25,7 @@ async function reviseSpaGuestCart(args: {
   orderItems: SpaOrderLine[];
   finalize?: boolean;
   staffId?: string;
+  staffName?: string;
   serviceId?: string | null;
 }) {
   const cart = await prisma.appServiceCart.findUnique({
@@ -186,6 +187,9 @@ async function reviseSpaGuestCart(args: {
               placedBy: "desk",
               cartToken: args.cartToken,
               ticketVerified: true,
+              ...(args.staffName
+                ? { staffName: args.staffName, createdByStaffId: args.staffId }
+                : {}),
               items: metaItems,
             },
           },
@@ -213,6 +217,9 @@ async function reviseSpaGuestCart(args: {
           metadata: {
             ...prevMeta,
             cartToken: args.cartToken,
+            ...(args.staffName
+              ? { staffName: args.staffName, createdByStaffId: args.staffId }
+              : {}),
             totalVnd,
             items: metaItems,
             ...(args.finalize
@@ -253,6 +260,8 @@ export async function POST(req: NextRequest) {
     const note = String(body.note || "").trim().slice(0, 300);
     const scanEventId = String(body.scanEventId || "").trim();
     const cartToken = String(body.cartToken || "").trim();
+    const staffId = gate.user.id;
+    const staffName = gate.user.displayName?.trim() || gate.user.username;
 
     if (!customerId) {
       return NextResponse.json({ error: "Thiếu customerId." }, { status: 400 });
@@ -314,7 +323,8 @@ export async function POST(req: NextRequest) {
         customerId: customer.id,
         orderItems,
         finalize: body.finalize === true,
-        staffId: gate.user.id,
+        staffId,
+        staffName,
         serviceId: service?.id || null,
       });
     }
@@ -328,7 +338,7 @@ export async function POST(req: NextRequest) {
           totalVnd,
           note: note || null,
           createdByType: "STAFF",
-          createdById: gate.user.id,
+          createdById: staffId,
           source: "ZONE_DESK",
           items: { create: orderItems },
         },
@@ -338,7 +348,7 @@ export async function POST(req: NextRequest) {
         customerId: customer.id,
         items: orderItems,
         refId: created.id,
-        staffId: gate.user.id,
+        staffId,
       });
       if (service) {
         await tx.appServiceEvent.create({
@@ -350,6 +360,8 @@ export async function POST(req: NextRequest) {
               orderId: created.id,
               totalVnd,
               placedBy: "desk",
+              staffName,
+              createdByStaffId: staffId,
               items: orderItems.map((i) => ({
                 name: i.nameVi,
                 qty: i.qty,
@@ -377,6 +389,8 @@ export async function POST(req: NextRequest) {
                 ticketVerified: true,
                 orderId: created.id,
                 totalVnd,
+                staffName,
+                createdByStaffId: staffId,
                 items: orderItems.map((i) => ({
                   name: i.nameVi,
                   qty: i.qty,

@@ -24,7 +24,10 @@ import {
   formatPkgPriceShort,
   OLYMPIC_ACCESSORIES,
   OLYMPIC_MONTHLY,
+  OLYMPIC_ORDER_CATALOG,
   OLYMPIC_PACKAGES,
+  OLYMPIC_VIP_PACKAGES,
+  OLYMPIC_VIP_TICKETS,
   SPA_CATEGORIES,
   SPA_MENU,
   VIP_AMENITIES,
@@ -354,14 +357,6 @@ export default function ServiceInfoPage({
     string | null
   >(null);
   const [sameDayMembership, setSameDayMembership] = useState(false);
-  const [profile, setProfile] = useState<{
-    fullName: string;
-    phone: string;
-  } | null>(null);
-  const [draftName, setDraftName] = useState("");
-  const [draftPhone, setDraftPhone] = useState("");
-  const [profileBusy, setProfileBusy] = useState(false);
-  const [profileError, setProfileError] = useState("");
 
   const orderQtyOnly = code === "SPA" || code === "LONG_NUONG";
 
@@ -377,11 +372,6 @@ export default function ServiceInfoPage({
           setMembershipLocked(!!md.customer?.membershipLocked || !!md.customer?.vip);
           setMembershipExpiresLabel(md.customer?.vipExpiresLabel || null);
           setSameDayMembership(!!md.customer?.sameDayMembershipDiscount);
-          const fullName = String(md.customer?.fullName || "").trim();
-          const phone = String(md.customer?.phone || "").trim();
-          setDraftName(fullName);
-          setDraftPhone(phone);
-          if (fullName && phone) setProfile({ fullName, phone });
         }
       }
       const res = await fetch("/api/me/offers", { cache: "no-store" });
@@ -414,8 +404,7 @@ export default function ServiceInfoPage({
   }, [code, orderQtyOnly]);
 
   const allCatalog = useMemo(() => {
-    if (code === "OLYMPIC_POOL")
-      return [...OLYMPIC_PACKAGES, ...OLYMPIC_MONTHLY, ...OLYMPIC_ACCESSORIES];
+    if (code === "OLYMPIC_POOL") return OLYMPIC_ORDER_CATALOG;
     if (code === "SPA") return SPA_MENU;
     if (code === "VIP_RESORT") return [...VIP_DEALS, ...VIP_PREPAID];
     if (code === "GYM") return GYM_PACKAGES;
@@ -618,66 +607,11 @@ export default function ServiceInfoPage({
     pointsDiscount,
   ]);
 
-  const profileReady = !!(profile?.fullName && profile?.phone);
-  const profileSaved =
-    profileReady &&
-    draftName.trim() === profile?.fullName &&
-    draftPhone.trim() === profile?.phone;
-  const selectedMonthly = selectedPkgs.some(({ pkg }) =>
-    /^oly-\d+m$/i.test(pkg.id)
-  );
-
-  async function saveProfile(): Promise<{ fullName: string; phone: string } | null> {
-    setProfileBusy(true);
-    setProfileError("");
-    try {
-      const res = await fetch("/api/me/profile", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          fullName: draftName.trim(),
-          phone: draftPhone.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Không lưu được hồ sơ");
-      const next = {
-        fullName: String(data.customer?.fullName || draftName).trim(),
-        phone: String(data.customer?.phone || draftPhone).trim(),
-      };
-      setProfile(next);
-      setDraftName(next.fullName);
-      setDraftPhone(next.phone);
-      return next;
-    } catch (e) {
-      setProfileError(e instanceof Error ? e.message : "Lưu hồ sơ thất bại");
-      return null;
-    } finally {
-      setProfileBusy(false);
-    }
-  }
-
   async function createCartQr() {
     if (count < 1 || creating) return;
     setCreating(true);
     setCreateError("");
     try {
-      let guestFullName = draftName.trim() || profile?.fullName || "";
-      let guestPhone = draftPhone.trim() || profile?.phone || "";
-      if (selectedMonthly) {
-        if (guestFullName.length < 2 || guestPhone.length < 9) {
-          const message =
-            "Nhập họ tên và số điện thoại dưới gói tháng trước khi gửi.";
-          setProfileError(message);
-          throw new Error(message);
-        }
-        if (!profileSaved) {
-          const saved = await saveProfile();
-          if (!saved) return;
-          guestFullName = saved.fullName;
-          guestPhone = saved.phone;
-        }
-      }
       const items = [
         ...selectedAmenities.map((a) => ({
           id: a.id,
@@ -731,9 +665,6 @@ export default function ServiceInfoPage({
           discountVnd: accessoryAutoDiscount + priced.discountVnd,
           pointsRedeemTier: swimRedeemUnits > 0 ? 100 : redeemTier,
           ...(swimRedeemUnits > 0 ? { pointsRedeemUnits: swimRedeemUnits } : {}),
-          ...(selectedMonthly
-            ? { guestFullName, guestPhone }
-            : {}),
         }),
       });
       const data = await res.json();
@@ -809,6 +740,21 @@ export default function ServiceInfoPage({
     </div>
   );
 
+  function simpleOrderCard(p: ServicePackage, showQty: boolean) {
+    return (
+      <PackageCard
+        key={p.id}
+        p={p}
+        selected={!!selected[p.id]}
+        qty={selected[p.id] || 1}
+        showQty={showQty}
+        {...voucherField}
+        onToggle={() => setSelected((s) => toggleId(s, p.id))}
+        onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
+      />
+    );
+  }
+
   /** Nav body plus the raised center QR (`-mt-7` on BottomNav). */
   const stickyBar = count > 0 && (
     <div className="fixed inset-x-0 bottom-[calc(4.5rem+1.75rem+env(safe-area-inset-bottom))] z-[60] border-t border-oasis-line/60 bg-white/95 px-4 py-3 backdrop-blur">
@@ -843,7 +789,30 @@ export default function ServiceInfoPage({
 
         {code === "OLYMPIC_POOL" ? (
           <>
-            <section className="space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  ["ve-thuong", "Vé thường"],
+                  ["vip", "VIP"],
+                  ["swimwear", "Swimwear"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() =>
+                    document.getElementById(id)?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
+                    })
+                  }
+                  className="h-11 rounded-2xl bg-white text-sm font-bold text-oasis-ink shadow-soft"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <section id="ve-thuong" className="scroll-mt-4 space-y-3">
               <h2 className="font-display text-xl font-semibold text-oasis-ink">
                 Vé lẻ
               </h2>
@@ -927,48 +896,17 @@ export default function ServiceInfoPage({
                 />
               ))}
             </section>
-            {!membershipLocked ? (
-              <div className="space-y-2 rounded-[22px] bg-white p-4 shadow-soft">
-                <p className="text-sm font-semibold text-oasis-ink">
-                  Nhập họ tên + SĐT trước khi Upgrade
-                </p>
-                <p className="text-xs text-oasis-mute">
-                  Quầy cần thấy đúng tên, ID và số điện thoại trên yêu cầu duyệt.
-                </p>
-                <input
-                  type="text"
-                  value={draftName}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  placeholder="Họ và tên"
-                  className="h-11 w-full rounded-2xl border border-oasis-ink/10 bg-white px-3 text-sm outline-none focus:border-oasis-moss"
-                />
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  value={draftPhone}
-                  onChange={(e) => setDraftPhone(e.target.value)}
-                  placeholder="Số điện thoại"
-                  className="h-11 w-full rounded-2xl border border-oasis-ink/10 bg-white px-3 text-sm outline-none focus:border-oasis-moss"
-                />
-                <button
-                  type="button"
-                  disabled={
-                    profileBusy ||
-                    profileSaved ||
-                    !draftName.trim() ||
-                    !draftPhone.trim()
-                  }
-                  onClick={() => void saveProfile()}
-                  className="h-11 w-full rounded-2xl bg-oasis-moss text-sm font-bold text-white disabled:opacity-50"
-                >
-                  {profileBusy ? "…" : profileSaved ? "Đã lưu hồ sơ" : "Lưu hồ sơ"}
-                </button>
-                {profileError ? (
-                  <p className="text-sm font-semibold text-oasis-coral">{profileError}</p>
-                ) : null}
-              </div>
-            ) : null}
-            <section className="space-y-3">
+            <section id="vip" className="scroll-mt-4 space-y-3">
+              <h2 className="font-display text-xl font-semibold text-oasis-ink">
+                VIP
+              </h2>
+              <p className="text-xs text-oasis-mute">
+                Vé lẻ không giới hạn thời gian. Gói tính tổng phí cả kỳ hạn.
+              </p>
+              {OLYMPIC_VIP_TICKETS.map((p) => simpleOrderCard(p, true))}
+              {OLYMPIC_VIP_PACKAGES.map((p) => simpleOrderCard(p, false))}
+            </section>
+            <section id="swimwear" className="scroll-mt-4 space-y-3">
               <h2 className="font-display text-xl font-semibold text-oasis-ink">
                 Phụ kiện
               </h2>
@@ -980,18 +918,7 @@ export default function ServiceInfoPage({
                   : ""}
                 .
               </p>
-              {OLYMPIC_ACCESSORIES.map((p) => (
-                <PackageCard
-                  key={p.id}
-                  p={p}
-                  selected={!!selected[p.id]}
-                  qty={selected[p.id] || 1}
-                  showQty
-                  {...voucherField}
-                  onToggle={() => setSelected((s) => toggleId(s, p.id))}
-                  onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
-                />
-              ))}
+              {OLYMPIC_ACCESSORIES.map((p) => simpleOrderCard(p, true))}
             </section>
           </>
         ) : null}
@@ -1152,14 +1079,7 @@ export default function ServiceInfoPage({
           >
             Hiện My Oasis QR
           </Link>
-        ) : (
-          <Link
-            href="/account"
-            className="block pb-2 text-center text-sm font-semibold text-oasis-mute"
-          >
-            Chưa dùng liền → trang cá nhân
-          </Link>
-        )}
+        ) : null}
       </div>
       {stickyBar}
       <VoucherPickerModal

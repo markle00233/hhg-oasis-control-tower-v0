@@ -205,7 +205,12 @@ function spaServiceNames(items: unknown) {
   const names: string[] = [];
   for (const row of cartItemRows(items)) {
     const id = String(row.id || "");
-    if (!row.nameVi || id.startsWith("voucher-") || id.startsWith("points-redeem-")) {
+    if (
+      !row.nameVi ||
+      id.startsWith("__") ||
+      id.startsWith("voucher-") ||
+      id.startsWith("points-redeem-")
+    ) {
       continue;
     }
     const qty = Math.max(1, Number(row.qty) || 1);
@@ -380,6 +385,7 @@ function parseCartPromoLines(items: unknown): {
       priceVnd?: number;
     };
     const id = String(r.id || "");
+    if (id.startsWith("__")) continue;
     if (id.startsWith("voucher-")) {
       hasVoucher = true;
       continue;

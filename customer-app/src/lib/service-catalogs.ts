@@ -20,15 +20,29 @@ export type CatalogCategory = {
 
 const k = (n: number) => n * 1000;
 
+/** 2.700.000đ → 2tr700k. Under 1.000.000đ stays 700K. */
+export function formatVndCompact(vnd: number) {
+  const n = Math.max(0, Math.round(Number(vnd) || 0));
+  if (n >= 1_000_000) {
+    const tr = Math.floor(n / 1_000_000);
+    const rest = Math.round((n % 1_000_000) / 1000);
+    return rest > 0 ? `${tr}tr${rest}k` : `${tr}tr`;
+  }
+  return `${Math.round(n / 1000)}K`;
+}
+
 export function formatPkgPriceShort(p: {
   priceVnd: number;
   priceAltVnd?: number;
 }) {
   if (p.priceVnd <= 0) return "Theo gói";
-  if (p.priceAltVnd) {
+  if (p.priceAltVnd && p.priceVnd < 1_000_000 && p.priceAltVnd < 1_000_000) {
     return `${Math.round(p.priceVnd / 1000)}–${Math.round(p.priceAltVnd / 1000)}K`;
   }
-  return `${Math.round(p.priceVnd / 1000)}K`;
+  if (p.priceAltVnd) {
+    return `${formatVndCompact(p.priceVnd)}–${formatVndCompact(p.priceAltVnd)}`;
+  }
+  return formatVndCompact(p.priceVnd);
 }
 
 /** Olympic — vé lẻ (PDF bảng giá) */
@@ -126,6 +140,51 @@ export const OLYMPIC_MONTHLY: ServicePackage[] = [
   },
 ];
 
+/** Hồ VIP — vé lẻ + gói. Giá khớp menu quầy. */
+export const OLYMPIC_VIP_TICKETS: ServicePackage[] = [
+  {
+    id: "vip-u13-day",
+    category: "vip",
+    nameVi: "Vé lẻ VIP — dưới 1,3m",
+    priceVnd: 300_000,
+    note: "Trẻ em · không giới hạn thời gian",
+  },
+  {
+    id: "vip-o13-day",
+    category: "vip",
+    nameVi: "Vé lẻ VIP — từ 1,3m",
+    priceVnd: 379_000,
+    note: "Người lớn · không giới hạn thời gian",
+  },
+];
+
+const VIP_TERM_NOTE = "Tổng phí cả kỳ hạn";
+
+function vipPackage(
+  months: 1 | 3 | 6 | 12,
+  who: "child" | "adult",
+  priceVnd: number
+): ServicePackage {
+  return {
+    id: `vip-${months}m-${who}`,
+    category: "vip",
+    nameVi: `Gói VIP ${months} tháng — ${who === "child" ? "trẻ em" : "người lớn"}`,
+    priceVnd,
+    note: VIP_TERM_NOTE,
+  };
+}
+
+export const OLYMPIC_VIP_PACKAGES: ServicePackage[] = [
+  vipPackage(1, "child", 1_000_000),
+  vipPackage(1, "adult", 1_300_000),
+  vipPackage(3, "child", 2_700_000),
+  vipPackage(3, "adult", 3_400_000),
+  vipPackage(6, "child", 4_800_000),
+  vipPackage(6, "adult", 6_000_000),
+  vipPackage(12, "child", 7_700_000),
+  vipPackage(12, "adult", 9_600_000),
+];
+
 export const OLYMPIC_CATEGORIES: CatalogCategory[] = [
   { id: "ve-le", nameVi: "Vé lẻ" },
   { id: "goi-thang", nameVi: "Gói tháng" },
@@ -199,6 +258,28 @@ export const OLYMPIC_ACCESSORIES: ServicePackage[] = [
     note: "1 bộ · Mua từ 02 món phụ kiện giảm 10% tổng HĐ phụ kiện",
   },
 ];
+
+export const OLYMPIC_ORDER_CATALOG = [
+  ...OLYMPIC_PACKAGES,
+  ...OLYMPIC_MONTHLY,
+  ...OLYMPIC_VIP_TICKETS,
+  ...OLYMPIC_VIP_PACKAGES,
+  ...OLYMPIC_ACCESSORIES,
+];
+
+const olympicOrderById = new Map(
+  OLYMPIC_ORDER_CATALOG.map((item) => [item.id, item])
+);
+
+/** Official menu row for a customer Olympic / VIP order line. */
+export function officialOlympicOrderItem(id: string) {
+  return olympicOrderById.get(id) || null;
+}
+
+/** Gói tháng Olympic và gói VIP: một gói mỗi dòng. */
+export function olympicOrderQtyLocked(id: string) {
+  return /^oly-\d+m$/i.test(id) || /^vip-\d+m-(child|adult)$/.test(id);
+}
 
 /** Spa — PDF menu + poster đang chạy (Giờ Vàng · Date · Family). Chỉ bán dịch vụ, không đặt giường. */
 export const SPA_CATEGORIES: CatalogCategory[] = [

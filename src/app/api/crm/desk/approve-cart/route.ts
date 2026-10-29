@@ -10,6 +10,29 @@ import { prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 
 /** Kept on the cart items so the customer clock starts at duyệt, not at send. */
+function stampShiftStaff(
+  items: unknown,
+  user: { id: string; displayName?: string | null; username: string }
+): Prisma.InputJsonValue {
+  const rows = Array.isArray(items)
+    ? items.filter(
+        (row) =>
+          !row ||
+          typeof row !== "object" ||
+          (row as { id?: string }).id !== "__staff"
+      )
+    : [];
+  rows.push({
+    id: "__staff",
+    nameVi: "staff",
+    qty: 1,
+    priceVnd: 0,
+    staffName: user.displayName?.trim() || user.username,
+    staffUserId: user.id,
+  });
+  return rows as Prisma.InputJsonValue;
+}
+
 function stampCartApprovedAt(items: unknown, at: Date): Prisma.InputJsonValue {
   const rows = Array.isArray(items)
     ? items.filter(
@@ -194,7 +217,10 @@ export async function POST(req: NextRequest) {
           status: CART_STATUS.OPEN,
           adminNote: null,
           approvedAt,
-          items: stampCartApprovedAt(cart.items, approvedAt),
+          items: stampShiftStaff(
+            stampCartApprovedAt(cart.items, approvedAt),
+            gate.user
+          ),
         },
       });
 

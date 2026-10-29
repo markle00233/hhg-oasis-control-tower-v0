@@ -671,6 +671,12 @@ export async function GET(req: NextRequest) {
                   .map((i) => `${i.qty || 1}× ${i.name || "dịch vụ"}`)
                   .join(", ") || null
               : null;
+          const hasBillPhoto =
+            (typeof meta.billPhotoAt === "string" &&
+              meta.billPhotoAt.length > 0) ||
+            (typeof meta.billPhoto === "string" &&
+              meta.billPhoto.startsWith("data:"));
+          delete meta.billPhoto;
           return {
             id: e.id,
             at: e.createdAt,
@@ -705,6 +711,7 @@ export async function GET(req: NextRequest) {
                 ? meta.manualDiscountNote.trim()
                 : null,
             staffName: staffFromMeta(meta),
+            hasBillPhoto,
             ticketItems: orderItems.map((i) => {
               const row = i as {
                 name?: string;
@@ -756,9 +763,20 @@ export async function GET(req: NextRequest) {
             unitPriceVnd: i.unitPriceVnd,
           })),
         }));
+        const staffByOrder = new Map(
+          orders
+            .filter((o) => o.staffName)
+            .map((o) => [o.id, o.staffName as string])
+        );
+        for (const scan of scans) {
+          if (!scan.staffName && scan.orderId) {
+            scan.staffName = staffByOrder.get(scan.orderId) || null;
+          }
+        }
 
         const carts = (c.serviceCarts || []).map((row) => {
           const items = parseCartItems(row.items, bookingClocks);
+          const staffName = cartShiftStaff(row.items);
           const menuItems = items.filter(
             (i) =>
               !i.id.startsWith("voucher-") &&
@@ -774,6 +792,7 @@ export async function GET(req: NextRequest) {
             status: row.status,
             adminNote: row.adminNote,
             hasBillPhoto: Boolean(row.billPhotoAt),
+            staffName,
             createdAt: row.createdAt,
             expiresAt: row.expiresAt,
             billText: menuItems.length
@@ -927,8 +946,10 @@ function parseCartItems(
         "";
       const clock = bookingId ? clocks?.get(bookingId) : undefined;
       const nameVi = String(row.nameVi || "").trim();
+      const id = String(row.id || "").trim();
+      if (id.startsWith("__")) return null;
       return {
-        id: String(row.id || "").trim(),
+        id,
         nameVi: clock
           ? withVnBookingClock(nameVi, clock.startAt, clock.endAt)
           : nameVi,
@@ -937,5 +958,17 @@ function parseCartItems(
         ...(pointsRedeemQty > 0 ? { pointsRedeemQty } : {}),
       };
     })
-    .filter((i) => i.id && i.nameVi);
+    .filter((i): i is NonNullable<typeof i> => !!i && !!i.id && !!i.nameVi);
+}
+
+function cartShiftStaff(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return null;
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const item = row as { id?: string; staffName?: string };
+    if (item.id !== "__staff") continue;
+    const name = String(item.staffName || "").trim();
+    if (name && name.toLowerCase() !== "desk") return name;
+  }
+  return null;
 }
