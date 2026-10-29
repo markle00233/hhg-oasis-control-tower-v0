@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
+import { activeCrmMemberships } from "@/lib/crm-membership";
+import {
+  customerHasLoginAccount,
+  deskSegmentOf,
+} from "@/lib/desk-segment";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +27,8 @@ export async function GET(req: NextRequest) {
     const rows = await prisma.appCustomer.findMany({
       where: {
         status: "ACTIVE",
+        phone: { not: null },
+        NOT: { username: { startsWith: "anon-" } },
         OR: [
           { fullName: { contains: q, mode: "insensitive" } },
           { phone: { contains: q } },
@@ -38,6 +45,7 @@ export async function GET(req: NextRequest) {
       select: {
         id: true,
         customerCode: true,
+        username: true,
         fullName: true,
         phone: true,
         phoneNormalized: true,
@@ -51,24 +59,32 @@ export async function GET(req: NextRequest) {
       take: 12,
     });
 
-    const now = Date.now();
+    const crm = await activeCrmMemberships(
+      rows.map((c) => c.phoneNormalized || "").filter(Boolean)
+    );
     return NextResponse.json({
       ok: true,
-      customers: rows.map((c) => {
-        const vip =
-          String(c.segment || "").toUpperCase() === "VIP" &&
-          (!c.vipExpiresAt || c.vipExpiresAt.getTime() > now);
-        return {
-          id: c.id,
-          customerCode: c.customerCode,
-          fullName: c.fullName || "",
-          phone: c.phone || c.phoneNormalized || "",
-          shortId: c.shortId || c.phoneLast4 || "",
-          segment: vip ? "VIP" : "WALK_IN",
-          segmentLabel: vip ? "VIP" : "Khách lẻ",
-          vipPlanLabel: vip ? c.vipPlanLabel : null,
-        };
-      }),
+      customers: rows
+        .filter((c) => customerHasLoginAccount(c))
+        .map((c) => {
+          const marked = deskSegmentOf({
+            segment: c.segment,
+            vipExpiresAt: c.vipExpiresAt,
+            vipPlanLabel: c.vipPlanLabel,
+            hasAccount: true,
+            crmMember: !!(c.phoneNormalized && crm.has(c.phoneNormalized)),
+          });
+          return {
+            id: c.id,
+            customerCode: c.customerCode,
+            fullName: c.fullName || "",
+            phone: c.phone || c.phoneNormalized || "",
+            shortId: c.shortId || c.phoneLast4 || "",
+            segment: marked.segment,
+            segmentLabel: marked.segmentLabel,
+            vipPlanLabel: marked.segment === "VIP" ? c.vipPlanLabel : null,
+          };
+        }),
     });
   } catch (e) {
     console.error("[desk/search-customers]", e);

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDeskZone } from "@/lib/auth";
 import { CART_STATUS } from "@/lib/cart-status";
-import { deskZoneAliases } from "@/lib/desk-zones";
+import { deskZoneAliases, deskZoneServiceCode } from "@/lib/desk-zones";
+import {
+  customerHasLoginAccount,
+  deskSegmentOf,
+} from "@/lib/desk-segment";
 import { findCustomerByIdentityToken } from "@/lib/identity-qr";
 import { activateLongNuongTable } from "@/lib/long-nuong-activate";
 import { markSpaInUse } from "@/lib/spa-visit";
@@ -253,7 +257,7 @@ export async function POST(req: NextRequest) {
       where: {
         OR: [
           { serviceCode: zone },
-          { serviceCode: mapDeskZoneToService(zone) },
+          { serviceCode: deskZoneServiceCode(zone) },
         ],
       },
     });
@@ -311,6 +315,13 @@ export async function POST(req: NextRequest) {
         })
       : { table: null, court: null, spa: null };
 
+    const marked = deskSegmentOf({
+      segment: customer.segment,
+      vipExpiresAt: customer.vipExpiresAt,
+      vipPlanLabel: customer.vipPlanLabel,
+      hasAccount: customerHasLoginAccount(customer),
+    });
+
     return NextResponse.json({
       ok: true,
       mode:
@@ -326,7 +337,8 @@ export async function POST(req: NextRequest) {
         fullName: customer.fullName,
         phone: customer.phone,
         shortId: customer.shortId || customer.phoneLast4,
-        segment: customer.segment,
+        segment: marked.segment,
+        segmentLabel: marked.segmentLabel,
       },
       table: arrival.table,
       court: arrival.court,
@@ -462,7 +474,7 @@ async function ensureDeskScan(opts: {
   cartToken?: string | null;
 }) {
   /** Prefer mapped code (MIA_OLYMPIC → OLYMPIC_POOL) so desk can attach pool tickets. */
-  const preferredService = mapDeskZoneToService(opts.zone);
+  const preferredService = deskZoneServiceCode(opts.zone);
   const service = await prisma.appService.findFirst({
     where: {
       OR: [
@@ -515,23 +527,4 @@ async function ensureDeskScan(opts: {
       },
     },
   });
-}
-
-function mapDeskZoneToService(zone: string) {
-  const map: Record<string, string> = {
-    PICKLEBALL: "PICKLEBALL",
-    SPA: "SPA",
-    MIA_OI: "MIA_OI",
-    /** Quầy gộp: check-in gắn vào hồ để xác thực vé được. */
-    MIA_OLYMPIC: "OLYMPIC_POOL",
-    VIP: "VIP_RESORT",
-    VIP_RESORT: "VIP_RESORT",
-    OLYMPIC: "OLYMPIC_POOL",
-    OLYMPIC_POOL: "OLYMPIC_POOL",
-    RESORT: "RESORT_POOL",
-    RESORT_POOL: "RESORT_POOL",
-    LONG_NUONG: "LONG_NUONG",
-    SAUNA: "SAUNA",
-  };
-  return map[zone] || zone;
 }

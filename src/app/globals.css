@@ -1,0 +1,36 @@
+/* Native bars stay hidden. The fading thumb is drawn on top while scrolling. */
+html,
+body,
+* {
+  scrollbar-width: none;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece,
+::-webkit-scrollbar-corner,
+::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-button {
+  background: transparent;
+  width: 0;
+  height: 0;
+}
+
+.scrollbar-fade-thumb {
+  position: fixed;
+  z-index: 2000;
+  pointer-events: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.38);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.scrollbar-fade-thumb.is-on {
+  opacity: 1;
+}

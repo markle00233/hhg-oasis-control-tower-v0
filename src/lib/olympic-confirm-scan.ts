@@ -13,6 +13,7 @@ import {
 } from "@/lib/desk-walkin-shell";
 import { awardPurchasePoints, redeemPoints } from "@/lib/points";
 import { computePoolPricing } from "@/lib/pool-pricing";
+import { isPoolDayTicket } from "@/lib/olympic-pool-menu";
 import { prisma } from "@/lib/prisma";
 import { isSameDayMembershipEligible } from "@/lib/same-day-membership";
 import { consumePoolSwimBonus } from "@/lib/swim-goi-bonus";
@@ -157,9 +158,9 @@ export async function confirmOlympicPoolScan(opts: {
     return { ok: false, error: "Chọn ít nhất 1 vé.", status: 400 };
   }
 
-  const sameDayMembership = await isSameDayMembershipEligible(prisma, {
-    id: customerId,
-  });
+  const sameDayMembership =
+    lines.some((line) => isPoolDayTicket(line.itemId)) ||
+    (await isSameDayMembershipEligible(prisma, { id: customerId }));
   const priced = computePoolPricing(lines, {
     sameDayMembership,
     manualDiscountVnd,
@@ -393,6 +394,8 @@ export async function confirmOlympicPoolScan(opts: {
           customerId: customer.id,
           serviceId: service.id,
           status: "CONFIRMED",
+          createdByType: "STAFF",
+          createdById: opts.staffUserId,
           totalVnd,
           note:
             (note || `Xác thực lúc quét ${scan.createdAt.toISOString()}`) +
@@ -445,6 +448,9 @@ export async function confirmOlympicPoolScan(opts: {
               : {}),
             placedBy: "desk",
             verifiedByUserId: opts.staffUserId,
+            ...(opts.staffName && opts.staffName !== "desk"
+              ? { staffName: opts.staffName }
+              : {}),
             ...(opts.deskBundleId ? { deskBundleId: opts.deskBundleId } : {}),
             items: metaItems,
           },
