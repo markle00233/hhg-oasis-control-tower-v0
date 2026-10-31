@@ -8,6 +8,7 @@ import { ServiceCard } from "@/components/ServiceCard";
 import { MembershipUpgrade } from "@/components/MembershipUpgrade";
 import { MembershipTheme } from "@/components/MembershipTheme";
 import { SwimLessonHome } from "@/components/SwimLessonHome";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 import { HOME_GROUPS } from "@/lib/home-services";
 
 import type { MembershipTier } from "@/lib/membership-theme";
@@ -41,21 +42,19 @@ export default function HomePage() {
   const [cardReady, setCardReady] = useState(false);
 
   useEffect(() => {
-    router.prefetch("/qr");
-    router.prefetch("/book/pickleball");
-    router.prefetch("/activity");
-    router.prefetch("/account");
     let cancelled = false;
 
     async function load(first: boolean) {
-      const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+      const [meRes, sumRes] = await Promise.all([
+        fetchAuthMe(),
+        first
+          ? fetch("/api/cards/summary", { cache: "no-store" })
+          : Promise.resolve(null),
+      ]);
       if (meRes.status === 401) {
         router.replace("/");
         return true;
       }
-      const sumRes = first
-        ? await fetch("/api/cards/summary", { cache: "no-store" })
-        : null;
       if (sumRes?.status === 401) {
         router.replace("/");
         return true;
@@ -90,6 +89,12 @@ export default function HomePage() {
         setVipExpiresLabel(customer.vipExpiresLabel || null);
       }
       setCardReady(true);
+      if (first) {
+        router.prefetch("/qr");
+        router.prefetch("/book/pickleball");
+        router.prefetch("/activity");
+        router.prefetch("/account");
+      }
       return activeVip;
     }
 

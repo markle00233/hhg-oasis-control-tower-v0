@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DateChipRow } from "@/components/DateChipRow";
 import { Shell } from "@/components/Shell";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 import { OrderQrSuccess } from "@/components/OrderQrSuccess";
 import { isValidPhone } from "@/lib/phone";
 import { formatVnDateTime, formatVnTime } from "@/lib/vn-time";
@@ -97,7 +98,7 @@ export default function LongNuongBookPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const me = await fetch("/api/auth/me", { cache: "no-store" });
+      const me = await fetchAuthMe();
       const data = await me.json();
       if (!data.authenticated) {
         router.replace("/login");
@@ -115,11 +116,14 @@ export default function LongNuongBookPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!ready || !SHOW_TABLE_BOARD) return;
+    if (!SHOW_TABLE_BOARD) return;
     void loadTables();
-    const t = setInterval(() => void loadTables(), 5000);
+    const t = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void loadTables();
+    }, 5000);
     return () => clearInterval(t);
-  }, [ready, loadTables]);
+  }, [loadTables]);
 
   useEffect(() => {
     setArriveHm("");
@@ -201,7 +205,7 @@ export default function LongNuongBookPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu bàn"
-          subtitle="Chờ quầy duyệt. Duyệt xong là yêu cầu thành công."
+          subtitle="Thanh toán tại quầy. Khi quầy xác nhận giao dịch, thanh toán của bạn xong."
           detailLines={[
             success.tableName,
             `Đến: ${success.arriveLabel}`,

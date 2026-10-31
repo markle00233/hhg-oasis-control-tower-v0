@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MIAOI_CATEGORIES,
@@ -51,13 +52,39 @@ import {
   zoneHasResources,
   type DeskZone,
 } from "@/lib/desk-zones";
-import { DeskBookingEdit } from "@/components/desk-booking-edit";
-import { DeskCourtSchedule } from "@/components/desk-court-schedule";
-import { DeskVipSubscribers } from "@/components/desk-vip-subscribers";
-import { DeskResourceGrid } from "@/components/desk-resource-grid";
-import { DeskQrScanner } from "@/components/DeskQrScanner";
-import { DeskSwimStudents } from "@/components/desk-swim-students";
-import { DeskCalendar } from "@/components/desk-calendar";
+const DeskBookingEdit = dynamic(
+  () =>
+    import("@/components/desk-booking-edit").then((m) => m.DeskBookingEdit),
+  { ssr: false }
+);
+const DeskCourtSchedule = dynamic(
+  () =>
+    import("@/components/desk-court-schedule").then((m) => m.DeskCourtSchedule),
+  { ssr: false }
+);
+const DeskVipSubscribers = dynamic(
+  () =>
+    import("@/components/desk-vip-subscribers").then((m) => m.DeskVipSubscribers),
+  { ssr: false }
+);
+const DeskResourceGrid = dynamic(
+  () =>
+    import("@/components/desk-resource-grid").then((m) => m.DeskResourceGrid),
+  { ssr: false }
+);
+const DeskQrScanner = dynamic(
+  () => import("@/components/DeskQrScanner").then((m) => m.DeskQrScanner),
+  { ssr: false }
+);
+const DeskSwimStudents = dynamic(
+  () =>
+    import("@/components/desk-swim-students").then((m) => m.DeskSwimStudents),
+  { ssr: false }
+);
+const DeskCalendar = dynamic(
+  () => import("@/components/desk-calendar").then((m) => m.DeskCalendar),
+  { ssr: false }
+);
 import {
   checkInLabel,
   checkInUiFromCart,
@@ -419,10 +446,6 @@ function cartOrderLabel(
   adminNote?: string | null
 ) {
   const z = (zoneCode || "").toUpperCase();
-  if (z === "LONG_NUONG") {
-    if (status === "PENDING_APPROVAL") return "Chờ gọi xác nhận";
-    if (status === "OPEN") return "Đã gọi xác nhận";
-  }
   if (status === "USED") {
     if (z === "MIA_OI") return "Đã TT · hoàn tất";
     if (
@@ -434,7 +457,7 @@ function cartOrderLabel(
     return "Đã dùng";
   }
   if (status === "OPEN") return "Thanh toán thành công";
-  if (status === "PENDING_APPROVAL") return "Chờ duyệt";
+  if (status === "PENDING_APPROVAL") return "Chờ thanh toán";
   if (status === "REJECTED") return "Từ chối";
   if (status === "CANCELLED") {
     return (adminNote || "").includes("huỷ") ? "Đã huỷ" : "Khách xoá";
@@ -1147,7 +1170,11 @@ function buildDeskTickets(
         orderId: confirmed?.orderId ?? claimed?.id ?? null,
         scanAt: cart.createdAt || a.lastVisitAt,
         orderStatus: ordered ? "ordered" : "pending",
-        orderLabel: cartOrderLabel(cart.status, zoneCode, cart.adminNote),
+        orderLabel: cartOrderLabel(
+          cart.status,
+          cart.zoneCode || zoneCode,
+          cart.adminNote
+        ),
         billText:
           (confirmed
             ? confirmed.orderSummary
@@ -1926,15 +1953,22 @@ export default function DeskAdministrationPage() {
     if (step !== "dashboard" || !zone || zone === "ADMIN") return;
     // Đang mở lịch → tạm dừng poll để UI không giật
     if (calendarOpen) return;
-    void load();
-    // Lịch sử: không cần poll nhanh. Realtime: chậm hơn trước (tránh lag + logout giả)
     const ms = viewDate
       ? 60_000
       : pendingApprovalCount > 0
         ? 4_000
         : 10_000;
-    const t = setInterval(() => void load(), ms);
-    return () => clearInterval(t);
+    const pull = () => {
+      if (document.visibilityState === "hidden") return;
+      void load();
+    };
+    pull();
+    const t = setInterval(pull, ms);
+    document.addEventListener("visibilitychange", pull);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", pull);
+    };
   }, [step, zone, load, pendingApprovalCount, calendarOpen, viewDate]);
 
   async function approveCart(
@@ -1966,6 +2000,11 @@ export default function DeskAdministrationPage() {
         setOrderMsg("Đã chốt đơn.");
         setGuestCart((prev) =>
           prev && prev.token === token ? { ...prev, status: "USED" } : prev
+        );
+      } else if (action === "approve") {
+        setOrderMsg("Đã xác nhận thanh toán. Bổ sung chứng từ, rồi chốt đơn.");
+        setGuestCart((prev) =>
+          prev && prev.token === token ? { ...prev, status: "OPEN" } : prev
         );
       }
       await load();
@@ -2056,8 +2095,15 @@ export default function DeskAdministrationPage() {
     status?: string | null
   ) {
     if (!token || billOrderClosed(status)) return null;
+    if (status === "PENDING_APPROVAL") {
+      return (
+        <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#c2410c" }}>
+          Xác nhận thanh toán trước, rồi bổ sung chứng từ và chốt đơn.
+        </p>
+      );
+    }
     const canEdit = !frozen || !has;
-    const canFinalize = isMiaOi && has && status === "OPEN";
+    const canFinalize = has && status === "OPEN" && zoneRequiresBillPhoto(zone);
     return (
       <div style={styles.billRow} onClick={(e) => e.stopPropagation()}>
         {canEdit ? (
@@ -2313,6 +2359,10 @@ export default function DeskAdministrationPage() {
       setCreateGuestError("Nhập đủ tên và số điện thoại.");
       return;
     }
+    if (anonymous && (fullName || phone)) {
+      setCreateGuestError("Xóa họ tên và số điện thoại trước khi tạo khách lẻ.");
+      return;
+    }
     setCreateGuestBusy(true);
     setCreateGuestError("");
     try {
@@ -2327,13 +2377,6 @@ export default function DeskAdministrationPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không tạo được khách");
-      await load();
-      const refreshed = await fetch(
-        `/api/crm/desk?hours=12&zone=${encodeURIComponent(zone)}`,
-        { cache: "no-store" }
-      );
-      const listData = await refreshed.json();
-      const list: Arrival[] = listData.arrivals || [];
       const cust = data.customer as {
         id: string;
         customerCode: string;
@@ -2343,7 +2386,7 @@ export default function DeskAdministrationPage() {
         segment?: string;
         segmentLabel?: string;
       };
-      const fromList = list.find((a) => a.id === cust.id);
+      const fromList = arrivals.find((a) => a.id === cust.id);
       const segment = String(
         cust.segment || fromList?.segment || (anonymous ? "WALK_IN" : "ACCOUNT")
       );
@@ -2404,6 +2447,7 @@ export default function DeskAdministrationPage() {
       setGuestHits([]);
       setCreateGuestOpen(false);
       setOrderMsg(data.message || "Đã mở đơn. Chọn món / vé rồi xác thực.");
+      void load();
     } catch (e) {
       setCreateGuestError(
         e instanceof Error ? e.message : "Không tạo được khách"
@@ -4300,7 +4344,7 @@ export default function DeskAdministrationPage() {
       }
       notes.push(`mía ${formatVnd(data.order?.totalVnd || guestCart.totalVnd)}`);
       setOrderMsg(`Đã xác nhận · ${notes.join(" + ")}`);
-      await load();
+      void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không xác nhận được");
     } finally {
@@ -4431,7 +4475,7 @@ export default function DeskAdministrationPage() {
             : ""
         }`
       );
-      await load();
+      void load();
     } catch (e) {
       if (!finished && poolSaved && manual.onPool > 0) {
         const left = Math.max(0, manual.vnd - manual.onPool);
@@ -4510,7 +4554,7 @@ export default function DeskAdministrationPage() {
       setDeskVoucherOfferId("");
       setVoucherPickerOpen(false);
       void loadDeskWallet(selected.id);
-      await load();
+      void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được đơn");
     } finally {
@@ -5587,14 +5631,26 @@ export default function DeskAdministrationPage() {
               </button>
               <button
                 type="button"
+                title={
+                  guestName.trim() || guestPhone.trim()
+                    ? "Xóa họ tên và số điện thoại để tạo khách lẻ"
+                    : undefined
+                }
                 style={{
                   ...styles.ghost,
                   width: "100%",
                   fontWeight: 800,
                   color: "#9a3412",
-                  opacity: createGuestBusy ? 0.45 : 1,
+                  opacity:
+                    createGuestBusy || guestName.trim() || guestPhone.trim()
+                      ? 0.45
+                      : 1,
                 }}
-                disabled={createGuestBusy}
+                disabled={
+                  createGuestBusy ||
+                  !!guestName.trim() ||
+                  !!guestPhone.trim()
+                }
                 onClick={() => void submitCreateGuest(true)}
               >
                 {createGuestBusy ? "Đang tạo…" : "Khách lẻ · không tài khoản"}
@@ -5750,7 +5806,7 @@ export default function DeskAdministrationPage() {
         <div style={styles.sheetBar}>
           <h2 style={styles.sheetTitle}>Đơn khách gửi</h2>
           <span style={styles.sheetCount}>
-            {pendingApprovalCount} chờ duyệt · {visibleTickets.length} dòng
+            {pendingApprovalCount} chờ thanh toán · {visibleTickets.length} dòng
             {zone === "LONG_NUONG" && SHOW_LONG_NUONG_TABLE_MAP
               ? " · mở «Sơ đồ bàn» trên header khi cần"
               : ""}
@@ -5771,7 +5827,7 @@ export default function DeskAdministrationPage() {
                 {isMiaOlympic ? "Voucher / Điểm" : "Voucher"}
               </th>
               {hasCatalog ? <th style={styles.th}>Order</th> : null}
-              <th style={styles.th}>Duyệt</th>
+              <th style={styles.th}>Thanh toán</th>
               {isMiaOi ? null : <th style={styles.th}>Đã check in</th>}
             </tr>
           </thead>
@@ -6007,9 +6063,7 @@ export default function DeskAdministrationPage() {
                           >
                             {approvingToken === cartTok
                               ? "…"
-                              : isLongNuong
-                                ? "Đã gọi"
-                                : "Duyệt thành công"}
+                              : "Xác nhận thanh toán"}
                           </button>
                           <button
                             type="button"
@@ -6064,14 +6118,14 @@ export default function DeskAdministrationPage() {
                         </span>
                       ) : t.cart ? (
                         <span
-                          title="Khách thấy thanh toán thành công. Chứng từ thiếu vẫn là hoàn thành 1 phần ở cột hoá đơn."
+                          title="Đã xác nhận thanh toán. Chứng từ thiếu vẫn là hoàn thành 1 phần ở cột hoá đơn."
                           style={{
                             ...styles.pill,
                             background: "#d1fae5",
                             color: "#047857",
                           }}
                         >
-                          Đã duyệt
+                          Đã xác nhận
                         </span>
                       ) : (
                         <span style={{ color: "#94a3b8" }}>—</span>
@@ -6176,27 +6230,27 @@ export default function DeskAdministrationPage() {
               ...styles.modal,
               width: "min(860px, 100%)",
               position: "relative",
+              ...(voucherPickerOpen ? { overflow: "hidden" } : {}),
             }}
             onClick={(e) => e.stopPropagation()}
           >
             {voucherPickerOpen ? (
               <div
                 style={{
-                  position: "absolute",
+                  position: "fixed",
                   inset: 0,
-                  zIndex: 8,
+                  zIndex: 80,
                   background: "rgba(15,23,42,.4)",
                   display: "grid",
                   placeItems: "center",
                   padding: 16,
-                  borderRadius: 20,
                 }}
                 onClick={() => setVoucherPickerOpen(false)}
               >
                 <div
                   style={{
                     width: "min(380px, 100%)",
-                    maxHeight: "80%",
+                    maxHeight: "min(480px, 80dvh)",
                     overflow: "auto",
                     background: "#fff",
                     borderRadius: 16,
@@ -6378,18 +6432,21 @@ export default function DeskAdministrationPage() {
                   }}
                 >
                   {guestCart.status === "PENDING_APPROVAL"
-                    ? "Đơn chờ xác nhận"
+                    ? "Chờ thanh toán"
                     : spaCartEditable()
-                      ? "Đơn đã nhận"
+                      ? "Đã xác nhận thanh toán"
                       : guestConfirmedBill
                         ? "Đơn đã xác thực"
-                        : "Đơn đã nhận"}
+                        : "Đã xác nhận thanh toán"}
                   {guestCart.zoneName ? ` · ${guestCart.zoneName}` : ""}
                 </p>
-                {spaCartEditable() ? (
+                {guestCart.status === "PENDING_APPROVAL" ? (
                   <p style={{ margin: "6px 0 0", fontSize: 12, color: "#334155" }}>
-                    Cập nhật đơn lưu thay đổi, kể cả khi khách đang dùng. Duyệt thành công
-                    để khách thấy thanh toán xong. Bổ sung chứng từ trong ca. Đã dùng khi khách xong.
+                    Khách chỉ cần thanh toán. Xác nhận giao dịch, bổ sung chứng từ, rồi chốt đơn.
+                  </p>
+                ) : spaCartEditable() ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 12, color: "#334155" }}>
+                    Đã xác nhận thanh toán. Bổ sung chứng từ, rồi chốt đơn. Đã dùng khi khách xong.
                   </p>
                 ) : null}
                 <div
@@ -6581,9 +6638,7 @@ export default function DeskAdministrationPage() {
                       >
                         {approvingToken === guestCart.token
                           ? "…"
-                          : isLongNuong
-                            ? "Đã gọi"
-                            : "Duyệt thành công"}
+                          : "Xác nhận thanh toán"}
                       </button>
                       <button
                         type="button"

@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 /**
- * After the customer sends an order: no confirmation QR.
- * Staff duyệt thành công → customer sees payment done.
- * The bill photo is a later staff proof, not shown here.
+ * After the customer sends an order they pay at the desk.
+ * Staff confirms the transaction → customer sees payment done.
+ * The bill photo and finalize step stay on the desk.
  */
 export function OrderQrSuccess({
   title,
+  subtitle,
   detailLines,
   cartToken,
   initialStatus,
@@ -57,7 +58,7 @@ export function OrderQrSuccess({
             ) {
               setError(
                 data.status === "REJECTED"
-                  ? `Từ chối: ${data.adminNote || "Quầy không duyệt."}`
+                  ? `Từ chối: ${data.adminNote || "Quầy không nhận giao dịch."}`
                   : data.status === "CANCELLED"
                     ? "Yêu cầu đã bị huỷ."
                     : data.status === "EXPIRED" || data.status === "NO_SHOW"
@@ -89,7 +90,7 @@ export function OrderQrSuccess({
           Đã ẩn hộp chờ
         </p>
         <p className="mt-2 max-w-sm text-sm text-oasis-mute">
-          Đơn vẫn đang chờ quầy — xem trạng thái tại trang cá nhân.
+          Đơn vẫn chờ thanh toán tại quầy — xem trạng thái tại trang cá nhân.
         </p>
         <Link
           href="/account"
@@ -112,7 +113,8 @@ export function OrderQrSuccess({
 
   const headline = pending ? "Đã gửi đơn" : accepted ? "Thanh toán thành công" : title;
   const lead = pending
-    ? "Chờ quầy duyệt. Khi quầy bấm duyệt thành công, thanh toán của bạn xong."
+    ? subtitle ||
+      "Thanh toán tại quầy. Khi quầy xác nhận giao dịch, thanh toán của bạn xong."
     : error
       ? error
       : "Thanh toán xong.";
@@ -130,7 +132,7 @@ export function OrderQrSuccess({
       {pending ? (
         <div className="mt-6 w-full max-w-sm rounded-[28px] bg-amber-50 p-5 shadow-soft">
           <p className="font-display text-xl font-semibold text-oasis-ink">
-            Đang chờ quầy xác nhận
+            Thanh toán tại quầy
           </p>
           {customerName ? (
             <p className="mt-3 font-semibold text-oasis-ink">{customerName}</p>

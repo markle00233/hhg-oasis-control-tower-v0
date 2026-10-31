@@ -13,7 +13,7 @@ import { getMiaOiItem } from "@/lib/miaoi-menu";
 import { quoteMiaOiVipDiscount } from "@/lib/olympic-membership";
 import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/audit";
-import { redeemPoints } from "@/lib/points";
+import { awardPurchasePoints, redeemPoints } from "@/lib/points";
 import {
   consumeDeskBillVoucher,
   deskVoucherNote,
@@ -424,51 +424,51 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await writeAudit({
-      actorType: "STAFF",
-      actorId: gate.user.id,
-      action: "ORDER_CREATE",
-      entityType: "AppOrder",
-      entityId: order.id,
-      zoneCode: "MIA_OI",
-      payload: { totalVnd, source: "ZONE_DESK" },
-    });
-
-    if (voucherQuote.offerId) {
-      await consumeDeskBillVoucher({
-        customerId: customer.id,
-        offerId: voucherQuote.offerId,
-        zone: "MIA_OI",
-        staffUserId: gate.user.id,
-        staffName: gate.user.displayName || gate.user.username,
-        baseVnd: totalVnd + voucherQuote.discountVnd,
-        note: voucherNote,
-      }).catch((err) => {
-        console.error("[miaoi/orders voucher]", err);
-      });
-    }
-
-    if (redeemed.cost > 0) {
-      await redeemPoints({
-        customerId: customer.id,
-        cost: redeemed.cost,
-        refType: "APP_ORDER",
-        refId: `redeem:${order.id}`,
-        note: redeemNote,
-      });
-    }
-
-    const { awardPurchasePoints } = await import("@/lib/points");
-    const pts = await awardPurchasePoints({
-      customerId: customer.id,
-      refType: "APP_ORDER",
-      refId: order.id,
-      subtotalVnd: totalVnd,
-      note: `Mía Ơi desk · ${totalVnd}đ sau giảm`,
-    }).catch((err) => {
-      console.error("[miaoi/orders points]", err);
-      return null;
-    });
+    const [, , pts] = await Promise.all([
+      writeAudit({
+        actorType: "STAFF",
+        actorId: gate.user.id,
+        action: "ORDER_CREATE",
+        entityType: "AppOrder",
+        entityId: order.id,
+        zoneCode: "MIA_OI",
+        payload: { totalVnd, source: "ZONE_DESK" },
+      }),
+      voucherQuote.offerId
+        ? consumeDeskBillVoucher({
+            customerId: customer.id,
+            offerId: voucherQuote.offerId,
+            zone: "MIA_OI",
+            staffUserId: gate.user.id,
+            staffName: gate.user.displayName || gate.user.username,
+            baseVnd: totalVnd + voucherQuote.discountVnd,
+            note: voucherNote,
+          }).catch((err) => {
+            console.error("[miaoi/orders voucher]", err);
+          })
+        : Promise.resolve(null),
+      (async () => {
+        if (redeemed.cost > 0) {
+          await redeemPoints({
+            customerId: customer.id,
+            cost: redeemed.cost,
+            refType: "APP_ORDER" as const,
+            refId: `redeem:${order.id}`,
+            note: redeemNote,
+          });
+        }
+        return awardPurchasePoints({
+          customerId: customer.id,
+          refType: "APP_ORDER",
+          refId: order.id,
+          subtotalVnd: totalVnd,
+          note: `Mía Ơi desk · ${totalVnd}đ sau giảm`,
+        }).catch((err) => {
+          console.error("[miaoi/orders points]", err);
+          return null;
+        });
+      })(),
+    ]);
 
     return NextResponse.json({
       ok: true,

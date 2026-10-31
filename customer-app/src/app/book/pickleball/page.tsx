@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DateChipRow } from "@/components/DateChipRow";
 import { Shell } from "@/components/Shell";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 import { OrderQrSuccess } from "@/components/OrderQrSuccess";
 import {
   buildDateOptions,
@@ -237,7 +238,7 @@ export default function PickleballBookPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const me = await fetch("/api/auth/me", { cache: "no-store" });
+      const me = await fetchAuthMe();
       const data = await me.json();
       if (!data.authenticated) {
         router.replace("/login");
@@ -251,11 +252,13 @@ export default function PickleballBookPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!ready) return;
     void loadCourts();
-    const t = setInterval(() => void loadCourts(), 5000);
+    const t = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void loadCourts();
+    }, 5000);
     return () => clearInterval(t);
-  }, [ready, loadCourts]);
+  }, [loadCourts]);
 
   useEffect(() => {
     setFromHm("");
@@ -342,7 +345,7 @@ export default function PickleballBookPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu đặt sân"
-          subtitle="Chờ quầy duyệt. Duyệt xong là thanh toán thành công."
+          subtitle="Thanh toán tại quầy. Khi quầy xác nhận giao dịch, thanh toán của bạn xong."
           detailLines={[
             successBooking.courtName,
             `${start.toLocaleDateString("vi-VN")} · ${start.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false })} – ${end.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false })}`,

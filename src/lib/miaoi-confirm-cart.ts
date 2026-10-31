@@ -418,55 +418,9 @@ export async function confirmMiaOiCartPayment(opts: {
           },
         },
       });
-      const checkIns = await tx.appServiceEvent.findMany({
-        where: {
-          customerId: cart.customerId,
-          serviceId: service.id,
-          eventType: "SERVICE_USE",
-          operationalStatus: "NEW",
-        },
-        orderBy: { createdAt: "desc" },
-        take: 10,
-      });
-      for (const scan of checkIns) {
-        const meta =
-          scan.metadata &&
-          typeof scan.metadata === "object" &&
-          !Array.isArray(scan.metadata)
-            ? (scan.metadata as Record<string, unknown>)
-            : {};
-        if (meta.cartToken !== cart.token) continue;
-        await tx.appServiceEvent.update({
-          where: { id: scan.id },
-          data: {
-            operationalStatus: "ACKNOWLEDGED",
-            metadata: {
-              ...meta,
-              orderId: created.id,
-              cartToken: cart.token,
-              ticketVerified: true,
-              closedBy: "desk_confirm_payment",
-            },
-          },
-        });
-      }
     }
     return created;
   });
-
-  if (voucherQuote.offerId) {
-    await consumeDeskBillVoucher({
-      customerId: cart.customerId,
-      offerId: voucherQuote.offerId,
-      zone: "MIA_OI",
-      staffUserId: opts.staffUserId,
-      staffName: opts.staffName || "desk",
-      baseVnd: totalVnd + voucherQuote.discountVnd,
-      note: voucherNote,
-    }).catch((err) => {
-      console.error("[miaoi-confirm voucher]", err);
-    });
-  }
 
   const embeddedOfferIds = new Set<string>();
   for (const row of rawItems) {
@@ -477,63 +431,121 @@ export async function confirmMiaOiCartPayment(opts: {
       if (offerId && offerId !== voucherQuote.offerId) embeddedOfferIds.add(offerId);
     }
   }
-  if (embeddedOfferIds.size) {
-    const { isLimitedMembershipVoucher } = await import("@/lib/hhg-vouchers");
-    const { consumeMembershipVoucherUse } = await import(
-      "@/lib/membership-voucher-qty"
-    );
-    for (const offerId of embeddedOfferIds) {
-      if (!isLimitedMembershipVoucher(offerId)) continue;
-      await consumeMembershipVoucherUse(prisma, {
-        customerId: cart.customerId,
-        offerId,
-      }).catch((err) => {
-        console.error("[miaoi-confirm cart voucher]", err);
+
+  const [, , pts] = await Promise.all([
+    (async () => {
+      if (!service) return;
+      const checkIns = await prisma.appServiceEvent.findMany({
+        where: {
+          customerId: cart.customerId,
+          serviceId: service.id,
+          eventType: "SERVICE_USE",
+          operationalStatus: "NEW",
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
       });
-    }
-  }
-
-  // Burn redeem first, then award only on unpaid remainder (đổi điểm không cộng điểm).
-  let pointsBalance: number | null = null;
-  if (deskRedeemCost > 0) {
-    const burned = await redeemPoints({
-      customerId: cart.customerId,
-      cost: deskRedeemCost,
-      refType: "APP_ORDER",
-      refId: `redeem:${order.id}`,
-      note: deskRedeemNote,
-    });
-    pointsBalance = burned.balance;
-  } else if (extraPointsOff > 0) {
-    const burned = await redeemPoints({
-      customerId: cart.customerId,
-      cost: REDEEM_TIER_DRINK,
-      refType: "APP_ORDER",
-      refId: `mia-extra:${order.id}`,
-      note: `Đổi 50 điểm · món gọi thêm · ${redeemItemId}`,
-    });
-    pointsBalance = burned.balance;
-  }
-
-  const pts = await awardPurchasePoints({
-    customerId: cart.customerId,
-    refType: "SERVICE_CART",
-    refId: cart.id,
-    subtotalVnd: totalVnd,
-    note: `Mía Ơi · ${totalVnd}đ sau giảm`,
-  }).catch((err) => {
-    console.error("[miaoi-confirm points]", err);
-    return null;
-  });
-  if (pts && typeof pts.balance === "number") {
-    pointsBalance = pts.balance;
-  } else if (pointsBalance == null) {
-    const c = await prisma.appCustomer.findUnique({
-      where: { id: cart.customerId },
-      select: { pointsBalance: true },
-    });
-    pointsBalance = c?.pointsBalance ?? null;
-  }
+      await Promise.all(
+        checkIns.map(async (scan) => {
+          const meta =
+            scan.metadata &&
+            typeof scan.metadata === "object" &&
+            !Array.isArray(scan.metadata)
+              ? (scan.metadata as Record<string, unknown>)
+              : {};
+          if (meta.cartToken !== cart.token) return;
+          await prisma.appServiceEvent.update({
+            where: { id: scan.id },
+            data: {
+              operationalStatus: "ACKNOWLEDGED",
+              metadata: {
+                ...meta,
+                orderId: order.id,
+                cartToken: cart.token,
+                ticketVerified: true,
+                closedBy: "desk_confirm_payment",
+              },
+            },
+          });
+        })
+      );
+    })(),
+    (async () => {
+      if (voucherQuote.offerId) {
+        await consumeDeskBillVoucher({
+          customerId: cart.customerId,
+          offerId: voucherQuote.offerId,
+          zone: "MIA_OI",
+          staffUserId: opts.staffUserId,
+          staffName: opts.staffName || "desk",
+          baseVnd: totalVnd + voucherQuote.discountVnd,
+          note: voucherNote,
+        }).catch((err) => {
+          console.error("[miaoi-confirm voucher]", err);
+        });
+      }
+      if (!embeddedOfferIds.size) return;
+      const { isLimitedMembershipVoucher } = await import("@/lib/hhg-vouchers");
+      const { consumeMembershipVoucherUse } = await import(
+        "@/lib/membership-voucher-qty"
+      );
+      await Promise.all(
+        [...embeddedOfferIds].map(async (offerId) => {
+          if (!isLimitedMembershipVoucher(offerId)) return;
+          await consumeMembershipVoucherUse(prisma, {
+            customerId: cart.customerId,
+            offerId,
+          }).catch((err) => {
+            console.error("[miaoi-confirm cart voucher]", err);
+          });
+        })
+      );
+    })(),
+    (async () => {
+      // Burn redeem first, then award only on unpaid remainder.
+      let pointsBalance: number | null = null;
+      if (deskRedeemCost > 0) {
+        const burned = await redeemPoints({
+          customerId: cart.customerId,
+          cost: deskRedeemCost,
+          refType: "APP_ORDER",
+          refId: `redeem:${order.id}`,
+          note: deskRedeemNote,
+        });
+        pointsBalance = burned.balance;
+      } else if (extraPointsOff > 0) {
+        const burned = await redeemPoints({
+          customerId: cart.customerId,
+          cost: REDEEM_TIER_DRINK,
+          refType: "APP_ORDER",
+          refId: `mia-extra:${order.id}`,
+          note: `Đổi 50 điểm · món gọi thêm · ${redeemItemId}`,
+        });
+        pointsBalance = burned.balance;
+      }
+      const awarded = await awardPurchasePoints({
+        customerId: cart.customerId,
+        refType: "SERVICE_CART",
+        refId: cart.id,
+        subtotalVnd: totalVnd,
+        note: `Mía Ơi · ${totalVnd}đ sau giảm`,
+      }).catch((err) => {
+        console.error("[miaoi-confirm points]", err);
+        return null;
+      });
+      if (awarded && typeof awarded.balance === "number") {
+        pointsBalance = awarded.balance;
+      } else if (pointsBalance == null) {
+        const c = await prisma.appCustomer.findUnique({
+          where: { id: cart.customerId },
+          select: { pointsBalance: true },
+        });
+        pointsBalance = c?.pointsBalance ?? null;
+      }
+      return { awarded, pointsBalance };
+    })(),
+  ]);
+  const pointsBalance = pts.pointsBalance;
 
   return {
     ok: true as const,
@@ -546,7 +558,7 @@ export async function confirmMiaOiCartPayment(opts: {
     },
     order,
     customer: cart.customer,
-    pointsAwarded: pts?.delta ?? 0,
+    pointsAwarded: pts.awarded?.delta ?? 0,
     pointsBalance,
     message: "Đã xác nhận thanh toán.",
   };

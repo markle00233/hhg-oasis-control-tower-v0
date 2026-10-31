@@ -11,6 +11,7 @@ import {
 } from "@/components/VoucherPicker";
 import { PointsBalanceBar } from "@/components/PointsBalanceBar";
 import { DrinkPointsRedeem } from "@/components/PointsRedeemControl";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 import {
   applyOffersDiscount,
   type HomeOffer,
@@ -68,7 +69,10 @@ export default function MiaOiOrderPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      const [res, offerRes] = await Promise.all([
+        fetchAuthMe(),
+        fetch("/api/me/offers", { cache: "no-store" }),
+      ]);
       const data = await res.json();
       if (!data.authenticated) {
         router.replace("/login");
@@ -83,7 +87,6 @@ export default function MiaOiOrderPage() {
             : null
         );
       }
-      const offerRes = await fetch("/api/me/offers", { cache: "no-store" });
       if (offerRes.ok) {
         const od = await offerRes.json();
         const list = Array.isArray(od.wallet) ? od.wallet : [];
@@ -333,7 +336,7 @@ export default function MiaOiOrderPage() {
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi yêu cầu Mía Ơi"
-          subtitle="Chờ quầy duyệt. Duyệt xong là thanh toán thành công."
+          subtitle="Thanh toán tại quầy. Khi quầy xác nhận giao dịch, thanh toán của bạn xong."
           detailLines={success.lines}
           cartToken={success.cartToken}
           initialStatus={success.status}

@@ -64,6 +64,108 @@ async function rememberStaffNames(ids: Set<string>) {
   }
 }
 
+let vipStartBackfillRunning = false;
+
+/** Ghi vipStartedAt sau khi trả bảng quầy — không chặn Tạo đơn / xác nhận. */
+function scheduleVipStartBackfill(customerIds: string[]) {
+  if (!customerIds.length || vipStartBackfillRunning) return;
+  vipStartBackfillRunning = true;
+  void (async () => {
+    try {
+      const customers = await prisma.appCustomer.findMany({
+        where: {
+          id: { in: customerIds },
+          vipStartedAt: null,
+        },
+        select: {
+          id: true,
+          phoneNormalized: true,
+          vipExpiresAt: true,
+          vipPlanLabel: true,
+        },
+      });
+      if (!customers.length) return;
+      const packageStart = new Map<string, Date>();
+      const orders = await prisma.appOrder.findMany({
+        where: {
+          customerId: { in: customers.map((c) => c.id) },
+          status: { not: "CANCELLED" },
+          items: { some: { itemId: { in: [...OLYMPIC_PACKAGE_IDS] } } },
+        },
+        select: { customerId: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      });
+      for (const order of orders) {
+        if (!packageStart.has(order.customerId)) {
+          packageStart.set(order.customerId, order.createdAt);
+        }
+      }
+      const missingAfterOrders = customers
+        .map((c) => c.id)
+        .filter((id) => !packageStart.has(id));
+      if (missingAfterOrders.length) {
+        const carts = await prisma.appServiceCart.findMany({
+          where: {
+            customerId: { in: missingAfterOrders },
+            status: { notIn: ["CANCELLED", "REJECTED"] },
+          },
+          select: { customerId: true, createdAt: true, items: true },
+          orderBy: { createdAt: "desc" },
+        });
+        for (const cart of carts) {
+          if (packageStart.has(cart.customerId)) continue;
+          const items = Array.isArray(cart.items) ? cart.items : [];
+          const bought = items.some((row) => {
+            if (!row || typeof row !== "object") return false;
+            return isOlympicPackageId(String((row as { id?: string }).id || ""));
+          });
+          if (bought) packageStart.set(cart.customerId, cart.createdAt);
+        }
+      }
+      const missingAfterCarts = customers
+        .map((c) => c.id)
+        .filter((id) => !packageStart.has(id));
+      if (missingAfterCarts.length) {
+        const offers = await prisma.appCollectedOffer.findMany({
+          where: {
+            customerId: { in: missingAfterCarts },
+            offerId: { startsWith: "hhg-oly-" },
+          },
+          select: { customerId: true, collectedAt: true },
+          orderBy: { collectedAt: "desc" },
+        });
+        for (const offer of offers) {
+          if (!packageStart.has(offer.customerId)) {
+            packageStart.set(offer.customerId, offer.collectedAt);
+          }
+        }
+      }
+      await Promise.all(
+        customers.map(async (c) => {
+          const start =
+            packageStart.get(c.id) ||
+            (c.vipExpiresAt
+              ? vipStartedAtFromExpiry(c.vipExpiresAt, c.vipPlanLabel)
+              : null);
+          if (!start) return;
+          await prisma.appCustomer
+            .updateMany({
+              where: { id: c.id, vipStartedAt: null },
+              data: { vipStartedAt: start },
+            })
+            .catch((err) => {
+              console.error("[desk] vip start backfill", err);
+            });
+        })
+      );
+    } catch (err) {
+      console.error("[desk] vip start backfill", err);
+    } finally {
+      vipStartBackfillRunning = false;
+    }
+  })();
+}
+
 function staffFromMeta(meta: Record<string, unknown>) {
   const written =
     typeof meta.staffName === "string" ? meta.staffName.trim() : "";
@@ -156,30 +258,20 @@ export async function GET(req: NextRequest) {
         zone === "OLYMPIC_POOL" ||
         zone === "RESORT_POOL" ||
         aliases.includes("OLYMPIC_POOL");
-      if (poolLike && isPastVnCutOff(now)) {
-        await prisma.appServiceCart
-          .updateMany({
-            where: {
-              zoneCode: { in: aliases },
-              status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
-              createdAt: { gte: since },
-            },
-            data: { status: CART_STATUS.NO_SHOW },
-          })
-          .catch(() => undefined);
-      } else {
-        await prisma.appServiceCart
-          .updateMany({
-            where: {
-              zoneCode: { in: aliases },
-              status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
-              expiresAt: { lt: now },
-              createdAt: { gte: cartSince },
-            },
-            data: { status: CART_STATUS.NO_SHOW },
-          })
-          .catch(() => undefined);
-      }
+      const noShowWhere = {
+        zoneCode: { in: aliases },
+        status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
+        createdAt: { gte: poolLike && isPastVnCutOff(now) ? since : cartSince },
+        ...(poolLike && isPastVnCutOff(now)
+          ? {}
+          : { expiresAt: { lt: now } }),
+      };
+      void prisma.appServiceCart
+        .updateMany({
+          where: noShowWhere,
+          data: { status: CART_STATUS.NO_SHOW },
+        })
+        .catch(() => undefined);
     }
 
     /**
@@ -204,45 +296,58 @@ export async function GET(req: NextRequest) {
             customer: { select: { id: true } },
           },
         });
-        for (const b of orphanBookings) {
-          if (!b.customerId || !b.resource) continue;
-          const tag = `bookingId:${b.id}`;
-          const carts = await prisma.appServiceCart.findMany({
-            where: {
-              customerId: b.customerId,
-              zoneCode: "LONG_NUONG",
-              createdAt: { gte: since },
-            },
-            select: { items: true },
-            take: 20,
-          });
-          const hasCart = carts.some((c) => {
-            const items = Array.isArray(c.items) ? c.items : [];
-            return items.some(
-              (it) =>
-                it &&
-                typeof it === "object" &&
-                String((it as { note?: string }).note || "").includes(tag)
-            );
-          });
-          if (hasCart) continue;
-          const arriveLabel = formatVnDateTime(b.startAt);
-          await createServiceCart({
-            customerId: b.customerId,
-            zoneCode: "LONG_NUONG",
-            zoneName: "Lòng Nướng Chí Phèo",
-            items: [
-              {
-                id: `table-${b.resource.code}`,
-                nameVi: `${b.resource.name} · ${arriveLabel}`,
-                qty: 1,
-                priceVnd: 0,
-                note: `resourceId:${b.resource.id}|bookingId:${b.id}|code:${b.bookingCode}`,
+        const pending = orphanBookings.filter((b) => b.customerId && b.resource);
+        const carts = pending.length
+          ? await prisma.appServiceCart.findMany({
+              where: {
+                customerId: {
+                  in: [...new Set(pending.map((b) => b.customerId as string))],
+                },
+                zoneCode: "LONG_NUONG",
+                createdAt: { gte: since },
               },
-            ],
-            ttlHours: 48,
-          });
+              select: { customerId: true, items: true },
+            })
+          : [];
+        const notesByCustomer = new Map<string, string>();
+        for (const cart of carts) {
+          const items = Array.isArray(cart.items) ? cart.items : [];
+          const notes = items
+            .map((it) =>
+              it && typeof it === "object"
+                ? String((it as { note?: string }).note || "")
+                : ""
+            )
+            .join("\n");
+          notesByCustomer.set(
+            cart.customerId,
+            `${notesByCustomer.get(cart.customerId) || ""}\n${notes}`
+          );
         }
+        await Promise.all(
+          pending.map(async (b) => {
+            const tag = `bookingId:${b.id}`;
+            if ((notesByCustomer.get(b.customerId as string) || "").includes(tag)) {
+              return;
+            }
+            const arriveLabel = formatVnDateTime(b.startAt);
+            await createServiceCart({
+              customerId: b.customerId as string,
+              zoneCode: "LONG_NUONG",
+              zoneName: "Lòng Nướng Chí Phèo",
+              items: [
+                {
+                  id: `table-${b.resource!.code}`,
+                  nameVi: `${b.resource!.name} · ${arriveLabel}`,
+                  qty: 1,
+                  priceVnd: 0,
+                  note: `resourceId:${b.resource!.id}|bookingId:${b.id}|code:${b.bookingCode}`,
+                },
+              ],
+              ttlHours: 48,
+            });
+          })
+        );
       } catch (err) {
         console.error("[crm/desk long-nuong backfill]", err);
       }
@@ -464,85 +569,18 @@ export async function GET(req: NextRequest) {
       (c) =>
         String(c.segment || "").toUpperCase() === "VIP" && !c.vipStartedAt
     );
-    if (vipMissingStart.length) {
-      const orders = await prisma.appOrder.findMany({
-        where: {
-          customerId: { in: vipMissingStart.map((c) => c.id) },
-          status: { not: "CANCELLED" },
-          items: { some: { itemId: { in: [...OLYMPIC_PACKAGE_IDS] } } },
-        },
-        select: { customerId: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
-      });
-      for (const order of orders) {
-        if (!packageStart.has(order.customerId)) {
-          packageStart.set(order.customerId, order.createdAt);
-        }
-      }
-      const missingAfterOrders = vipMissingStart
-        .map((c) => c.id)
-        .filter((id) => !packageStart.has(id));
-      if (missingAfterOrders.length) {
-        const carts = await prisma.appServiceCart.findMany({
-          where: {
-            customerId: { in: missingAfterOrders },
-            status: { notIn: ["CANCELLED", "REJECTED"] },
-          },
-          select: { customerId: true, createdAt: true, items: true },
-          orderBy: { createdAt: "desc" },
-        });
-        for (const cart of carts) {
-          if (packageStart.has(cart.customerId)) continue;
-          const items = Array.isArray(cart.items) ? cart.items : [];
-          const bought = items.some((row) => {
-            if (!row || typeof row !== "object") return false;
-            return isOlympicPackageId(String((row as { id?: string }).id || ""));
-          });
-          if (bought) packageStart.set(cart.customerId, cart.createdAt);
-        }
-      }
-      const missingAfterCarts = vipMissingStart
-        .map((c) => c.id)
-        .filter((id) => !packageStart.has(id));
-      if (missingAfterCarts.length) {
-        const offers = await prisma.appCollectedOffer.findMany({
-          where: {
-            customerId: { in: missingAfterCarts },
-            offerId: { startsWith: "hhg-oly-" },
-          },
-          select: { customerId: true, collectedAt: true },
-          orderBy: { collectedAt: "desc" },
-        });
-        for (const offer of offers) {
-          if (!packageStart.has(offer.customerId)) {
-            packageStart.set(offer.customerId, offer.collectedAt);
-          }
-        }
-      }
-      await Promise.all(
-        vipMissingStart.map(async (c) => {
-          const crm = c.phoneNormalized
-            ? membershipByPhone.get(c.phoneNormalized)?.startDate
-            : null;
-          const start =
-            packageStart.get(c.id) ||
-            crm ||
-            (c.vipExpiresAt
-              ? vipStartedAtFromExpiry(c.vipExpiresAt, c.vipPlanLabel)
-              : null);
-          if (!start) return;
-          packageStart.set(c.id, start);
-          await prisma.appCustomer
-            .update({
-              where: { id: c.id },
-              data: { vipStartedAt: start },
-            })
-            .catch((err) => {
-              console.error("[desk] vip start backfill", err);
-            });
-        })
-      );
+    for (const c of vipMissingStart) {
+      const crm = c.phoneNormalized
+        ? membershipByPhone.get(c.phoneNormalized)?.startDate
+        : null;
+      const start =
+        crm ||
+        (c.vipExpiresAt
+          ? vipStartedAtFromExpiry(c.vipExpiresAt, c.vipPlanLabel)
+          : null);
+      if (start) packageStart.set(c.id, start);
     }
+    scheduleVipStartBackfill(vipMissingStart.map((c) => c.id));
 
       const bonusByPhone = new Map<string, number>();
       if (zone === "SAUNA" || miaOlympicSector(zone)) {

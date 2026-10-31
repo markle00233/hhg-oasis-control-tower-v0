@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 
 export default function GatePage() {
   const router = useRouter();
@@ -12,7 +13,7 @@ export default function GatePage() {
     let cancelled = false;
     (async () => {
       try {
-        const me = await fetch("/api/auth/me", { cache: "no-store" });
+        const me = await fetchAuthMe();
         const data = await me.json();
         if (cancelled) return;
         if (data.authenticated) {

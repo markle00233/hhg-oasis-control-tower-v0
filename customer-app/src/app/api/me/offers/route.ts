@@ -36,23 +36,26 @@ export async function GET() {
       orderBy: { collectedAt: "desc" },
     });
 
-    // Backfill số lần cho voucher hội viên cũ (chưa có qty*)
-    if (vip) {
-      for (const r of rows) {
-        if (
-          isDurationMembershipVoucher(r.offerId) &&
-          isLimitedMembershipVoucher(r.offerId) &&
-          (r.qtyTotal == null || r.qtyRemaining == null)
-        ) {
-          await ensureMembershipVoucherQty(prisma, {
+    const missingQty = vip
+      ? rows.filter(
+          (r) =>
+            isDurationMembershipVoucher(r.offerId) &&
+            isLimitedMembershipVoucher(r.offerId) &&
+            (r.qtyTotal == null || r.qtyRemaining == null)
+        )
+      : [];
+    if (missingQty.length) {
+      await Promise.all(
+        missingQty.map((r) =>
+          ensureMembershipVoucherQty(prisma, {
             customerId: customer.id,
             offerId: r.offerId,
-          }).catch(() => undefined);
-        }
-      }
+          }).catch(() => undefined)
+        )
+      );
     }
 
-    const fresh = vip
+    const fresh = missingQty.length
       ? await prisma.appCollectedOffer.findMany({
           where: {
             customerId: customer.id,

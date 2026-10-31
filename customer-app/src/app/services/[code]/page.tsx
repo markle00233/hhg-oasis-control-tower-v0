@@ -15,6 +15,7 @@ import {
   PointsRedeemControl,
   TicketPointsRedeem,
 } from "@/components/PointsRedeemControl";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 import {
   applyOffersDiscount,
   HOME_SERVICES,
@@ -364,7 +365,10 @@ export default function ServiceInfoPage({
     if (orderQtyOnly) return;
     let cancelled = false;
     (async () => {
-      const me = await fetch("/api/auth/me", { cache: "no-store" });
+      const [me, res] = await Promise.all([
+        fetchAuthMe(),
+        fetch("/api/me/offers", { cache: "no-store" }),
+      ]);
       if (me.ok) {
         const md = await me.json();
         if (!cancelled && md.authenticated) {
@@ -374,7 +378,6 @@ export default function ServiceInfoPage({
           setSameDayMembership(!!md.customer?.sameDayMembershipDiscount);
         }
       }
-      const res = await fetch("/api/me/offers", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (cancelled) return;
@@ -689,7 +692,7 @@ export default function ServiceInfoPage({
       <Shell showNav={false}>
         <OrderQrSuccess
           title="Đã gửi đơn"
-          subtitle="Chờ quầy duyệt. Duyệt xong là thanh toán thành công."
+          subtitle="Thanh toán tại quầy. Khi quầy xác nhận giao dịch, thanh toán của bạn xong."
           detailLines={detailLines}
           cartToken={cartToken}
           initialStatus={cartStatus}
