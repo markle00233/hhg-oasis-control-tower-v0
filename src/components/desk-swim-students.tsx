@@ -24,6 +24,15 @@ type Student = {
   updatedAt: string;
 };
 
+type AccountHit = {
+  id: string;
+  fullName: string;
+  phone: string;
+  shortId: string;
+  customerCode?: string;
+  segmentLabel?: string;
+};
+
 const BILL_MAX_CHARS = 700_000;
 
 /** Shrink a phone photo until the data URL is small enough to store and send. */
@@ -171,7 +180,12 @@ export function DeskSwimStudents({
   const [billPhoto, setBillPhoto] = useState("");
   const [billName, setBillName] = useState("");
   const [viewingBill, setViewingBill] = useState<string | null>(null);
+  const [accountQ, setAccountQ] = useState("");
+  const [accountHits, setAccountHits] = useState<AccountHit[]>([]);
+  const [accountResultQ, setAccountResultQ] = useState("");
+  const [accountOpen, setAccountOpen] = useState(false);
   const billInputRef = useRef<HTMLInputElement>(null);
+  const accountBoxRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -222,6 +236,53 @@ export function DeskSwimStudents({
     return () => clearTimeout(timer);
   }, [load, q]);
 
+  useEffect(() => {
+    const query = accountQ.trim();
+    if (query.length < 2) {
+      setAccountHits([]);
+      setAccountResultQ("");
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/crm/desk/search-customers?zone=SWIM_LESSON&q=${encodeURIComponent(query)}`,
+            { cache: "no-store" }
+          );
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Không tìm được khách");
+          setAccountHits(Array.isArray(data.customers) ? data.customers : []);
+        } catch {
+          setAccountHits([]);
+        } finally {
+          setAccountResultQ(query);
+        }
+      })();
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [accountQ]);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    function onDown(e: MouseEvent) {
+      if (!accountBoxRef.current?.contains(e.target as Node)) {
+        setAccountOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [accountOpen]);
+
+  function pickAccount(hit: AccountHit) {
+    setFullName(hit.fullName || "");
+    setPhone(hit.phone || "");
+    setAccountQ("");
+    setAccountHits([]);
+    setAccountResultQ("");
+    setAccountOpen(false);
+  }
+
   async function addStudent(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
@@ -242,6 +303,10 @@ export function DeskSwimStudents({
       setFullName("");
       setPhone("");
       setNote("");
+      setAccountQ("");
+      setAccountHits([]);
+      setAccountResultQ("");
+      setAccountOpen(false);
       setBillPhoto("");
       setBillName("");
       if (billInputRef.current) billInputRef.current.value = "";
@@ -357,6 +422,97 @@ export function DeskSwimStudents({
               "minmax(9rem, 1fr) minmax(8rem, 0.9fr) 20rem auto",
           }}
         >
+          <div
+            ref={accountBoxRef}
+            style={{ gridColumn: "1 / -1", position: "relative", minWidth: 0 }}
+          >
+            <input
+              style={styles.input}
+              placeholder="Tìm khách"
+              value={accountQ}
+              onChange={(e) => {
+                setAccountQ(e.target.value);
+                setAccountOpen(true);
+              }}
+              onFocus={() => setAccountOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.preventDefault();
+              }}
+              autoComplete="off"
+            />
+            {accountOpen && accountQ.trim().length >= 2 ? (
+              <div
+                style={{
+                  position: "absolute",
+                  zIndex: 40,
+                  top: "calc(100% + 4px)",
+                  left: 0,
+                  right: 0,
+                  maxHeight: 220,
+                  overflowY: "auto",
+                  background: "#fff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 12,
+                  boxShadow: "0 12px 32px rgba(15,23,42,.14)",
+                }}
+              >
+                {accountResultQ !== accountQ.trim() ? (
+                  <p style={{ ...styles.mute, margin: 0, padding: 10 }}>
+                    Đang tìm…
+                  </p>
+                ) : accountHits.length ? (
+                  accountHits.map((hit) => (
+                    <button
+                      key={hit.id}
+                      type="button"
+                      onClick={() => pickAccount(hit)}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        border: 0,
+                        borderBottom: "1px solid #f1f5f9",
+                        background: "transparent",
+                        padding: "10px 12px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>
+                        {hit.fullName || hit.customerCode || "Khách"}
+                      </span>
+                      {hit.segmentLabel ? (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 11,
+                            fontWeight: 800,
+                            color: "#64748b",
+                          }}
+                        >
+                          {hit.segmentLabel}
+                        </span>
+                      ) : null}
+                      <span
+                        style={{
+                          display: "block",
+                          marginTop: 2,
+                          fontSize: 12,
+                          color: "#64748b",
+                        }}
+                      >
+                        {hit.phone || "—"}
+                        {hit.shortId ? ` · ID ${hit.shortId}` : ""}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p style={{ ...styles.mute, margin: 0, padding: 10 }}>
+                    Không thấy khách đã có tài khoản.
+                  </p>
+                )}
+              </div>
+            ) : null}
+          </div>
           <input
             style={styles.input}
             placeholder="Họ tên *"

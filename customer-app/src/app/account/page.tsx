@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 
 export default function AccountPage() {
   const router = useRouter();
@@ -83,18 +84,17 @@ export default function AccountPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const me = await fetch("/api/auth/me", { cache: "no-store" });
+      const [me, offerRes, swimRes] = await Promise.all([
+        fetchAuthMe(),
+        fetch("/api/me/offers", { cache: "no-store" }),
+        fetch("/api/me/swim", { cache: "no-store" }),
+      ]);
       const meData = await me.json();
       if (!meData.authenticated) {
         router.replace("/login");
         return;
       }
       if (!cancelled) setCustomer(meData.customer);
-
-      const [offerRes, swimRes] = await Promise.all([
-        fetch("/api/me/offers", { cache: "no-store" }),
-        fetch("/api/me/swim", { cache: "no-store" }),
-      ]);
 
       if (offerRes.ok) {
         try {
@@ -128,7 +128,7 @@ export default function AccountPage() {
     const id = window.setInterval(async () => {
       if (cancelled || document.visibilityState === "hidden") return;
       try {
-        const me = await fetch("/api/auth/me", { cache: "no-store" });
+        const me = await fetchAuthMe();
         const data = await me.json();
         if (cancelled || !data?.customer?.vip) return;
         setCustomer(data.customer);

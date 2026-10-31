@@ -257,11 +257,11 @@ function spaEndsAt(approvedAt: Date | null | undefined, items: unknown) {
   return new Date(approvedAt.getTime() + mins * 60_000);
 }
 
-/** Trạng thái đơn khách gửi: chờ quầy duyệt thành công. */
+/** Trạng thái đơn khách gửi: chờ thanh toán tại quầy. */
 function cartStatusLabel(status: string): string {
   switch (status) {
     case "PENDING_APPROVAL":
-      return "Đã gửi · chờ quầy duyệt";
+      return "Đã gửi · chờ thanh toán tại quầy";
     case "OPEN":
     case "USED":
       return "Thanh toán thành công";
@@ -598,16 +598,23 @@ async function collectCards(
           },
         })
       : Promise.resolve([]),
-    prisma.appServiceEvent.findMany({
-      where: {
-        customerId,
-        createdAt: { gte: sinceHistory },
-        eventType: { in: ["SERVICE_USE", "MIA_OI_ORDER"] },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 40,
-      select: { metadata: true },
-    }),
+    prisma.$queryRaw<
+      {
+        cartToken: string | null;
+        orderId: string | null;
+        cancelledOrderId: string | null;
+      }[]
+    >`
+      SELECT metadata->>'cartToken' AS "cartToken",
+             metadata->>'orderId' AS "orderId",
+             metadata->>'cancelledOrderId' AS "cancelledOrderId"
+      FROM app_service_events
+      WHERE "customerId" = ${customerId}
+        AND "createdAt" >= ${sinceHistory}
+        AND "eventType" IN ('SERVICE_USE', 'MIA_OI_ORDER')
+      ORDER BY "createdAt" DESC
+      LIMIT 40
+    `,
   ]);
 
   const knownBookingIds = new Set(bookings.map((b) => b.id));
@@ -698,7 +705,7 @@ async function collectCards(
     const tableInUse =
       bucket === "active" && zone === "LONG_NUONG" && paid && !waiting && !closedCart;
     const statusLabel = waiting
-      ? "Đã gửi · chờ quầy duyệt"
+      ? "Đã gửi · chờ thanh toán tại quầy"
       : closedCart
         ? linked?.status === "REJECTED"
           ? "Quầy từ chối yêu cầu"
@@ -804,14 +811,9 @@ async function collectCards(
   const shownOrderIds = new Set(openOrders.map((o) => o.id));
   const paidCartTokens = new Set<string>();
   for (const e of payLinks) {
-    const meta =
-      e.metadata && typeof e.metadata === "object"
-        ? (e.metadata as Record<string, unknown>)
-        : {};
-    const token = typeof meta.cartToken === "string" ? meta.cartToken : "";
-    const orderId = typeof meta.orderId === "string" ? meta.orderId : "";
-    const cancelledOrderId =
-      typeof meta.cancelledOrderId === "string" ? meta.cancelledOrderId : "";
+    const token = e.cartToken || "";
+    const orderId = e.orderId || "";
+    const cancelledOrderId = e.cancelledOrderId || "";
     if (
       token &&
       ((orderId && shownOrderIds.has(orderId)) ||

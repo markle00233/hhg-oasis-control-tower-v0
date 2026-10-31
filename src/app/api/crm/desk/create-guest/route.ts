@@ -22,6 +22,18 @@ function generateCustomerCode() {
   return `CUS-${body}`;
 }
 
+/** Khách lẻ không đăng nhập. Hash một lần cho cả process, không bcrypt mỗi đơn. */
+let sharedWalkInHash: Promise<string> | null = null;
+function walkInPasswordHash() {
+  sharedWalkInHash ??= hashPassword(randomBytes(24).toString("base64url")).catch(
+    (err) => {
+      sharedWalkInHash = null;
+      throw err;
+    }
+  );
+  return sharedWalkInHash;
+}
+
 /**
  * Quầy tạo đơn:
  * - Có SĐT → tài khoản app (mật khẩu = SĐT). Nhãn: Khách / Member / VIP.
@@ -42,10 +54,15 @@ export async function POST(req: NextRequest) {
     let created = false;
 
     if (anonymous) {
-      const displayName = fullName || "Khách lẻ";
-      const passwordHash = await hashPassword(
-        randomBytes(24).toString("base64url")
-      );
+      const phoneRaw = String(body.phone || "").trim();
+      if (fullName || phoneRaw) {
+        return NextResponse.json(
+          { error: "Xóa họ tên và số điện thoại trước khi tạo khách lẻ." },
+          { status: 400 }
+        );
+      }
+      const displayName = "Khách lẻ";
+      const passwordHash = await walkInPasswordHash();
       for (let i = 0; i < 6; i++) {
         const customerCode = generateCustomerCode();
         const tag = customerCode.slice(4);
@@ -110,7 +127,6 @@ export async function POST(req: NextRequest) {
         phoneDisplay.length >= 8
           ? phoneDisplay
           : `Oasis${phoneDisplay}`.padEnd(8, "0");
-      const passwordHash = await hashPassword(password);
 
       customer = await prisma.appCustomer.findFirst({
         where: {
@@ -141,6 +157,7 @@ export async function POST(req: NextRequest) {
           data: patch,
         });
       } else {
+        const passwordHash = await hashPassword(password);
         for (let i = 0; i < 6; i++) {
           const customerCode = generateCustomerCode();
           try {

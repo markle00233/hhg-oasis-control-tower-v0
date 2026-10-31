@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "Bạn đã có yêu cầu nâng cấp đang chờ duyệt / chưa dùng. Không gửi thêm gói khác.",
+              "Bạn đã có yêu cầu nâng cấp đang chờ thanh toán / chưa dùng. Không gửi thêm gói khác.",
           },
           { status: 409 }
         );

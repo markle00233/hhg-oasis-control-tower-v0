@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 
 type InboxItem = {
   id: string;
@@ -31,7 +32,7 @@ export default function MessagesPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const me = await fetch("/api/auth/me", { cache: "no-store" });
+      const me = await fetchAuthMe();
       const data = await me.json();
       if (!data.authenticated) {
         router.replace("/login");

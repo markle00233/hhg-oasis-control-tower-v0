@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
 import { CART_STATUS } from "@/lib/cart-status";
-import { deskZoneAliases, miaOlympicSector } from "@/lib/desk-zones";
-import { releaseLongNuongTableHold } from "@/lib/long-nuong-activate";
+import { zoneRequiresBillPhoto } from "@/lib/bill-photo";
+import { deskZoneAliases } from "@/lib/desk-zones";
+import { activateLongNuongTable, releaseLongNuongTableHold } from "@/lib/long-nuong-activate";
+import { activatePickleballCourt } from "@/lib/pickleball-activate";
+import { markSpaInUse } from "@/lib/spa-visit";
+import {
+  applyOlympicMembership,
+  pickPrimaryOlympicPackage,
+} from "@/lib/olympic-membership";
 import { awardCheckInPoints } from "@/lib/points";
 import { prisma } from "@/lib/prisma";
 
@@ -51,6 +58,35 @@ function stampCartApprovedAt(items: unknown, at: Date): Prisma.InputJsonValue {
  * or finalize (USED) after kế toán đã kiểm chứng từ.
  * Body: { zone, token, action?: "approve"|"reject"|"finalize", reason? }
  */
+
+/** Duyệt gói tháng gắn luôn lên tài khoản khách (VIP, hạn, voucher). */
+async function grantApprovedPackage(customerId: string, items: unknown) {
+  const itemIds = Array.isArray(items)
+    ? items
+        .map((row) =>
+          row && typeof row === "object"
+            ? String((row as { id?: string }).id || "")
+            : ""
+        )
+        .filter(Boolean)
+    : [];
+  const packageId = pickPrimaryOlympicPackage(itemIds);
+  if (!packageId) return null;
+  const applied = await applyOlympicMembership(prisma, {
+    customerId,
+    packageId,
+    from: new Date(),
+  }).catch((err) => {
+    console.error("[approve-cart membership]", err);
+    return null;
+  });
+  if (!applied || applied.alreadyActive) return null;
+  return {
+    planLabel: applied.vipPlanLabel,
+    expiresAt: applied.vipExpiresAt,
+    packageId,
+  };
+}
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -124,23 +160,28 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "finalize") {
-      if (!miaOlympicSector(cart.zoneCode)) {
+      if (!zoneRequiresBillPhoto(cart.zoneCode)) {
         return NextResponse.json(
           { error: "Khu này chưa chốt đơn tại đây." },
           { status: 400 }
         );
       }
       if (cart.status === CART_STATUS.USED) {
+        const membership = await grantApprovedPackage(
+          cart.customerId,
+          cart.items
+        );
         return NextResponse.json({
           ok: true,
           already: true,
           cart: serialize(cart),
           customer: cart.customer,
+          membership,
         });
       }
       if (cart.status !== CART_STATUS.OPEN) {
         return NextResponse.json(
-          { error: "Duyệt đơn trước khi chốt." },
+          { error: "Xác nhận thanh toán trước khi chốt." },
           { status: 409 }
         );
       }
@@ -150,24 +191,62 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      const updated = await prisma.appServiceCart.update({
+      const zoneCode = cart.zoneCode.toUpperCase();
+      try {
+        if (zoneCode === "LONG_NUONG") {
+          await activateLongNuongTable({
+            cartId: cart.id,
+            customerId: cart.customerId,
+            items: cart.items,
+            cartStatus: cart.status,
+          });
+        } else if (zoneCode === "PICKLEBALL") {
+          await activatePickleballCourt({
+            cartId: cart.id,
+            customerId: cart.customerId,
+            items: cart.items,
+            cartStatus: cart.status,
+            guestName: cart.customer.fullName,
+            guestPhone: cart.customer.phone,
+          });
+        } else if (zoneCode === "SPA" || zoneCode === "SAUNA") {
+          await markSpaInUse(cart.id, cart.status);
+        }
+      } catch (err) {
+        console.error("[approve-cart finalize visit]", err);
+      }
+      const current = await prisma.appServiceCart.findUnique({
         where: { id: cart.id },
-        data: { status: CART_STATUS.USED },
+        select: { status: true },
       });
+      if (current?.status !== CART_STATUS.USED) {
+        await prisma.appServiceCart.update({
+          where: { id: cart.id },
+          data: { status: CART_STATUS.USED },
+        });
+      }
+      const updated = { ...cart, status: CART_STATUS.USED };
+      const membership = await grantApprovedPackage(cart.customerId, cart.items);
       return NextResponse.json({
         ok: true,
         cart: serialize(updated),
         customer: cart.customer,
+        membership,
       });
     }
 
     if (action === "approve") {
       if (cart.status === CART_STATUS.OPEN) {
+        const membership = await grantApprovedPackage(
+          cart.customerId,
+          cart.items
+        );
         return NextResponse.json({
           ok: true,
           already: true,
           cart: serialize(cart, CART_STATUS.OPEN),
           customer: cart.customer,
+          membership,
         });
       }
       if (cart.status !== CART_STATUS.PENDING) {
@@ -216,7 +295,6 @@ export async function POST(req: NextRequest) {
         data: {
           status: CART_STATUS.OPEN,
           adminNote: null,
-          approvedAt,
           items: stampShiftStaff(
             stampCartApprovedAt(cart.items, approvedAt),
             gate.user
@@ -239,7 +317,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Gói tháng: duyệt thành công; gắn VIP khi NV quét QR khách.
+      const membership = await grantApprovedPackage(cart.customerId, cart.items);
 
       const pts = await awardCheckInPoints({
         customerId: cart.customerId,
@@ -256,7 +334,7 @@ export async function POST(req: NextRequest) {
         customer: cart.customer,
         pointsAwarded: pts?.delta ?? 0,
         pointsBalance: pts?.balance ?? null,
-        membership: null,
+        membership,
       });
     }
 

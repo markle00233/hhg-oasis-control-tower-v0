@@ -123,6 +123,12 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
+    if (cart.status === "PENDING_APPROVAL") {
+      return NextResponse.json(
+        { error: "Xác nhận thanh toán trước khi bổ sung chứng từ." },
+        { status: 409 }
+      );
+    }
     if (billEvidenceFrozen(cart) && cart.billPhotoAt) {
       return NextResponse.json({ error: BILL_PHOTO_LOCKED }, { status: 409 });
     }

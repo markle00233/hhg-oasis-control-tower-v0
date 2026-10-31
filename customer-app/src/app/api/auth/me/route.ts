@@ -6,6 +6,7 @@ import {
   tierFromPlanLabel,
 } from "@/lib/membership-theme";
 import { isSameDayMembershipEligible } from "@/lib/same-day-membership";
+import { syncPaidOlympicMembership } from "@/lib/sync-paid-membership";
 import {
   findActiveVipPackageLabel,
   isMemberSubscriptionActive,
@@ -24,6 +25,23 @@ export async function GET() {
   let segment = customer.segment;
   let vipExpiresAt = customer.vipExpiresAt;
   let vipPlanLabel = customer.vipPlanLabel;
+
+  if (
+    !isVipActive({
+      segment,
+      vipExpiresAt,
+    })
+  ) {
+    const synced = await syncPaidOlympicMembership(customer.id).catch((err) => {
+      console.error("[auth/me sync membership]", err);
+      return null;
+    });
+    if (synced) {
+      segment = synced.segment;
+      vipExpiresAt = synced.vipExpiresAt;
+      vipPlanLabel = synced.vipPlanLabel;
+    }
+  }
 
   const vip = isVipActive({
     segment,

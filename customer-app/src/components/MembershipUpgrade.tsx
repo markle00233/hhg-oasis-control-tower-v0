@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { OrderQrSuccess } from "@/components/OrderQrSuccess";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 import { OLYMPIC_MONTHLY } from "@/lib/service-catalogs";
 import {
   MEMBERSHIP_UPGRADE_COPY,
@@ -51,7 +52,7 @@ export function MembershipUpgrade({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/auth/me", { cache: "no-store" });
+        const res = await fetchAuthMe();
         const data = await res.json();
         if (cancelled || !res.ok || !data.customer) return;
         const fullName = String(data.customer.fullName || "").trim();
@@ -125,7 +126,7 @@ export function MembershipUpgrade({
             : `Thanh toán 1 lần: ${copy.payOnce}`,
           ...copy.perks.map((p) => `· ${p}`),
           "Voucher kèm gói dùng trong hạn hội viên (không hết theo lượt)",
-          "Chờ quầy duyệt thành công",
+          "Thanh toán tại quầy. Quầy xác nhận giao dịch là xong.",
         ],
       });
     } catch (e) {

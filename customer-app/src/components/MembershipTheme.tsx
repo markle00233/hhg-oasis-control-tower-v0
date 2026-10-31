@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { fetchAuthMe } from "@/lib/auth-me-client";
 import {
   applyMembershipThemeClass,
   themeFromTier,
@@ -37,7 +38,7 @@ export function MembershipThemeBoot() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/auth/me", { cache: "no-store" });
+        const res = await fetchAuthMe();
         if (!res.ok || cancelled) return;
         const data = await res.json();
         if (cancelled || !data?.authenticated) {

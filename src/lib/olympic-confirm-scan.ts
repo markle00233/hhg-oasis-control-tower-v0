@@ -1,6 +1,8 @@
+import { packageIdFromVipPlanLabel } from "@/lib/hhg-vouchers";
 import {
   applyOlympicMembership,
   isOlympicMembershipActive,
+  labelForOlympicPackage,
   pickPrimaryOlympicPackage,
 } from "@/lib/olympic-membership";
 import {
@@ -28,6 +30,30 @@ export type PoolCartLine = { itemId: string; qty: number };
 
 const asMeta = deskEventMeta;
 const scanAlreadyVerified = deskScanAlreadyFinalized;
+
+/** Product lines on a cart. Discount, voucher, and staff stamps are not a second purchase. */
+function sellableCartQty(items: unknown) {
+  const qty = new Map<string, number>();
+  if (!Array.isArray(items)) return qty;
+  for (const row of items) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { id?: string; qty?: number };
+    const id = String(rec.id || "");
+    if (
+      !id ||
+      id.startsWith("__") ||
+      id.startsWith("disc-") ||
+      id.startsWith("voucher-") ||
+      id.startsWith("points-redeem-")
+    ) {
+      continue;
+    }
+    const q = Math.max(0, Math.round(Number(rec.qty) || 0));
+    if (q <= 0) continue;
+    qty.set(id, (qty.get(id) || 0) + q);
+  }
+  return qty;
+}
 
 /** Vé khách đã đổi trên QR — không đốt điểm lần nữa ở quầy. */
 function coverPoolCartPoints(
@@ -106,6 +132,8 @@ export type OlympicConfirmOk = {
     }[];
   };
   orderSummary: string;
+  /** Gói trong đơn đã có trên tài khoản — không tạo đơn trùng. */
+  packageAlreadyActive?: boolean;
   membership: {
     planLabel: string;
     expiresAt: Date;
@@ -158,10 +186,91 @@ export async function confirmOlympicPoolScan(opts: {
     return { ok: false, error: "Chọn ít nhất 1 vé.", status: 400 };
   }
 
-  const sameDayMembership =
-    lines.some((line) => isPoolDayTicket(line.itemId)) ||
-    (await isSameDayMembershipEligible(prisma, { id: customerId }));
-  const priced = computePoolPricing(lines, {
+  let billLines = lines;
+  const holder = await prisma.appCustomer.findUnique({
+    where: { id: customerId },
+    select: {
+      status: true,
+      segment: true,
+      vipExpiresAt: true,
+      vipPlanLabel: true,
+      pointsBalance: true,
+    },
+  });
+  if (!holder || holder.status !== "ACTIVE") {
+    return { ok: false, error: "Khách không hợp lệ.", status: 404 };
+  }
+  const requestedPkg = pickPrimaryOlympicPackage(lines.map((line) => line.itemId));
+  if (requestedPkg) {
+    const currentId = packageIdFromVipPlanLabel(holder.vipPlanLabel);
+    if (
+      isOlympicMembershipActive({
+        segment: holder.segment,
+        vipExpiresAt: holder.vipExpiresAt,
+      })
+    ) {
+      if (currentId && currentId !== requestedPkg) {
+        const exp = holder.vipExpiresAt
+          ? holder.vipExpiresAt.toLocaleDateString("vi-VN")
+          : null;
+        return {
+          ok: false,
+          status: 409,
+          membershipLocked: true,
+          error: exp
+            ? `Khách đang dùng ${holder.vipPlanLabel || "gói hội viên"} đến ${exp}. Hết hạn mới được chọn gói mới.`
+            : "Khách đang dùng gói hội viên. Hết hạn mới được chọn gói mới.",
+        };
+      }
+      billLines = lines.filter((line) => line.itemId !== requestedPkg);
+      if (!billLines.length) {
+        return {
+          ok: true,
+          already: true,
+          pointsAwarded: 0,
+          pointsBalance: null,
+          scanEventId,
+          closedScanIds: [],
+          entryAt: new Date(),
+          packageAlreadyActive: true,
+          order: {
+            id: "",
+            status: "CONFIRMED",
+            totalVnd: 0,
+            createdAt: new Date(),
+            items: [],
+          },
+          orderSummary: "Gói đã gắn trên tài khoản khách",
+          membership: {
+            planLabel:
+              holder.vipPlanLabel || labelForOlympicPackage(requestedPkg),
+            expiresAt: holder.vipExpiresAt || new Date(),
+            vouchersGranted: [],
+          },
+        };
+      }
+    }
+  }
+
+  const dayTicket = billLines.some((line) => isPoolDayTicket(line.itemId));
+  const [sameDayFromHistory, service, scanHead] = await Promise.all([
+    dayTicket
+      ? Promise.resolve(false)
+      : isSameDayMembershipEligible(prisma, { id: customerId }),
+    prisma.appService.findUnique({
+      where: { serviceCode: "OLYMPIC_POOL" },
+      select: { id: true },
+    }),
+    prisma.appServiceEvent.findFirst({
+      where: { id: scanEventId, customerId, eventType: "SERVICE_USE" },
+      select: { metadata: true },
+    }),
+  ]);
+  if (!service) {
+    return { ok: false, error: "Chưa cấu hình dịch vụ OLYMPIC_POOL.", status: 500 };
+  }
+  const sameDayMembership = dayTicket || sameDayFromHistory;
+  const priced = computePoolPricing(billLines, {
     sameDayMembership,
     manualDiscountVnd,
   });
@@ -177,10 +286,6 @@ export async function confirmOlympicPoolScan(opts: {
     pointsDiscountVnd: 0,
     pointsRedeemTier: null as number | null,
   }));
-  const scanHead = await prisma.appServiceEvent.findFirst({
-    where: { id: scanEventId, customerId, eventType: "SERVICE_USE" },
-    select: { metadata: true },
-  });
   const linkedToken =
     typeof asMeta(scanHead?.metadata).cartToken === "string"
       ? String(asMeta(scanHead?.metadata).cartToken)
@@ -233,63 +338,33 @@ export async function confirmOlympicPoolScan(opts: {
     }
   }
 
-  const service = await prisma.appService.findUnique({
-    where: { serviceCode: "OLYMPIC_POOL" },
-    select: { id: true },
-  });
-  if (!service) {
-    return { ok: false, error: "Chưa cấu hình dịch vụ OLYMPIC_POOL.", status: 500 };
-  }
-
-  if (redeemed.cost > 0) {
-    const payer = await prisma.appCustomer.findUnique({
-      where: { id: customerId },
-      select: { pointsBalance: true, status: true },
-    });
-    if (!payer || payer.status !== "ACTIVE") {
-      return { ok: false, error: "Khách không hợp lệ.", status: 404 };
-    }
-    if (payer.pointsBalance < redeemed.cost) {
-      return {
-        ok: false,
-        error: `Không đủ điểm (cần ${redeemed.cost}, đang có ${payer.pointsBalance}).`,
-        status: 400,
-      };
-    }
+  if (redeemed.cost > 0 && holder.pointsBalance < redeemed.cost) {
+    return {
+      ok: false,
+      error: `Không đủ điểm (cần ${redeemed.cost}, đang có ${holder.pointsBalance}).`,
+      status: 400,
+    };
   }
 
   const pkgIdEarly = pickPrimaryOlympicPackage(orderItems.map((i) => i.itemId));
-  if (pkgIdEarly) {
-    const existing = await prisma.appCustomer.findUnique({
-      where: { id: customerId },
-      select: {
-        segment: true,
-        vipExpiresAt: true,
-        vipPlanLabel: true,
-        status: true,
-      },
-    });
-    if (!existing || existing.status !== "ACTIVE") {
-      return { ok: false, error: "Khách không hợp lệ.", status: 404 };
-    }
-    if (
-      isOlympicMembershipActive({
-        segment: existing.segment,
-        vipExpiresAt: existing.vipExpiresAt,
-      })
-    ) {
-      const exp = existing.vipExpiresAt
-        ? existing.vipExpiresAt.toLocaleDateString("vi-VN")
-        : null;
-      return {
-        ok: false,
-        status: 409,
-        membershipLocked: true,
-        error: exp
-          ? `Khách đang dùng ${existing.vipPlanLabel || "gói hội viên"} đến ${exp}. Hết hạn mới được chọn gói mới.`
-          : "Khách đang dùng gói hội viên. Hết hạn mới được chọn gói mới.",
-      };
-    }
+  if (
+    pkgIdEarly &&
+    isOlympicMembershipActive({
+      segment: holder.segment,
+      vipExpiresAt: holder.vipExpiresAt,
+    })
+  ) {
+    const exp = holder.vipExpiresAt
+      ? holder.vipExpiresAt.toLocaleDateString("vi-VN")
+      : null;
+    return {
+      ok: false,
+      status: 409,
+      membershipLocked: true,
+      error: exp
+        ? `Khách đang dùng ${holder.vipPlanLabel || "gói hội viên"} đến ${exp}. Hết hạn mới được chọn gói mới.`
+        : "Khách đang dùng gói hội viên. Hết hạn mới được chọn gói mới.",
+    };
   }
 
   try {
@@ -358,15 +433,36 @@ export async function confirmOlympicPoolScan(opts: {
 
       const cartToken =
         typeof prevMeta.cartToken === "string" ? prevMeta.cartToken : null;
-      const cartsToUse = await tx.appServiceCart.findMany({
-        where: cartToken
-          ? { token: cartToken, customerId: customer.id, status: "OPEN" }
-          : {
-              customerId: customer.id,
-              status: "OPEN",
-              zoneCode: { in: ["OLYMPIC_POOL", "OLYMPIC"] },
-            },
-        select: { id: true },
+      const orderQty = new Map<string, number>();
+      for (const item of orderItems) {
+        orderQty.set(
+          item.itemId,
+          (orderQty.get(item.itemId) || 0) + item.qty
+        );
+      }
+      /**
+       * A walk-in scan often has its own cart token. That used to leave the
+       * customer's approved gói cart OPEN while this order copied the same lines.
+       */
+      const openCarts = await tx.appServiceCart.findMany({
+        where: {
+          customerId: customer.id,
+          status: "OPEN",
+          OR: [
+            { zoneCode: { in: ["OLYMPIC_POOL", "OLYMPIC", "MIA_OLYMPIC", "VIP", "VIP_RESORT"] } },
+            ...(cartToken ? [{ token: cartToken }] : []),
+          ],
+        },
+        select: { id: true, token: true, items: true },
+      });
+      const cartsToUse = openCarts.filter((cart) => {
+        if (cartToken && cart.token === cartToken) return true;
+        const qty = sellableCartQty(cart.items);
+        if (qty.size === 0) return false;
+        for (const [id, q] of qty) {
+          if ((orderQty.get(id) || 0) < q) return false;
+        }
+        return true;
       });
       const verifiedAt = new Date();
       const discountParts: string[] = [];
@@ -472,6 +568,10 @@ export async function confirmOlympicPoolScan(opts: {
       });
 
       const closedScanIds = [scan.id];
+      const siblingCloses: {
+        id: string;
+        metadata: Record<string, unknown>;
+      }[] = [];
       for (const sib of siblings) {
         const sibMeta = asMeta(sib.metadata);
         if (scanAlreadyVerified(sibMeta)) continue;
@@ -480,33 +580,29 @@ export async function confirmOlympicPoolScan(opts: {
         /** Gộp lần quét QR/shared trống trùng ngày, tránh dòng "Chưa có order" thừa. */
         const empty =
           !Array.isArray(sibMeta.items) || sibMeta.items.length === 0;
-        await tx.appServiceEvent.update({
-          where: { id: sib.id },
-          data: {
-            operationalStatus: "ACKNOWLEDGED",
-            metadata: {
-              ...sibMeta,
-              ...(empty
-                ? {
-                    walkInConsumed: true,
-                    consumedByOrderId: order.id,
-                    mergedIntoScanId: scan.id,
-                  }
-                : {
-                    ticketVerified: true,
-                    mergedIntoScanId: scan.id,
-                    verifiedAt: verifiedAt.toISOString(),
-                    orderId: order.id,
-                    totalVnd,
-                    items: metaItems,
-                    ...(opts.deskBundleId
-                      ? { deskBundleId: opts.deskBundleId }
-                      : {}),
-                  }),
-            },
+        siblingCloses.push({
+          id: sib.id,
+          metadata: {
+            ...sibMeta,
+            ...(empty
+              ? {
+                  walkInConsumed: true,
+                  consumedByOrderId: order.id,
+                  mergedIntoScanId: scan.id,
+                }
+              : {
+                  ticketVerified: true,
+                  mergedIntoScanId: scan.id,
+                  verifiedAt: verifiedAt.toISOString(),
+                  orderId: order.id,
+                  totalVnd,
+                  items: metaItems,
+                  ...(opts.deskBundleId
+                    ? { deskBundleId: opts.deskBundleId }
+                    : {}),
+                }),
           },
         });
-        closedScanIds.push(sib.id);
       }
 
       return {
@@ -522,8 +618,32 @@ export async function confirmOlympicPoolScan(opts: {
         manualDiscountVnd: priced.manualDiscountVnd,
         packageItemIds: orderItems.map((i) => i.itemId),
         closedScanIds,
+        siblingCloses,
       };
     });
+
+    if (!result.already && result.siblingCloses.length) {
+      const extra = await Promise.all(
+        result.siblingCloses.map(async (sib) => {
+          try {
+            await prisma.appServiceEvent.update({
+              where: { id: sib.id },
+              data: {
+                operationalStatus: "ACKNOWLEDGED",
+                metadata: sib.metadata as object,
+              },
+            });
+            return sib.id;
+          } catch (err) {
+            console.error("[olympic-confirm sibling]", err);
+            return null;
+          }
+        })
+      );
+      for (const id of extra) {
+        if (id) result.closedScanIds.push(id);
+      }
+    }
 
     if (result.already) {
       const order = result.existingOrder;
@@ -570,59 +690,60 @@ export async function confirmOlympicPoolScan(opts: {
     }
 
     const pkgId = pickPrimaryOlympicPackage(result.packageItemIds);
+    const [applied, , pts] = await Promise.all([
+      pkgId
+        ? applyOlympicMembership(prisma, {
+            customerId: result.customer.id,
+            packageId: pkgId,
+            from: result.order.createdAt,
+          }).catch((err) => {
+            console.error("[olympic-confirm membership]", err);
+            return null;
+          })
+        : Promise.resolve(null),
+      voucherQuote.offerId
+        ? consumeDeskBillVoucher({
+            customerId: result.customer.id,
+            offerId: voucherQuote.offerId,
+            zone: "OLYMPIC_POOL",
+            staffUserId: opts.staffUserId,
+            staffName: opts.staffName || "desk",
+            baseVnd: totalVnd + voucherQuote.discountVnd,
+            note: voucherNote,
+          }).catch((err) => {
+            console.error("[olympic-confirm voucher]", err);
+          })
+        : Promise.resolve(null),
+      (async () => {
+        if (redeemed.cost > 0) {
+          await redeemPoints({
+            customerId: result.customer.id,
+            cost: redeemed.cost,
+            refType: "APP_ORDER",
+            refId: `redeem:${result.order.id}`,
+            note: redeemNote,
+          });
+        }
+        return awardPurchasePoints({
+          customerId: result.customer.id,
+          refType: "APP_ORDER",
+          refId: result.order.id,
+          subtotalVnd: totalVnd,
+          note: `Hồ Olympic · ${totalVnd}đ sau giảm`,
+        }).catch((err) => {
+          console.error("[olympic-confirm points]", err);
+          return null;
+        });
+      })(),
+    ]);
     let membership: OlympicConfirmOk["membership"] = null;
-    if (pkgId) {
-      const applied = await applyOlympicMembership(prisma, {
-        customerId: result.customer.id,
-        packageId: pkgId,
-        from: result.order.createdAt,
-      }).catch((err) => {
-        console.error("[olympic-confirm membership]", err);
-        return null;
-      });
-      if (applied && !applied.alreadyActive) {
-        membership = {
-          planLabel: applied.vipPlanLabel,
-          expiresAt: applied.vipExpiresAt,
-          vouchersGranted: applied.offerIds,
-        };
-      }
+    if (applied && !applied.alreadyActive) {
+      membership = {
+        planLabel: applied.vipPlanLabel,
+        expiresAt: applied.vipExpiresAt,
+        vouchersGranted: applied.offerIds,
+      };
     }
-
-    if (voucherQuote.offerId) {
-      await consumeDeskBillVoucher({
-        customerId: result.customer.id,
-        offerId: voucherQuote.offerId,
-        zone: "OLYMPIC_POOL",
-        staffUserId: opts.staffUserId,
-        staffName: opts.staffName || "desk",
-        baseVnd: totalVnd + voucherQuote.discountVnd,
-        note: voucherNote,
-      }).catch((err) => {
-        console.error("[olympic-confirm voucher]", err);
-      });
-    }
-
-    if (redeemed.cost > 0) {
-      await redeemPoints({
-        customerId: result.customer.id,
-        cost: redeemed.cost,
-        refType: "APP_ORDER",
-        refId: `redeem:${result.order.id}`,
-        note: redeemNote,
-      });
-    }
-
-    const pts = await awardPurchasePoints({
-      customerId: result.customer.id,
-      refType: "APP_ORDER",
-      refId: result.order.id,
-      subtotalVnd: totalVnd,
-      note: `Hồ Olympic · ${totalVnd}đ sau giảm`,
-    }).catch((err) => {
-      console.error("[olympic-confirm points]", err);
-      return null;
-    });
 
     return {
       ok: true,
