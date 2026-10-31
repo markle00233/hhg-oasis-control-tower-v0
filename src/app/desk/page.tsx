@@ -857,6 +857,99 @@ function confirmedPoolBills(scans: Scan[]): Scan[] {
   return [...byOrder.values()];
 }
 
+function sellableCartQty(cart: GuestCartPreview) {
+  const qty = new Map<string, number>();
+  for (const item of cart.items || []) {
+    const id = String(item.id || "");
+    if (
+      !id ||
+      id.startsWith("__") ||
+      id.startsWith("disc-") ||
+      id.startsWith("voucher-") ||
+      id.startsWith("points-redeem-")
+    ) {
+      continue;
+    }
+    const q = Math.max(0, Math.round(Number(item.qty) || 0));
+    if (q > 0) qty.set(id, (qty.get(id) || 0) + q);
+  }
+  return qty;
+}
+
+function orderItemQty(order: DayOrder) {
+  const qty = new Map<string, number>();
+  for (const item of order.items) {
+    const id = String(item.itemId || "");
+    if (!id) continue;
+    const q = Math.max(0, Math.round(Number(item.qty) || 0));
+    if (q > 0) qty.set(id, (qty.get(id) || 0) + q);
+  }
+  return qty;
+}
+
+/**
+ * Same products already saved as an order must not also sit on the cart row.
+ * equal: hide the order and keep the cart (chứng từ / duyệt).
+ * superset: the order already includes the cart plus more lines — hide the cart.
+ */
+function matchCartToOrder(
+  orders: DayOrder[],
+  cart: GuestCartPreview,
+  seen: Set<string>
+): { kind: "equal" | "superset"; order: DayOrder } | null {
+  const status = String(cart.status || "");
+  if (
+    status === "REJECTED" ||
+    status === "CANCELLED" ||
+    status === "NO_SHOW" ||
+    status === "EXPIRED"
+  ) {
+    return null;
+  }
+  const cartQty = sellableCartQty(cart);
+  if (cartQty.size === 0) return null;
+  const cartAt = cart.createdAt ? new Date(cart.createdAt).getTime() : NaN;
+  let equal: DayOrder | null = null;
+  let superset: DayOrder | null = null;
+  let equalDt = Infinity;
+  let superDt = Infinity;
+  for (const order of orders) {
+    if (order.status === "CANCELLED" || seen.has(order.id)) continue;
+    const saved = orderItemQty(order);
+    let covered = true;
+    for (const [id, qty] of cartQty) {
+      if ((saved.get(id) || 0) < qty) {
+        covered = false;
+        break;
+      }
+    }
+    if (!covered) continue;
+    let extra = false;
+    for (const [id, qty] of saved) {
+      if ((cartQty.get(id) || 0) !== qty) {
+        extra = true;
+        break;
+      }
+    }
+    const orderAt = new Date(order.at).getTime();
+    const dt =
+      Number.isFinite(cartAt) && Number.isFinite(orderAt)
+        ? Math.abs(orderAt - cartAt)
+        : 0;
+    if (dt > 12 * 60 * 60 * 1000) continue;
+    if (!extra && dt < equalDt) {
+      equal = order;
+      equalDt = dt;
+    } else if (extra && dt < superDt) {
+      superset = order;
+      superDt = dt;
+    }
+  }
+  if (equal) return { kind: "equal", order: equal };
+  if (superset) return { kind: "superset", order: superset };
+  return null;
+}
+
 function claimOrderForCart(
   orders: DayOrder[],
   cart: GuestCartPreview,
@@ -988,10 +1081,16 @@ function buildDeskTickets(
       );
       if (confirmed?.orderId) seenOrders.add(confirmed.orderId);
       if (confirmed) seenScanIds.add(confirmed.id);
+      const covered = confirmed
+        ? null
+        : matchCartToOrder(a.todayOrders || [], cart, seenOrders);
+      if (covered?.kind === "superset") continue;
       const claimed =
-        !confirmed && cart.status === "USED"
-          ? claimOrderForCart(a.todayOrders || [], cart, seenOrders)
-          : null;
+        covered?.kind === "equal"
+          ? covered.order
+          : !confirmed && cart.status === "USED"
+            ? claimOrderForCart(a.todayOrders || [], cart, seenOrders)
+            : null;
       if (claimed) {
         seenOrders.add(claimed.id);
         for (const sc of a.todayScans || []) {
@@ -2939,7 +3038,9 @@ export default function DeskAdministrationPage() {
         );
       }
       setOrderMsg(
-        `Đã xác thực · vào lúc ${formatTime(scan.at)} · ${formatVnd(data.order?.totalVnd || 0)}${memNote}`
+        data.packageAlreadyActive && !(data.order?.items?.length)
+          ? "Gói đã gắn trên tài khoản khách."
+          : `Đã xác thực · vào lúc ${formatTime(scan.at)} · ${formatVnd(data.order?.totalVnd || 0)}${memNote}`
       );
       if (data.order?.id) {
         setSelectedTicketKey(`bill-${data.order.id}`);
@@ -4160,7 +4261,11 @@ export default function DeskAdministrationPage() {
         });
         const poolData = await poolRes.json();
         if (!poolRes.ok) throw new Error(poolData.error || "Không xác thực được vé hồ");
-        notes.push(`hồ ${formatVnd(poolData.order?.totalVnd || 0)}`);
+        notes.push(
+          poolData.packageAlreadyActive && !(poolData.order?.items?.length)
+            ? "gói đã có trên tài khoản"
+            : `hồ ${formatVnd(poolData.order?.totalVnd || 0)}`
+        );
         setScanCarts((prev) => {
           const next = { ...prev };
           delete next[BOARD_POOL_KEY];
@@ -4262,7 +4367,11 @@ export default function DeskAdministrationPage() {
         const poolTotal = Number(data.order?.totalVnd);
         const poolShown = Number.isFinite(poolTotal) ? poolTotal : pool.sum;
         savedVnd += poolShown;
-        notes.push(`hồ ${formatVnd(poolShown)}`);
+        notes.push(
+          data.packageAlreadyActive && !(data.order?.items?.length)
+            ? "gói đã có trên tài khoản"
+            : `hồ ${formatVnd(poolShown)}`
+        );
         setScanCarts((prev) => {
           const next = { ...prev };
           delete next[BOARD_POOL_KEY];

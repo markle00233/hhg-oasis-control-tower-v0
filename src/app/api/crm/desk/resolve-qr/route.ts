@@ -9,6 +9,7 @@ import {
 import { findCustomerByIdentityToken } from "@/lib/identity-qr";
 import { activateLongNuongTable } from "@/lib/long-nuong-activate";
 import { markSpaInUse } from "@/lib/spa-visit";
+import { packageIdFromVipPlanLabel } from "@/lib/hhg-vouchers";
 import {
   applyOlympicMembership,
   pickPrimaryOlympicPackage,
@@ -179,21 +180,24 @@ export async function POST(req: NextRequest) {
             return null;
           });
           if (applied?.alreadyActive) {
-            const exp = applied.vipExpiresAt.toLocaleDateString("vi-VN");
-            return NextResponse.json(
-              {
-                error: `Khách đang dùng ${applied.vipPlanLabel} đến ${exp}. Hết hạn mới được gắn gói mới (không nâng/hạ gói khi còn hạn).`,
-                membershipLocked: true,
-                membership: {
-                  planLabel: applied.vipPlanLabel,
-                  expiresAt: applied.vipExpiresAt,
-                  packageId: pkgId,
+            const currentId = packageIdFromVipPlanLabel(applied.vipPlanLabel);
+            if (currentId && currentId !== pkgId) {
+              const exp = applied.vipExpiresAt.toLocaleDateString("vi-VN");
+              return NextResponse.json(
+                {
+                  error: `Khách đang dùng ${applied.vipPlanLabel} đến ${exp}. Hết hạn mới được gắn gói mới (không nâng/hạ gói khi còn hạn).`,
+                  membershipLocked: true,
+                  membership: {
+                    planLabel: applied.vipPlanLabel,
+                    expiresAt: applied.vipExpiresAt,
+                    packageId: pkgId,
+                  },
                 },
-              },
-              { status: 409 }
-            );
+                { status: 409 }
+              );
+            }
           }
-          if (applied && !applied.alreadyActive) {
+          if (applied) {
             membership = {
               planLabel: applied.vipPlanLabel,
               expiresAt: applied.vipExpiresAt,

@@ -1,6 +1,8 @@
+import { packageIdFromVipPlanLabel } from "@/lib/hhg-vouchers";
 import {
   applyOlympicMembership,
   isOlympicMembershipActive,
+  labelForOlympicPackage,
   pickPrimaryOlympicPackage,
 } from "@/lib/olympic-membership";
 import {
@@ -28,6 +30,30 @@ export type PoolCartLine = { itemId: string; qty: number };
 
 const asMeta = deskEventMeta;
 const scanAlreadyVerified = deskScanAlreadyFinalized;
+
+/** Product lines on a cart. Discount, voucher, and staff stamps are not a second purchase. */
+function sellableCartQty(items: unknown) {
+  const qty = new Map<string, number>();
+  if (!Array.isArray(items)) return qty;
+  for (const row of items) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { id?: string; qty?: number };
+    const id = String(rec.id || "");
+    if (
+      !id ||
+      id.startsWith("__") ||
+      id.startsWith("disc-") ||
+      id.startsWith("voucher-") ||
+      id.startsWith("points-redeem-")
+    ) {
+      continue;
+    }
+    const q = Math.max(0, Math.round(Number(rec.qty) || 0));
+    if (q <= 0) continue;
+    qty.set(id, (qty.get(id) || 0) + q);
+  }
+  return qty;
+}
 
 /** Vé khách đã đổi trên QR — không đốt điểm lần nữa ở quầy. */
 function coverPoolCartPoints(
@@ -106,6 +132,8 @@ export type OlympicConfirmOk = {
     }[];
   };
   orderSummary: string;
+  /** Gói trong đơn đã có trên tài khoản — không tạo đơn trùng. */
+  packageAlreadyActive?: boolean;
   membership: {
     planLabel: string;
     expiresAt: Date;
@@ -158,10 +186,72 @@ export async function confirmOlympicPoolScan(opts: {
     return { ok: false, error: "Chọn ít nhất 1 vé.", status: 400 };
   }
 
+  let billLines = lines;
+  const requestedPkg = pickPrimaryOlympicPackage(lines.map((line) => line.itemId));
+  if (requestedPkg) {
+    const holder = await prisma.appCustomer.findUnique({
+      where: { id: customerId },
+      select: {
+        segment: true,
+        vipExpiresAt: true,
+        vipPlanLabel: true,
+      },
+    });
+    const currentId = packageIdFromVipPlanLabel(holder?.vipPlanLabel);
+    if (
+      holder &&
+      isOlympicMembershipActive({
+        segment: holder.segment,
+        vipExpiresAt: holder.vipExpiresAt,
+      })
+    ) {
+      if (currentId && currentId !== requestedPkg) {
+        const exp = holder.vipExpiresAt
+          ? holder.vipExpiresAt.toLocaleDateString("vi-VN")
+          : null;
+        return {
+          ok: false,
+          status: 409,
+          membershipLocked: true,
+          error: exp
+            ? `Khách đang dùng ${holder.vipPlanLabel || "gói hội viên"} đến ${exp}. Hết hạn mới được chọn gói mới.`
+            : "Khách đang dùng gói hội viên. Hết hạn mới được chọn gói mới.",
+        };
+      }
+      billLines = lines.filter((line) => line.itemId !== requestedPkg);
+      if (!billLines.length) {
+        return {
+          ok: true,
+          already: true,
+          pointsAwarded: 0,
+          pointsBalance: null,
+          scanEventId,
+          closedScanIds: [],
+          entryAt: new Date(),
+          packageAlreadyActive: true,
+          order: {
+            id: "",
+            status: "CONFIRMED",
+            totalVnd: 0,
+            createdAt: new Date(),
+            items: [],
+          },
+          orderSummary: "Gói đã gắn trên tài khoản khách",
+          membership: {
+            planLabel:
+              holder.vipPlanLabel || labelForOlympicPackage(requestedPkg),
+            expiresAt: holder.vipExpiresAt || new Date(),
+            vouchersGranted: [],
+          },
+        };
+      }
+    }
+  }
+
   const sameDayMembership =
-    lines.some((line) => isPoolDayTicket(line.itemId)) ||
+    billLines.some((line) => isPoolDayTicket(line.itemId)) ||
     (await isSameDayMembershipEligible(prisma, { id: customerId }));
-  const priced = computePoolPricing(lines, {
+  const priced = computePoolPricing(billLines, {
     sameDayMembership,
     manualDiscountVnd,
   });
@@ -358,15 +448,36 @@ export async function confirmOlympicPoolScan(opts: {
 
       const cartToken =
         typeof prevMeta.cartToken === "string" ? prevMeta.cartToken : null;
-      const cartsToUse = await tx.appServiceCart.findMany({
-        where: cartToken
-          ? { token: cartToken, customerId: customer.id, status: "OPEN" }
-          : {
-              customerId: customer.id,
-              status: "OPEN",
-              zoneCode: { in: ["OLYMPIC_POOL", "OLYMPIC"] },
-            },
-        select: { id: true },
+      const orderQty = new Map<string, number>();
+      for (const item of orderItems) {
+        orderQty.set(
+          item.itemId,
+          (orderQty.get(item.itemId) || 0) + item.qty
+        );
+      }
+      /**
+       * A walk-in scan often has its own cart token. That used to leave the
+       * customer's approved gói cart OPEN while this order copied the same lines.
+       */
+      const openCarts = await tx.appServiceCart.findMany({
+        where: {
+          customerId: customer.id,
+          status: "OPEN",
+          OR: [
+            { zoneCode: { in: ["OLYMPIC_POOL", "OLYMPIC", "MIA_OLYMPIC", "VIP", "VIP_RESORT"] } },
+            ...(cartToken ? [{ token: cartToken }] : []),
+          ],
+        },
+        select: { id: true, token: true, items: true },
+      });
+      const cartsToUse = openCarts.filter((cart) => {
+        if (cartToken && cart.token === cartToken) return true;
+        const qty = sellableCartQty(cart.items);
+        if (qty.size === 0) return false;
+        for (const [id, q] of qty) {
+          if ((orderQty.get(id) || 0) < q) return false;
+        }
+        return true;
       });
       const verifiedAt = new Date();
       const discountParts: string[] = [];

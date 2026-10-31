@@ -4,6 +4,10 @@ import { requireDeskZone } from "@/lib/auth";
 import { CART_STATUS } from "@/lib/cart-status";
 import { deskZoneAliases, miaOlympicSector } from "@/lib/desk-zones";
 import { releaseLongNuongTableHold } from "@/lib/long-nuong-activate";
+import {
+  applyOlympicMembership,
+  pickPrimaryOlympicPackage,
+} from "@/lib/olympic-membership";
 import { awardCheckInPoints } from "@/lib/points";
 import { prisma } from "@/lib/prisma";
 
@@ -51,6 +55,35 @@ function stampCartApprovedAt(items: unknown, at: Date): Prisma.InputJsonValue {
  * or finalize (USED) after kế toán đã kiểm chứng từ.
  * Body: { zone, token, action?: "approve"|"reject"|"finalize", reason? }
  */
+
+/** Duyệt gói tháng gắn luôn lên tài khoản khách (VIP, hạn, voucher). */
+async function grantApprovedPackage(customerId: string, items: unknown) {
+  const itemIds = Array.isArray(items)
+    ? items
+        .map((row) =>
+          row && typeof row === "object"
+            ? String((row as { id?: string }).id || "")
+            : ""
+        )
+        .filter(Boolean)
+    : [];
+  const packageId = pickPrimaryOlympicPackage(itemIds);
+  if (!packageId) return null;
+  const applied = await applyOlympicMembership(prisma, {
+    customerId,
+    packageId,
+    from: new Date(),
+  }).catch((err) => {
+    console.error("[approve-cart membership]", err);
+    return null;
+  });
+  if (!applied || applied.alreadyActive) return null;
+  return {
+    planLabel: applied.vipPlanLabel,
+    expiresAt: applied.vipExpiresAt,
+    packageId,
+  };
+}
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -131,11 +164,16 @@ export async function POST(req: NextRequest) {
         );
       }
       if (cart.status === CART_STATUS.USED) {
+        const membership = await grantApprovedPackage(
+          cart.customerId,
+          cart.items
+        );
         return NextResponse.json({
           ok: true,
           already: true,
           cart: serialize(cart),
           customer: cart.customer,
+          membership,
         });
       }
       if (cart.status !== CART_STATUS.OPEN) {
@@ -154,20 +192,27 @@ export async function POST(req: NextRequest) {
         where: { id: cart.id },
         data: { status: CART_STATUS.USED },
       });
+      const membership = await grantApprovedPackage(cart.customerId, cart.items);
       return NextResponse.json({
         ok: true,
         cart: serialize(updated),
         customer: cart.customer,
+        membership,
       });
     }
 
     if (action === "approve") {
       if (cart.status === CART_STATUS.OPEN) {
+        const membership = await grantApprovedPackage(
+          cart.customerId,
+          cart.items
+        );
         return NextResponse.json({
           ok: true,
           already: true,
           cart: serialize(cart, CART_STATUS.OPEN),
           customer: cart.customer,
+          membership,
         });
       }
       if (cart.status !== CART_STATUS.PENDING) {
@@ -239,7 +284,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Gói tháng: duyệt thành công; gắn VIP khi NV quét QR khách.
+      const membership = await grantApprovedPackage(cart.customerId, cart.items);
 
       const pts = await awardCheckInPoints({
         customerId: cart.customerId,
@@ -256,7 +301,7 @@ export async function POST(req: NextRequest) {
         customer: cart.customer,
         pointsAwarded: pts?.delta ?? 0,
         pointsBalance: pts?.balance ?? null,
-        membership: null,
+        membership,
       });
     }
 
