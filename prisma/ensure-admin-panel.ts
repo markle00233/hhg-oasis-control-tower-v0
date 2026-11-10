@@ -1,6 +1,6 @@
 /**
  * Idempotent global admin for the desk login screen.
- * Runs during vercel-build, after prisma db push.
+ * Runs during vercel-build, after the database schema step.
  */
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";

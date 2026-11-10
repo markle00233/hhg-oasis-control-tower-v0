@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { tournamentVoucherPass } from "@/lib/tournament-roster";
 import { findVoucherPass } from "@/lib/voucher-pass";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export async function GET(
 ) {
   try {
     const { token } = await ctx.params;
-    const pass = await findVoucherPass(token);
+    const pass = (await findVoucherPass(token)) || (await tournamentVoucherPass(token));
     if (!pass) {
       return NextResponse.json({ error: "QR voucher không hợp lệ." }, { status: 404 });
     }

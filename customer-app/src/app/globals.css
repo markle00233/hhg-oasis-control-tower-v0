@@ -81,6 +81,36 @@ body.theme-m12 .bg-white\/70 {
   animation: rise 0.45s ease both;
 }
 
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-settle {
+  animation: settle 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes settle-dim {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 0.55;
+    transform: none;
+  }
+}
+
+.animate-settle.opacity-55 {
+  animation-name: settle-dim;
+}
+
 /* VIP card: a slow gold mist drifting across the whole card.
    One element, three layered gradients — the gradients already fade to
    transparent, so no blur filter (which would re-run on every frame). */
@@ -129,6 +159,8 @@ body.theme-m12 .bg-white\/70 {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-settle,
   .vip-pop,
   .vip-smoke-field {
     animation: none;

@@ -81,6 +81,11 @@ const DeskSwimStudents = dynamic(
     import("@/components/desk-swim-students").then((m) => m.DeskSwimStudents),
   { ssr: false }
 );
+const DeskTournaments = dynamic(
+  () =>
+    import("@/components/desk-tournaments").then((m) => m.DeskTournaments),
+  { ssr: false }
+);
 const DeskCalendar = dynamic(
   () => import("@/components/desk-calendar").then((m) => m.DeskCalendar),
   { ssr: false }
@@ -243,6 +248,53 @@ type Arrival = {
   todayOrderCount: number;
 };
 
+/** Stable text for one queue payload. Same text means the screen can stay put. */
+function arrivalSnapshot(rows: Arrival[]) {
+  return rows
+    .map((a) => {
+      const carts = (a.carts || [])
+        .map((c) =>
+          [
+            c.token,
+            c.status || "",
+            c.totalVnd,
+            c.hasBillPhoto ? 1 : 0,
+            c.adminNote || "",
+            c.billText || "",
+            c.staffName || "",
+            c.promoLabel || "",
+          ].join(":")
+        )
+        .join(",");
+      const scans = (a.todayScans || [])
+        .map(
+          (s) =>
+            `${s.id}:${s.operationalStatus || ""}:${s.ticketVerified ? 1 : 0}:${s.orderId || ""}:${s.staffName || ""}`
+        )
+        .join(",");
+      const orders = (a.todayOrders || [])
+        .map((o) => `${o.id}:${o.status}:${o.totalVnd}`)
+        .join(",");
+      return [
+        a.id,
+        a.updatedAt,
+        a.fullName || "",
+        a.phone || "",
+        a.segment,
+        a.pendingAdmin ? 1 : 0,
+        a.checkedIn ? 1 : 0,
+        a.pointsBalance ?? "",
+        a.swimBonusLeft ?? "",
+        a.packageLabel || "",
+        a.todayPackageVnd,
+        carts,
+        scans,
+        orders,
+      ].join("|");
+    })
+    .join("\n");
+}
+
 type CartLine = { itemId: string; qty: number; useAltPrice?: boolean };
 
 type Step = "pick" | "login" | "dashboard";
@@ -314,6 +366,22 @@ const DESK_ZONE_FILTERS: { id: DeskZoneFilter; label: string }[] = [
   { id: "olympic", label: "Olympic" },
   { id: "vip", label: "VIP" },
 ];
+
+const NEUTRAL_TILE = { background: "#f1f5f9", border: "#e2e8f0", color: "#0f172a" };
+
+const ZONE_TILE: Record<string, { background: string; border: string; color: string }> = {
+  MIA_OLYMPIC: { background: "#fff7ed", border: "#c2410c", color: "#9a3412" },
+  PICKLEBALL: { background: "#eef2ff", border: "#4338ca", color: "#312e81" },
+  SAUNA: { background: "#fdf2f8", border: "#be185d", color: "#9d174d" },
+  LONG_NUONG: { background: "#fee2e2", border: "#b91c1c", color: "#7f1d1d" },
+  SWIM_LESSON: { background: "#e0f2fe", border: "#0369a1", color: "#0c4a6e" },
+  ADMIN: { background: "#fef9c3", border: "#a16207", color: "#854d0e" },
+  TOURNAMENT: { background: "#ecfccb", border: "#3f6212", color: "#365314" },
+};
+
+function zoneTile(code: string) {
+  return ZONE_TILE[code] ?? NEUTRAL_TILE;
+}
 
 const PICKLE_COURTS = Array.from({ length: 6 }, (_, i) => {
   const n = String(i + 1).padStart(2, "0");
@@ -517,6 +585,403 @@ function hideWalkInShell(scan: Scan, _arrival: Arrival) {
   return scan.eventType === "SERVICE_USE" && scan.walkInConsumed === true;
 }
 
+type SavedOrderPayload = {
+  id?: string;
+  status?: string;
+  totalVnd?: number;
+  createdAt?: string;
+  items?: {
+    itemId?: string;
+    nameVi?: string;
+    qty?: number;
+    unitPriceVnd?: number;
+  }[];
+};
+
+/** Order row the board can show before the next desk poll. */
+function savedDayOrder(
+  order: SavedOrderPayload | null | undefined,
+  serviceCode: string
+): DayOrder | null {
+  const id = String(order?.id || "").trim();
+  if (!id) return null;
+  return {
+    id,
+    at: order?.createdAt || new Date().toISOString(),
+    status: order?.status || "CONFIRMED",
+    totalVnd: Math.max(0, Math.round(Number(order?.totalVnd) || 0)),
+    serviceCode,
+    staffName: null,
+    items: (order?.items || []).map((item) => ({
+      itemId: item.itemId,
+      nameVi: item.nameVi || "",
+      qty: Math.max(1, Math.round(Number(item.qty) || 1)),
+      unitPriceVnd: Math.max(0, Math.round(Number(item.unitPriceVnd) || 0)),
+    })),
+  };
+}
+
+function scanIsOpenShell(scan: Scan) {
+  if (scan.eventType !== "SERVICE_USE") return false;
+  if ((scan.operationalStatus || "NEW") !== "NEW") return false;
+  if (scan.ticketVerified || scan.orderId || scan.walkInConsumed) return false;
+  if (scan.ticketItems && scan.ticketItems.length > 0) return false;
+  return true;
+}
+
+function scanWithOrder(
+  scan: Scan,
+  order: DayOrder,
+  extra?: Partial<Scan>
+): Scan {
+  const summary = order.items
+    .map((item) => `${item.qty}× ${item.nameVi}`)
+    .filter(Boolean)
+    .join(", ");
+  return {
+    ...scan,
+    operationalStatus: "ACKNOWLEDGED",
+    ticketVerified: true,
+    orderId: order.id,
+    totalVnd: order.totalVnd,
+    orderSummary: summary || scan.orderSummary,
+    ticketItems: order.items.map((item) => ({
+      nameVi: item.nameVi,
+      qty: item.qty,
+      unitPriceVnd: item.unitPriceVnd,
+      itemId: item.itemId,
+    })),
+    ...extra,
+  };
+}
+
+/** Put a saved order on the shell the server just finalized. */
+function attachSaleToScan(
+  scans: Scan[],
+  order: DayOrder,
+  preferredId: string | null,
+  opts?: {
+    force?: boolean;
+    manualDiscountVnd?: number;
+    manualDiscountNote?: string | null;
+  }
+): Scan[] {
+  const extra: Partial<Scan> = {};
+  if (opts?.manualDiscountVnd) {
+    extra.manualDiscountVnd = opts.manualDiscountVnd;
+    extra.manualDiscountNote = opts.manualDiscountNote || null;
+  }
+  if (preferredId) {
+    const named = scans.find((scan) => scan.id === preferredId);
+    if (!named) {
+      /* fall through to the latest open shell */
+    } else if (opts?.force || scanIsOpenShell(named)) {
+      return scans.map((scan) =>
+        scan.id === preferredId ? scanWithOrder(scan, order, extra) : scan
+      );
+    } else {
+      return scans;
+    }
+  }
+  if (opts?.force) return scans;
+  const shell =
+    scans.find(
+      (scan) => scanIsOpenShell(scan) && scan.source === "desk_walkin_order"
+    ) || scans.find(scanIsOpenShell);
+  if (!shell) return scans;
+  return scans.map((scan) =>
+    scan.id === shell.id ? scanWithOrder(scan, order, extra) : scan
+  );
+}
+
+function applyPoolSale(
+  scans: Scan[],
+  args: {
+    scanId: string;
+    order: DayOrder;
+    orderSummary?: string | null;
+    closedScanIds?: string[];
+    deskBundleId?: string;
+    miaOrderId?: string;
+    entryAt?: string;
+    manualDiscountVnd?: number;
+    manualDiscountNote?: string | null;
+  }
+): Scan[] {
+  const existing = scans.find((scan) => scan.id === args.scanId);
+  const base: Scan = existing || {
+    id: args.scanId,
+    at: args.entryAt || args.order.at,
+    eventType: "SERVICE_USE",
+    operationalStatus: "NEW",
+    serviceCode: "OLYMPIC_POOL",
+    serviceName: "Hồ Olympic",
+    orderSummary: null,
+  };
+  const nextScan = scanWithOrder(base, args.order, {
+    ...(args.orderSummary ? { orderSummary: args.orderSummary } : {}),
+    ...(args.entryAt ? { at: args.entryAt } : {}),
+    ...(args.deskBundleId ? { deskBundleId: args.deskBundleId } : {}),
+    ...(args.miaOrderId ? { miaOrderId: args.miaOrderId } : {}),
+    ...(args.manualDiscountVnd
+      ? {
+          manualDiscountVnd: args.manualDiscountVnd,
+          manualDiscountNote: args.manualDiscountNote || null,
+        }
+      : {}),
+  });
+  let next = existing
+    ? scans.map((scan) => (scan.id === args.scanId ? nextScan : scan))
+    : [nextScan, ...scans];
+  const closed = new Set(
+    (args.closedScanIds || []).filter((id) => id && id !== args.scanId)
+  );
+  if (!closed.size) return next;
+  return next.map((scan) =>
+    closed.has(scan.id) && scanIsOpenShell(scan)
+      ? { ...scan, walkInConsumed: true, operationalStatus: "ACKNOWLEDGED" }
+      : scan
+  );
+}
+
+function withSavedOrder(arrival: Arrival, order: DayOrder, scans: Scan[]): Arrival {
+  const todayOrders = arrival.todayOrders.some((row) => row.id === order.id)
+    ? arrival.todayOrders.map((row) =>
+        row.id === order.id
+          ? {
+              ...row,
+              ...order,
+              items: order.items.length ? order.items : row.items,
+            }
+          : row
+      )
+    : [order, ...arrival.todayOrders];
+  const active = todayOrders.filter((row) => row.status !== "CANCELLED");
+  const at = order.at || arrival.lastVisitAt;
+  const lastVisitAt =
+    arrival.lastVisitAt &&
+    at &&
+    new Date(arrival.lastVisitAt).getTime() > new Date(at).getTime()
+      ? arrival.lastVisitAt
+      : at || arrival.lastVisitAt;
+  return {
+    ...arrival,
+    todayOrders,
+    todayScans: scans,
+    todayOrderCount: active.length,
+    todayPackageVnd: active.reduce((sum, row) => sum + (row.totalVnd || 0), 0),
+    checkedIn: true,
+    lastVisitAt,
+  };
+}
+
+function markScanVerified(
+  arrival: Arrival,
+  scanId: string,
+  orderSummary?: string | null
+): Arrival {
+  let changed = false;
+  const todayScans = (arrival.todayScans || []).map((scan) => {
+    if (scan.id !== scanId) return scan;
+    changed = true;
+    return {
+      ...scan,
+      ticketVerified: true,
+      operationalStatus: "ACKNOWLEDGED",
+      orderSummary: orderSummary || scan.orderSummary,
+    };
+  });
+  if (!changed) return arrival;
+  return { ...arrival, checkedIn: true, todayScans };
+}
+
+type SaleMembership = { planLabel?: string; expiresAt?: string | null } | null;
+
+/** One local board update for a saved pool order, drink order, cart, and points. */
+function applySaleToArrival(
+  arrival: Arrival,
+  sale: {
+    poolOrder?: DayOrder | null;
+    pool?: {
+      scanId: string;
+      orderSummary?: string | null;
+      closedScanIds?: string[];
+      deskBundleId?: string;
+      miaOrderId?: string;
+      entryAt?: string;
+      manualDiscountVnd?: number;
+      manualDiscountNote?: string | null;
+    } | null;
+    miaOrder?: DayOrder | null;
+    /** Combined hồ + mía keeps the pool scan; a drink-only sale finalizes the open shell. */
+    miaOnPool?: boolean;
+    miaShellId?: string | null;
+    miaManualVnd?: number;
+    miaManualNote?: string | null;
+    cartToken?: string;
+    cartTotal?: number;
+    pointsBalance?: number | null;
+    membership?: SaleMembership;
+  }
+): Arrival {
+  let next = arrival;
+  const pool = sale.pool;
+  if (pool?.scanId && sale.poolOrder) {
+    next = withSavedOrder(
+      next,
+      sale.poolOrder,
+      applyPoolSale(next.todayScans || [], {
+        scanId: pool.scanId,
+        order: sale.poolOrder,
+        orderSummary: pool.orderSummary,
+        closedScanIds: pool.closedScanIds,
+        deskBundleId: pool.deskBundleId,
+        miaOrderId: pool.miaOrderId,
+        entryAt: pool.entryAt,
+        manualDiscountVnd: pool.manualDiscountVnd,
+        manualDiscountNote: pool.manualDiscountNote,
+      })
+    );
+  } else if (pool?.scanId) {
+    next = markScanVerified(next, pool.scanId, pool.orderSummary);
+  }
+  if (sale.miaOrder) {
+    next = withSavedOrder(
+      next,
+      sale.miaOrder,
+      sale.miaOnPool
+        ? next.todayScans || []
+        : attachSaleToScan(next.todayScans || [], sale.miaOrder, sale.miaShellId || null, {
+            manualDiscountVnd: sale.miaManualVnd,
+            manualDiscountNote: sale.miaManualNote,
+          })
+    );
+  }
+  if (sale.cartToken) {
+    next = withCartUsed(next, sale.cartToken, sale.cartTotal || 0);
+  }
+  if (typeof sale.pointsBalance === "number") {
+    next = { ...next, pointsBalance: sale.pointsBalance };
+  }
+  if (sale.membership?.planLabel) {
+    next = {
+      ...next,
+      packageLabel: sale.membership.planLabel,
+      packageExpiresAt: sale.membership.expiresAt
+        ? String(sale.membership.expiresAt)
+        : next.packageExpiresAt,
+    };
+  }
+  return next;
+}
+
+function withCartUsed(
+  arrival: Arrival,
+  token: string,
+  totalVnd: number
+): Arrival {
+  const patch = (cart: GuestCartPreview): GuestCartPreview =>
+    cart.token === token ? { ...cart, status: "USED", totalVnd } : cart;
+  const carts = (arrival.carts || []).map(patch);
+  return {
+    ...arrival,
+    carts,
+    openCart: arrival.openCart
+      ? arrival.openCart.token === token
+        ? patch(arrival.openCart)
+        : arrival.openCart
+      : arrival.openCart,
+    needsApproval: carts.some((cart) => cart.status === "PENDING_APPROVAL"),
+    checkedIn: true,
+  };
+}
+
+function cartPreviewItems(
+  raw: unknown,
+  fallback: GuestCartPreview["items"]
+): GuestCartPreview["items"] {
+  if (!Array.isArray(raw)) return fallback;
+  const items = raw.flatMap((row) => {
+    if (!row || typeof row !== "object") return [];
+    const item = row as {
+      id?: string;
+      nameVi?: string;
+      qty?: number;
+      priceVnd?: number;
+      pointsRedeemQty?: number;
+    };
+    const id = String(item.id || "");
+    const qty = Math.max(0, Math.round(Number(item.qty) || 0));
+    if (!id || qty < 1) return [];
+    return [
+      {
+        id,
+        nameVi: String(item.nameVi || id),
+        qty,
+        priceVnd: Math.max(0, Math.round(Number(item.priceVnd) || 0)),
+        ...(item.pointsRedeemQty
+          ? { pointsRedeemQty: Math.round(Number(item.pointsRedeemQty) || 0) }
+          : {}),
+      },
+    ];
+  });
+  return items.length ? items : fallback;
+}
+
+function dayOrderFromCart(
+  id: string,
+  status: string,
+  items: GuestCartPreview["items"],
+  totalVnd: number,
+  serviceCode: string
+): DayOrder {
+  return {
+    id,
+    at: new Date().toISOString(),
+    status: status || "CONFIRMED",
+    totalVnd,
+    serviceCode,
+    staffName: null,
+    items: items.map((item) => ({
+      itemId: item.id,
+      nameVi: item.nameVi,
+      qty: item.qty,
+      unitPriceVnd: item.priceVnd,
+    })),
+  };
+}
+
+function withCartRevised(
+  arrival: Arrival,
+  token: string,
+  items: GuestCartPreview["items"],
+  totalVnd: number,
+  status?: string
+): Arrival {
+  const billText = items.map((item) => `${item.qty}× ${item.nameVi}`).join(", ");
+  const patch = (cart: GuestCartPreview): GuestCartPreview =>
+    cart.token === token
+      ? {
+          ...cart,
+          items,
+          totalVnd,
+          billText,
+          ...(status ? { status } : {}),
+        }
+      : cart;
+  const carts = (arrival.carts || []).map(patch);
+  return {
+    ...arrival,
+    carts,
+    openCart: arrival.openCart
+      ? arrival.openCart.token === token
+        ? patch(arrival.openCart)
+        : arrival.openCart
+      : arrival.openCart,
+    needsApproval: carts.some((cart) => cart.status === "PENDING_APPROVAL"),
+  };
+}
+
 function visitFinalizedLabel(zoneCode: string | null, withCatalog: boolean) {
   if (withCatalog) return "Đã order";
   if ((zoneCode || "") === "OLYMPIC_POOL") return "Đã xác thực";
@@ -561,6 +1026,8 @@ function ticketSide(t: DeskTicket): "mia" | "olympic" | "vip" | "other" {
   const hasBill =
     t.billItems.length > 0 || (text !== "" && text !== "—" && text !== "-");
   if (!hasBill) return "other";
+  if (orderCode === "MIA_OI") return "mia";
+  if (orderCode === "OLYMPIC_POOL" || orderCode === "OLYMPIC") return "olympic";
   if (deskZone === "MIA_OI") return "mia";
   if (deskZone === "OLYMPIC_POOL" || deskZone === "OLYMPIC") return "olympic";
   const event = String(t.scan?.eventType || "").toUpperCase();
@@ -1519,12 +1986,15 @@ export default function DeskAdministrationPage() {
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(
     null
   );
+  const [orderLogOpen, setOrderLogOpen] = useState(false);
   const [verifyingScanId, setVerifyingScanId] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   /** YYYY-MM-DD — lọc dashboard theo ngày lịch; null = realtime 12h */
   const [viewDate, setViewDate] = useState<string | null>(null);
   const loadSeq = useRef(0);
+  const saleGuestRef = useRef<Arrival | null>(null);
+  const arrivalSnapRef = useRef("");
   const authFailStreak = useRef(0);
   const savingOrder = useRef(false);
   const [scanError, setScanError] = useState("");
@@ -1669,6 +2139,49 @@ export default function DeskAdministrationPage() {
     return groupedTickets.filter((t) => t.arrival.id === selected.id);
   }, [groupedTickets, selected]);
 
+  const dayOrderCount = useMemo(() => {
+    let count = 0;
+    for (const arrival of arrivals) count += arrival.todayOrders?.length || 0;
+    return count;
+  }, [arrivals]);
+
+  const dayOrderLog = useMemo(() => {
+    if (!orderLogOpen) return [];
+    const rows: {
+      key: string;
+      at: number;
+      time: string;
+      guest: string;
+      phone: string | null;
+      items: string;
+      totalVnd: number;
+      status: string;
+      customerId: string;
+      orderId: string;
+    }[] = [];
+    for (const arrival of arrivals) {
+      for (const order of arrival.todayOrders || []) {
+        const at = new Date(order.at).getTime();
+        rows.push({
+          key: `${arrival.id}:${order.id}`,
+          at: Number.isFinite(at) ? at : 0,
+          time: formatTime(order.at),
+          guest: arrival.fullName || "Khách",
+          phone: arrival.phone,
+          items:
+            order.items.map((item) => `${item.qty}× ${item.nameVi}`).join(", ") ||
+            "—",
+          totalVnd: order.totalVnd,
+          status: order.status,
+          customerId: arrival.id,
+          orderId: order.id,
+        });
+      }
+    }
+    rows.sort((a, b) => b.at - a.at);
+    return rows;
+  }, [arrivals, orderLogOpen]);
+
   const focusedTicket = useMemo(() => {
     if (!guestTickets.length) return null;
     if (selectedTicketKey) {
@@ -1806,14 +2319,19 @@ export default function DeskAdministrationPage() {
       if (zoneRef.current !== requested) return;
       if (!res.ok) throw new Error(data.error || "Load failed");
       authFailStreak.current = 0;
+      const nextArrivals: Arrival[] = data.arrivals || [];
+      const snap = `${requested}\n${arrivalSnapshot(nextArrivals)}`;
+      if (snap !== arrivalSnapRef.current) {
+        arrivalSnapRef.current = snap;
+        setArrivals(nextArrivals);
+        setSelected((prev) => {
+          if (!prev) return null;
+          return nextArrivals.find((a) => a.id === prev.id) || prev;
+        });
+      }
       setIsAdmin(!!data.isAdmin);
       setIsSystemAdminUser(!!data.isSystemAdmin);
-      setArrivals(data.arrivals || []);
       setError("");
-      setSelected((prev) => {
-        if (!prev) return null;
-        return (data.arrivals || []).find((a: Arrival) => a.id === prev.id) || prev;
-      });
     } catch (e) {
       if (seq !== loadSeq.current) return;
       if (zoneRef.current !== requested) return;
@@ -1950,7 +2468,7 @@ export default function DeskAdministrationPage() {
   );
 
   useEffect(() => {
-    if (step !== "dashboard" || !zone || zone === "ADMIN") return;
+    if (step !== "dashboard" || !zone || zone === "ADMIN" || zone === "TOURNAMENT") return;
     // Đang mở lịch → tạm dừng poll để UI không giật
     if (calendarOpen) return;
     const ms = viewDate
@@ -1970,6 +2488,36 @@ export default function DeskAdministrationPage() {
       document.removeEventListener("visibilitychange", pull);
     };
   }, [step, zone, load, pendingApprovalCount, calendarOpen, viewDate]);
+
+  useEffect(() => {
+    if (
+      step !== "dashboard" ||
+      !zone ||
+      zone === "ADMIN" ||
+      zone === "TOURNAMENT" ||
+      isSwimLessonDesk(zone) ||
+      viewDate
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const run = () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      void fetch("/api/crm/desk/maintain", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ zone }),
+      }).catch(() => undefined);
+    };
+    const first = window.setTimeout(run, 1500);
+    const timer = window.setInterval(run, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [step, zone, viewDate]);
 
   async function approveCart(
     token: string,
@@ -2206,6 +2754,21 @@ export default function DeskAdministrationPage() {
     }
   }
 
+  function chooseTournament() {
+    setPicked({ code: "TOURNAMENT", name: "Giải đấu", username: "PICKLEBALL" });
+    setUsername("PICKLEBALL");
+    setPassword("");
+    setLoginError("");
+    setError("");
+    setArrivals([]);
+    setSelected(null);
+    setSelectedTicketKey(null);
+    setCart({});
+    setScanCarts({});
+    setOrderMsg("");
+    setStep("login");
+  }
+
   function chooseAdmin() {
     setPicked({ code: "ADMIN", name: "Admin", username: ADMIN_PANEL_USERNAME });
     setUsername(ADMIN_PANEL_USERNAME);
@@ -2261,6 +2824,21 @@ export default function DeskAdministrationPage() {
 
       const user = data.user;
       const admin = user?.systemRole === "SYSTEM_ADMIN";
+      if (picked.code === "TOURNAMENT") {
+        const deskZone = String(user?.deskZone || "").toUpperCase();
+        const zoneAdmin = isZoneDeskAdmin(user, "PICKLEBALL");
+        if (!admin && deskZone !== "PICKLEBALL" && !zoneAdmin) {
+          await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+          throw new Error(
+            `Tài khoản này không quản lý giải đấu. Dùng PICKLEBALL, ADMINISTRATIONPICKLEBALL hoặc ${ADMIN_PANEL_USERNAME}.`
+          );
+        }
+        setIsAdmin(!!admin || zoneAdmin);
+        setIsSystemAdminUser(!!admin);
+        setPassword("");
+        setStep("dashboard");
+        return;
+      }
       if (picked.code === "ADMIN") {
         if (!admin) {
           await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
@@ -2349,6 +2927,21 @@ export default function DeskAdministrationPage() {
         null;
     }
     if (pick) applyGuestCart(pick);
+  }
+
+  function openLoggedOrder(customerId: string, orderId: string) {
+    const arrival = arrivals.find((row) => row.id === customerId);
+    if (!arrival) return;
+    const ticket = groupedTickets.find(
+      (row) =>
+        row.arrival.id === customerId &&
+        (row.orderId === orderId || row.miaOrderId === orderId)
+    );
+    openCustomer(
+      arrival,
+      ticket?.cart ?? null,
+      ticket?.key || `order-${orderId}`
+    );
   }
 
   async function submitCreateGuest(anonymous = false) {
@@ -4274,6 +4867,31 @@ export default function DeskAdministrationPage() {
     );
   }
 
+  /** Drop an in-flight board fetch so a sale patch is not overwritten by stale data. */
+  function commitGuestSale(
+    customerId: string,
+    update: (arrival: Arrival) => Arrival
+  ) {
+    loadSeq.current += 1;
+    saleGuestRef.current = null;
+    setArrivals((rows) => {
+      const index = rows.findIndex((row) => row.id === customerId);
+      if (index < 0) return rows;
+      const next = update(rows[index]);
+      saleGuestRef.current = next;
+      if (next === rows[index]) return rows;
+      const copy = rows.slice();
+      copy[index] = next;
+      return copy;
+    });
+    setSelected((prev) => {
+      if (!prev || prev.id !== customerId) return prev;
+      const patched = saleGuestRef.current;
+      if (patched?.id === customerId) return patched;
+      return update(prev);
+    });
+  }
+
   async function confirmMiaCart(mode: "cart" | "added") {
     if (!selected || !guestCart?.token || !miaCartOpen() || ordering) return;
     if (savingOrder.current) return;
@@ -4291,6 +4909,15 @@ export default function DeskAdministrationPage() {
     setOrderMsg("");
     setError("");
     const notes: string[] = [];
+    let poolSale: {
+      order?: SavedOrderPayload;
+      orderSummary?: string | null;
+      scanEventId?: string;
+      closedScanIds?: string[];
+      entryAt?: string;
+      pointsBalance?: number | null;
+      membership?: { planLabel?: string; expiresAt?: string | null } | null;
+    } | null = null;
     try {
       if (poolLines.length) {
         const poolRes = await fetch("/api/crm/pool/orders", {
@@ -4310,6 +4937,7 @@ export default function DeskAdministrationPage() {
             ? "gói đã có trên tài khoản"
             : `hồ ${formatVnd(poolData.order?.totalVnd || 0)}`
         );
+        poolSale = poolData;
         setScanCarts((prev) => {
           const next = { ...prev };
           delete next[BOARD_POOL_KEY];
@@ -4336,15 +4964,39 @@ export default function DeskAdministrationPage() {
       setDeskVoucherOfferId("");
       setVoucherPickerOpen(false);
       void loadDeskWallet(selected.id);
-      setGuestCart((prev) => (prev ? { ...prev, status: "USED" } : prev));
-      if (typeof data.pointsBalance === "number") {
-        setSelected((prev) =>
-          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
-        );
-      }
+      setGuestCart((prev) => (prev ? { ...prev, status: "USED", totalVnd: data.order?.totalVnd ?? prev.totalVnd } : prev));
+      const cartToken = guestCart.token;
+      const paidTotal = Number(data.order?.totalVnd ?? data.cart?.totalVnd ?? guestCart.totalVnd);
+      const miaOrder = savedDayOrder(data.order, "MIA_OI");
+      const poolOrder = savedDayOrder(poolSale?.order, "OLYMPIC_POOL");
+      const pointsBalance =
+        typeof data.pointsBalance === "number"
+          ? data.pointsBalance
+          : poolSale?.pointsBalance;
+      const poolScanId = String(poolSale?.scanEventId || poolScan?.id || "");
+      commitGuestSale(selected.id, (arrival) =>
+        applySaleToArrival(arrival, {
+          poolOrder,
+          pool: poolSale && poolScanId
+            ? {
+                scanId: poolScanId,
+                orderSummary: poolSale?.orderSummary,
+                closedScanIds: poolSale?.closedScanIds,
+                deskBundleId: bundleId || undefined,
+                miaOrderId: miaOrder?.id,
+                entryAt: poolSale?.entryAt,
+              }
+            : null,
+          miaOrder,
+          miaOnPool: true,
+          cartToken,
+          cartTotal: Number.isFinite(paidTotal) ? paidTotal : guestCart.totalVnd,
+          pointsBalance,
+          membership: poolSale?.membership,
+        })
+      );
       notes.push(`mía ${formatVnd(data.order?.totalVnd || guestCart.totalVnd)}`);
       setOrderMsg(`Đã xác nhận · ${notes.join(" + ")}`);
-      void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không xác nhận được");
     } finally {
@@ -4387,6 +5039,19 @@ export default function DeskAdministrationPage() {
         : "";
     let resolvedScanId =
       scan?.id || focusedPoolScanId || pendingScanId || "";
+    let poolPayload: {
+      order?: SavedOrderPayload;
+      orderSummary?: string | null;
+      scanEventId?: string;
+      closedScanIds?: string[];
+      entryAt?: string;
+      pointsBalance?: number | null;
+      membership?: { planLabel?: string; expiresAt?: string | null } | null;
+    } | null = null;
+    let miaPayload: {
+      order?: SavedOrderPayload;
+      pointsBalance?: number | null;
+    } | null = null;
     try {
       if (hasPool) {
         const items = poolLines;
@@ -4407,6 +5072,7 @@ export default function DeskAdministrationPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Không lưu được vé hồ");
         poolSaved = true;
+        poolPayload = data;
         resolvedScanId = String(data.scanEventId || resolvedScanId || "");
         const poolTotal = Number(data.order?.totalVnd);
         const poolShown = Number.isFinite(poolTotal) ? poolTotal : pool.sum;
@@ -4446,6 +5112,7 @@ export default function DeskAdministrationPage() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Không lưu được đơn Mía");
+        miaPayload = data;
         const miaTotal = Number(data.order?.totalVnd);
         const miaShown = Number.isFinite(miaTotal)
           ? miaTotal
@@ -4457,11 +5124,6 @@ export default function DeskAdministrationPage() {
         setDeskVoucherOfferId("");
         setVoucherPickerOpen(false);
         void loadDeskWallet(selected.id);
-        if (typeof data.pointsBalance === "number") {
-          setSelected((prev) =>
-            prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
-          );
-        }
       }
       finished = true;
       setManualDiscountInput("");
@@ -4475,7 +5137,39 @@ export default function DeskAdministrationPage() {
             : ""
         }`
       );
-      void load();
+      const poolOrder = savedDayOrder(poolPayload?.order, "OLYMPIC_POOL");
+      const miaOrder = savedDayOrder(miaPayload?.order, "MIA_OI");
+      const pointsBalance =
+        typeof miaPayload?.pointsBalance === "number"
+          ? miaPayload.pointsBalance
+          : poolPayload?.pointsBalance;
+      commitGuestSale(selected.id, (arrival) =>
+        applySaleToArrival(arrival, {
+          poolOrder,
+          pool:
+            poolPayload && resolvedScanId
+              ? {
+                  scanId: resolvedScanId,
+                  orderSummary: poolPayload.orderSummary,
+                  closedScanIds: poolPayload.closedScanIds,
+                  deskBundleId: bundleId || undefined,
+                  miaOrderId: miaOrder?.id,
+                  entryAt: poolPayload.entryAt,
+                  manualDiscountVnd: manual.onPool || undefined,
+                  manualDiscountNote: manual.note,
+                }
+              : null,
+          miaOrder,
+          miaOnPool: hasPool,
+          miaShellId: resolvedScanId || null,
+          miaManualVnd: manual.onMia || undefined,
+          miaManualNote: manual.note,
+          pointsBalance,
+          membership: poolPayload?.membership,
+        })
+      );
+      if (miaOrder) setSelectedTicketKey(`order-${miaOrder.id}`);
+      else if (poolOrder) setSelectedTicketKey(`order-${poolOrder.id}`);
     } catch (e) {
       if (!finished && poolSaved && manual.onPool > 0) {
         const left = Math.max(0, manual.vnd - manual.onPool);
@@ -4527,34 +5221,86 @@ export default function DeskAdministrationPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không lưu được đơn");
+      const shellId =
+        focusedTicket?.orderStatus === "pending" && focusedTicket.scan?.id
+          ? focusedTicket.scan.id
+          : null;
       if (data.revised && guestCart) {
-        const nextItems = Array.isArray(data.items) ? data.items : guestCart.items;
+        const nextItems = cartPreviewItems(data.items, guestCart.items);
         const total =
           typeof data.totalVnd === "number" ? data.totalVnd : cartTotal;
+        const cartToken = guestCart.token;
+        const finalized = !!data.finalized;
         setGuestCart({
           ...guestCart,
-          status: data.finalized ? "USED" : guestCart.status,
+          status: finalized ? "USED" : guestCart.status,
           items: nextItems,
           totalVnd: total,
         });
         setOrderMsg(
-          data.finalized
+          finalized
             ? `Đã xác nhận · ${formatVnd(total)}`
             : `Đã cập nhật đơn gốc · ${formatVnd(total)}`
         );
-        if (data.finalized) setCart({});
+        if (finalized) setCart({});
+        const revisedOrder =
+          finalized && data.order?.id
+            ? dayOrderFromCart(
+                String(data.order.id),
+                String(data.order.status || "CONFIRMED"),
+                nextItems,
+                total,
+                "SAUNA"
+              )
+            : null;
+        commitGuestSale(selected.id, (arrival) => {
+          let next = withCartRevised(
+            arrival,
+            cartToken,
+            nextItems,
+            total,
+            finalized ? "USED" : undefined
+          );
+          if (revisedOrder) {
+            const scans = (next.todayScans || []).map((scan) =>
+              scan.cartToken === cartToken
+                ? scanWithOrder(scan, revisedOrder)
+                : scan
+            );
+            next = withSavedOrder(next, revisedOrder, scans);
+          }
+          return next;
+        });
       } else {
+        const order = savedDayOrder(data.order, isSpa ? "SAUNA" : "MIA_OI");
         setCart({});
         setOrderMsg(
           `Đã lưu · ${formatVnd(data.order?.totalVnd || cartTotal)} · order thêm = hàng mới trên bảng`
         );
-        if (data.order?.id) setSelectedTicketKey(`order-${data.order.id}`);
+        if (order) setSelectedTicketKey(`order-${order.id}`);
+        commitGuestSale(selected.id, (arrival) => {
+          if (!order) {
+            return typeof data.pointsBalance === "number"
+              ? { ...arrival, pointsBalance: data.pointsBalance }
+              : arrival;
+          }
+          const scans = attachSaleToScan(
+            arrival.todayScans || [],
+            order,
+            revisingSpa ? null : shellId,
+            { force: isSpa }
+          );
+          let next = withSavedOrder(arrival, order, scans);
+          if (typeof data.pointsBalance === "number") {
+            next = { ...next, pointsBalance: data.pointsBalance };
+          }
+          return next;
+        });
       }
       setDeskRedeemUnits(0);
       setDeskVoucherOfferId("");
       setVoucherPickerOpen(false);
       void loadDeskWallet(selected.id);
-      void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không lưu được đơn");
     } finally {
@@ -4581,46 +5327,49 @@ export default function DeskAdministrationPage() {
               gap: 10,
             }}
           >
-            {DESK_ZONES.map((z) => (
-              <button
-                key={z.code}
-                type="button"
-                onClick={() => chooseZone(z)}
-                style={{
-                  ...styles.zoneBtn,
-                  borderColor:
-                    miaOlympicSector(z.code)
-                      ? "#b45309"
-                      : z.code === "SAUNA"
-                        ? "#1b3022"
-                        : z.code === "SWIM_LESSON"
-                          ? "#0369a1"
-                          : "#e2e8f0",
-                  background:
-                    miaOlympicSector(z.code)
-                      ? "#fff7ed"
-                      : z.code === "SAUNA"
-                        ? "#eef5f0"
-                        : z.code === "SWIM_LESSON"
-                          ? "#e0f2fe"
-                          : "#f1f5f9",
-                }}
-              >
-                <strong style={{ fontSize: 15 }}>{z.name}</strong>
-              </button>
-            ))}
+            {DESK_ZONES.map((z) => {
+              const tile = zoneTile(z.code);
+              return (
+                <button
+                  key={z.code}
+                  type="button"
+                  onClick={() => chooseZone(z)}
+                  style={{
+                    ...styles.zoneBtn,
+                    background: tile.background,
+                    borderColor: tile.border,
+                    color: tile.color,
+                  }}
+                >
+                  <strong style={{ fontSize: 15 }}>{z.name}</strong>
+                </button>
+              );
+            })}
             <button
               type="button"
               onClick={chooseAdmin}
               style={{
                 ...styles.zoneBtn,
-                borderColor: "#a16207",
-                background: "#fef9c3",
+                background: zoneTile("ADMIN").background,
+                borderColor: zoneTile("ADMIN").border,
+                color: zoneTile("ADMIN").color,
               }}
             >
-              <strong style={{ fontSize: 15 }}>
-                Admin
-              </strong>
+              <strong style={{ fontSize: 15 }}>Admin</strong>
+            </button>
+            <button
+              type="button"
+              onClick={chooseTournament}
+              style={{
+                ...styles.zoneBtn,
+                gridColumn: "1 / -1",
+                background: zoneTile("TOURNAMENT").background,
+                borderColor: zoneTile("TOURNAMENT").border,
+                color: zoneTile("TOURNAMENT").color,
+                padding: "14px 16px",
+              }}
+            >
+              <strong style={{ fontSize: 15 }}>Giải đấu</strong>
             </button>
           </div>
           <p style={{ ...styles.mute, marginTop: 16, fontSize: 12 }}>
@@ -4632,6 +5381,12 @@ export default function DeskAdministrationPage() {
           </p>
         </div>
       </main>
+    );
+  }
+
+  if (step === "dashboard" && zone === "TOURNAMENT") {
+    return (
+      <DeskTournaments onBack={backToPick} onLogout={() => void logout()} />
     );
   }
 
@@ -4649,6 +5404,13 @@ export default function DeskAdministrationPage() {
               <>
                 Acc admin: <strong>{ADMIN_PANEL_USERNAME}</strong> · mk{" "}
                 <strong>{ADMIN_PANEL_PASSWORD}</strong>
+              </>
+            ) : picked.code === "TOURNAMENT" ? (
+              <>
+                Acc khu: <strong>PICKLEBALL</strong>
+                <br />
+                Acc admin khu: <strong>ADMINISTRATIONPICKLEBALL</strong> · mk{" "}
+                <strong>12345678</strong>
               </>
             ) : miaOlympicSector(picked.code) ? (
               <>
@@ -4745,6 +5507,33 @@ export default function DeskAdministrationPage() {
         .desk-actions {
           flex: 0 0 auto;
           max-width: 100%;
+        }
+        .desk-filters > div {
+          flex: 0 0 auto;
+        }
+        .desk-orders {
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+        .desk-order-row td {
+          transition: background 140ms ease;
+        }
+        .desk-order-row:hover td {
+          background: rgba(15, 23, 42, 0.035);
+        }
+        .desk-sheet-chip {
+          transition: background 180ms ease, color 180ms ease;
+        }
+        @keyframes desk-settle {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: none; }
+        }
+        .desk-empty {
+          animation: desk-settle 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .desk-empty { animation: none; }
+          .desk-order-row td, .desk-sheet-chip { transition: none; }
         }
         @media (max-width: 760px) {
           .desk-header {
@@ -4891,12 +5680,16 @@ export default function DeskAdministrationPage() {
       {zone ? (
         <div
           ref={listMenuRef}
+          className="desk-filters"
           style={{
             display: "flex",
             gap: 8,
             flexWrap: "wrap",
             justifyContent: "flex-end",
-            margin: "0 0 12px",
+            alignItems: "center",
+            width: "100%",
+            maxWidth: 1360,
+            margin: "0 auto 12px",
             position: "relative",
             zIndex: 20,
           }}
@@ -4986,7 +5779,7 @@ export default function DeskAdministrationPage() {
           ).map((menu) => {
             const open = listMenu === menu.id;
             return (
-              <div key={menu.id} style={{ position: "relative" }}>
+              <div key={menu.id} style={{ position: "relative", flex: "0 0 auto" }}>
                 <button
                   type="button"
                   aria-expanded={open}
@@ -5008,6 +5801,9 @@ export default function DeskAdministrationPage() {
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 8,
+                    width: "auto",
+                    flex: "0 0 auto",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   <span>{menu.value}</span>
@@ -5804,16 +6600,165 @@ export default function DeskAdministrationPage() {
 
       <div style={styles.sheet}>
         <div style={styles.sheetBar}>
-          <h2 style={styles.sheetTitle}>Đơn khách gửi</h2>
-          <span style={styles.sheetCount}>
-            {pendingApprovalCount} chờ thanh toán · {visibleTickets.length} dòng
-            {zone === "LONG_NUONG" && SHOW_LONG_NUONG_TABLE_MAP
-              ? " · mở «Sơ đồ bàn» trên header khi cần"
-              : ""}
-          </span>
+          <div style={{ minWidth: 0 }}>
+            <h2 style={styles.sheetTitle}>Đơn khách gửi</h2>
+            {zone === "LONG_NUONG" && SHOW_LONG_NUONG_TABLE_MAP ? (
+              <p style={styles.sheetHint}>Mở «Sơ đồ bàn» trên header khi cần.</p>
+            ) : viewDate ? null : (
+              <p style={styles.sheetHint}>Trong 12 giờ gần nhất</p>
+            )}
+          </div>
+          <div style={styles.sheetStats}>
+            <span
+              className="desk-sheet-chip"
+              style={{
+                ...styles.sheetChip,
+                ...(pendingApprovalCount > 0 ? styles.sheetChipHot : {}),
+              }}
+            >
+              {pendingApprovalCount} chờ thanh toán
+            </span>
+            <span className="desk-sheet-chip" style={styles.sheetChip}>
+              {visibleTickets.length} dòng
+            </span>
+            <button
+              type="button"
+              className="desk-sheet-chip"
+              style={{
+                ...styles.sheetChip,
+                cursor: "pointer",
+                font: "inherit",
+                fontSize: 12,
+                fontWeight: 800,
+                border: orderLogOpen ? "1px solid #0f766e" : "1px solid transparent",
+                background: orderLogOpen ? "#ecfdf5" : "#f1f5f9",
+                color: orderLogOpen ? "#047857" : "#475569",
+              }}
+              onClick={() => setOrderLogOpen((open) => !open)}
+            >
+              Nhật ký đơn · {dayOrderCount}
+            </button>
+          </div>
         </div>
+        {orderLogOpen ? (
+          <div
+            style={{
+              borderBottom: "1px solid #e2e8f0",
+              maxHeight: 280,
+              overflow: "auto",
+            }}
+          >
+            {dayOrderLog.length === 0 ? (
+              <p
+                style={{
+                  margin: 0,
+                  padding: "14px 16px",
+                  color: "#64748b",
+                  fontSize: 13,
+                }}
+              >
+                Chưa có đơn đã lưu trong ca này.
+              </p>
+            ) : (
+              dayOrderLog.map((row) => (
+                <button
+                  key={row.key}
+                  type="button"
+                  onClick={() => openLoggedOrder(row.customerId, row.orderId)}
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "4px 10px",
+                    alignItems: "baseline",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "10px 16px",
+                    border: "none",
+                    borderBottom: "1px solid #f1f5f9",
+                    background: row.status === "CANCELLED" ? "#f8fafc" : "#fff",
+                    cursor: "pointer",
+                    font: "inherit",
+                    color: row.status === "CANCELLED" ? "#94a3b8" : "#0f172a",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: "ui-monospace, monospace",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {row.time}
+                  </span>
+                  <span style={{ fontWeight: 700 }}>
+                    {row.guest}
+                    {row.phone ? (
+                      <span style={{ fontWeight: 500, color: "#64748b" }}>
+                        {" "}
+                        · {row.phone}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span style={{ flex: "1 1 160px", minWidth: 0 }}>
+                    {row.items}
+                  </span>
+                  <span style={{ fontWeight: 700 }}>{formatVnd(row.totalVnd)}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>
+                    {row.status === "CANCELLED"
+                      ? "Đã huỷ"
+                      : deskOrderStatusLabel(row.status)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        ) : null}
+        {visibleTickets.length === 0 ? (
+          <div className="desk-empty" style={styles.emptySheet}>
+            <div style={styles.emptyMark} aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M8 7h8M8 12h8M8 17h5"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+                <rect
+                  x="4"
+                  y="3"
+                  width="16"
+                  height="18"
+                  rx="3"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                />
+              </svg>
+            </div>
+            <p style={styles.emptyTitle}>
+              {viewDate
+                ? "Không có đơn trong ngày"
+                : (orderSorts.includes("staff") && staffQuery.trim()) ||
+                    (orderSorts.includes("name") && nameQuery.trim())
+                  ? "Không khớp từ khóa"
+                  : packageFilter || serviceFilter || orderFilter !== "all"
+                    ? "Không có đơn cho bộ lọc này"
+                    : "Chưa có đơn"}
+            </p>
+            <p style={styles.emptyText}>
+              {viewDate
+                ? `Không có khách vào hoặc yêu cầu tại ${zoneName} ngày ${viewDate.split("-").reverse().join("/")}.`
+                : (orderSorts.includes("staff") && staffQuery.trim()) ||
+                    (orderSorts.includes("name") && nameQuery.trim())
+                  ? "Không có đơn khớp từ khóa."
+                  : packageFilter
+                    ? "Không có đơn cho gói này."
+                    : serviceFilter || orderFilter !== "all"
+                      ? "Đổi bộ lọc để xem đơn khác."
+                      : `Khách gửi yêu cầu hoặc quét QR ${zoneName} sẽ hiện ở đây.`}
+            </p>
+          </div>
+        ) : (
         <div style={styles.tableWrap}>
-        <table style={styles.table}>
+        <table className="desk-orders" style={styles.table}>
           <thead>
             <tr>
               <th style={styles.th}>Họ tên</th>
@@ -5832,28 +6777,7 @@ export default function DeskAdministrationPage() {
             </tr>
           </thead>
           <tbody>
-            {visibleTickets.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={(hasCatalog ? 11 : 10) - (isMiaOi ? 1 : 0)}
-                  style={{ ...styles.td, color: "#64748b", padding: 28 }}
-                >
-                  {viewDate
-                    ? `Không có khách vào / yêu cầu tại ${zoneName} ngày ${viewDate.split("-").reverse().join("/")}.`
-                    : (orderSorts.includes("staff") && staffQuery.trim()) ||
-                        (orderSorts.includes("name") && nameQuery.trim())
-                      ? "Không có đơn khớp từ khóa."
-                      : packageFilter || serviceFilter
-                        ? packageFilter
-                          ? "Không có đơn cho gói này."
-                          : "Không có đơn cho bộ lọc này."
-                        : orderFilter !== "all"
-                        ? "Không có đơn cho bộ lọc này."
-                        : `Chưa có khách gửi yêu cầu / quét QR ${zoneName} trong 12 giờ.`}
-                </td>
-              </tr>
-            ) : (
-              visibleTickets.map((t) => {
+            {visibleTickets.map((t) => {
                 const a = t.arrival;
                 const needApprove = t.needsApproval;
                 const cartTok = t.cart?.token || "";
@@ -5868,6 +6792,7 @@ export default function DeskAdministrationPage() {
                 return (
                   <tr
                     key={t.key}
+                    className="desk-order-row"
                     style={{
                       background: needApprove
                         ? "#fff7ed"
@@ -6208,11 +7133,11 @@ export default function DeskAdministrationPage() {
                     )}
                   </tr>
                 );
-              })
-            )}
+              })}
           </tbody>
         </table>
         </div>
+        )}
       </div>
 
       {selected ? (
@@ -7951,8 +8876,9 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 1360,
     margin: "0 auto",
     background: "#fff",
-    borderRadius: 18,
-    boxShadow: "0 10px 30px rgba(15,23,42,.06)",
+    border: "1px solid #e2e8f0",
+    borderRadius: 20,
+    boxShadow: "0 10px 28px rgba(15,23,42,.05)",
   },
   sheetBar: {
     position: "sticky",
@@ -7960,28 +8886,80 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 6,
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 12,
-    padding: "14px 16px",
+    padding: "16px 18px",
     background: "#fff",
-    borderBottom: "1px solid #f1f5f9",
-    borderRadius: "18px 18px 0 0",
   },
   sheetTitle: {
     margin: 0,
-    flex: "1 1 auto",
     minWidth: 0,
+    fontSize: 18,
+    fontWeight: 800,
+    letterSpacing: "-0.02em",
+    lineHeight: 1.2,
+    color: "#0f172a",
+  },
+  sheetHint: {
+    margin: "4px 0 0",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#94a3b8",
+  },
+  sheetStats: {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  sheetChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    height: 28,
+    padding: "0 10px",
+    borderRadius: 999,
+    background: "#f1f5f9",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 800,
+    whiteSpace: "nowrap" as const,
+  },
+  sheetChipHot: {
+    background: "#fff7ed",
+    color: "#c2410c",
+  },
+  emptySheet: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    textAlign: "center" as const,
+    gap: 6,
+    padding: "36px 24px 44px",
+    borderTop: "1px solid #f1f5f9",
+  },
+  emptyMark: {
+    display: "grid",
+    placeItems: "center",
+    width: 48,
+    height: 48,
+    marginBottom: 6,
+    borderRadius: 16,
+    background: "#f8fafc",
+    color: "#64748b",
+    border: "1px solid #e2e8f0",
+  },
+  emptyTitle: {
+    margin: 0,
     fontSize: 16,
     fontWeight: 800,
-    lineHeight: 1.3,
+    color: "#0f172a",
   },
-  sheetCount: {
-    flex: "0 1 auto",
-    maxWidth: "48%",
+  emptyText: {
+    margin: 0,
+    maxWidth: 420,
     fontSize: 13,
-    lineHeight: 1.35,
+    lineHeight: 1.5,
     color: "#64748b",
-    textAlign: "right",
   },
   tableWrap: {
     overflow: "auto",
@@ -8023,16 +9001,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   th: {
     textAlign: "left",
-    padding: "12px 16px",
+    padding: "11px 14px",
     background: "#f8fafc",
     borderBottom: "1px solid #e2e8f0",
+    borderTop: "1px solid #f1f5f9",
     fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
+    fontWeight: 700,
+    letterSpacing: "-0.01em",
     color: "#64748b",
+    whiteSpace: "nowrap",
   },
   td: {
-    padding: "14px 16px",
+    padding: "13px 14px",
     borderBottom: "1px solid #f1f5f9",
     verticalAlign: "middle",
   },

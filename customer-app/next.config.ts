@@ -4,8 +4,9 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   compress: true,
+  serverExternalPackages: ["qrcode"],
   experimental: {
-    optimizePackageImports: ["qrcode", "html5-qrcode"],
+    optimizePackageImports: ["html5-qrcode"],
   },
   images: {
     unoptimized: true, // QR data URLs / static PNGs — skip optimizer latency

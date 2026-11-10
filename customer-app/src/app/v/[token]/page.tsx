@@ -3,11 +3,14 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
+import { fetchQrDataUrl } from "@/lib/qr-data-url";
 
 type PassView = {
   token: string;
   offerTitle: string;
   zoneCode: string;
+  placeLabel?: string | null;
+  detail?: string | null;
   status: string;
   scannedAt: string | null;
   scannedByName: string | null;
@@ -28,6 +31,7 @@ export default function VoucherQrPage({
 
   useEffect(() => {
     let cancelled = false;
+    let timer = 0;
     const load = async () => {
       const res = await fetch(`/api/voucher-pass/${encodeURIComponent(token)}`, {
         cache: "no-store",
@@ -35,15 +39,37 @@ export default function VoucherQrPage({
       const data = await res.json();
       if (!res.ok) {
         if (!cancelled) setError(data.error || "QR không hợp lệ");
-        return;
+        return null;
       }
       if (!cancelled) setPass(data.pass);
+      return String(data.pass?.status || "");
     };
-    void load();
-    const id = window.setInterval(() => void load(), 2000);
+    const schedule = (status: string | null) => {
+      if (cancelled || (status && status !== "OPEN")) return;
+      timer = window.setTimeout(() => {
+        if (document.visibilityState === "hidden") {
+          schedule(status);
+          return;
+        }
+        void load()
+          .then((next) => {
+            if (next !== null) schedule(next);
+          })
+          .catch(() => {
+            if (!cancelled) schedule(status || "OPEN");
+          });
+      }, status ? 8000 : 2000);
+    };
+    void load()
+      .then((status) => {
+        if (status !== null) schedule(status);
+      })
+      .catch(() => {
+        if (!cancelled) schedule("OPEN");
+      });
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      window.clearTimeout(timer);
     };
   }, [token]);
 
@@ -56,12 +82,12 @@ export default function VoucherQrPage({
     }
     let cancelled = false;
     (async () => {
-      const QRCode = (await import("qrcode")).default;
       const payload = `${window.location.origin}/v/${encodeURIComponent(token)}`;
-      const url = await QRCode.toDataURL(payload, {
+      const url = await fetchQrDataUrl(payload, {
         width: 280,
         margin: 2,
-        color: { dark: "#0b1220", light: "#ffffff" },
+        dark: "#0b1220",
+        light: "#ffffff",
       });
       if (!cancelled) setQrDataUrl(url);
     })().catch(() => undefined);
@@ -86,13 +112,23 @@ export default function VoucherQrPage({
           <>
             <div className="rounded-[28px] bg-oasis-ink p-5 text-oasis-sand shadow-soft">
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-oasis-gold">
-                {pass.zoneCode === "LONG_NUONG" ? "Lòng Nướng Chí Phèo" : "Oasis Spa"}
+                {pass.placeLabel ||
+                  (pass.zoneCode === "LONG_NUONG"
+                    ? "Lòng Nướng Chí Phèo"
+                    : "Oasis Spa")}
                 {" · "}
-                {pass.status === "SCANNED" ? "ĐÃ QUÉT" : "CHỜ QUÉT"}
+                {pass.status === "SCANNED"
+                  ? "ĐÃ QUÉT"
+                  : pass.status === "EXPIRED"
+                    ? "HẾT HẠN"
+                    : "CHỜ QUÉT"}
               </p>
               <p className="mt-2 font-display text-2xl font-semibold">
                 {pass.offerTitle}
               </p>
+              {pass.detail ? (
+                <p className="mt-1 text-sm text-oasis-sand/80">{pass.detail}</p>
+              ) : null}
               <p className="mt-1 text-sm text-oasis-gold">
                 {pass.customerName || "Khách"}
                 {pass.customerCode ? ` · ${pass.customerCode}` : ""}
@@ -119,12 +155,21 @@ export default function VoucherQrPage({
               </div>
             ) : (
               <p className="rounded-[22px] bg-white p-4 text-center text-sm font-semibold text-oasis-moss shadow-soft">
-                Voucher đã được quét
-                {pass.scannedAt
-                  ? ` lúc ${new Date(pass.scannedAt).toLocaleString("vi-VN")}`
-                  : ""}
-                {pass.scannedByName ? ` · ${pass.scannedByName}` : ""}. Đã gỡ
-                khỏi ví.
+                {pass.zoneCode === "TOURNAMENT"
+                  ? pass.status === "EXPIRED"
+                    ? "Voucher hết hiệu lực sau ngày giải."
+                    : `Voucher đã được dùng${
+                        pass.scannedAt
+                          ? ` lúc ${new Date(pass.scannedAt).toLocaleString("vi-VN")}`
+                          : ""
+                      }${pass.scannedByName ? ` · ${pass.scannedByName}` : ""}.`
+                  : `Voucher đã được quét${
+                      pass.scannedAt
+                        ? ` lúc ${new Date(pass.scannedAt).toLocaleString("vi-VN")}`
+                        : ""
+                    }${
+                      pass.scannedByName ? ` · ${pass.scannedByName}` : ""
+                    }. Đã gỡ khỏi ví.`}
               </p>
             )}
             <Link

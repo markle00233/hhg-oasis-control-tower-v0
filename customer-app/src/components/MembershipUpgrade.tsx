@@ -28,6 +28,7 @@ export function MembershipUpgrade({
   locked,
   planLabel,
   expiresLabel,
+  onAwaitingPayment,
 }: {
   currentTier?: MembershipTier | null;
   customerName?: string;
@@ -35,6 +36,8 @@ export function MembershipUpgrade({
   locked?: boolean;
   planLabel?: string | null;
   expiresLabel?: string | null;
+  /** Home keeps refreshing the account only while this purchase is open. */
+  onAwaitingPayment?: (waiting: boolean) => void;
 }) {
   const [busyTier, setBusyTier] = useState<MembershipTier | null>(null);
   const [error, setError] = useState("");
@@ -72,6 +75,14 @@ export function MembershipUpgrade({
       cancelled = true;
     };
   }, [customerName]);
+
+  useEffect(() => {
+    onAwaitingPayment?.(success != null);
+  }, [success, onAwaitingPayment]);
+
+  useEffect(() => {
+    return () => onAwaitingPayment?.(false);
+  }, [onAwaitingPayment]);
 
   const profileReady = !!(profile?.fullName && profile?.phone);
   const isLocked = !!locked;

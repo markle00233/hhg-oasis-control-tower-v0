@@ -5,7 +5,7 @@ import { packageIdFromVipPlanLabel, vouchersClaimableAtZone } from "@/lib/hhg-vo
 import { monthPackageFilters } from "@/lib/olympic-pool-menu";
 import { SWIM_PACKAGES, swimBonusExpiresAt } from "@/lib/swim-packages";
 
-type Sector = "vip" | "swim" | "spa" | "grill";
+type Sector = "vip" | "swim" | "spa" | "grill" | "tournament";
 
 type Subscriber = {
   id: string;
@@ -41,10 +41,19 @@ type RedeemedVoucher = {
   id: string;
   at: string;
   offerTitle: string | null;
+  tournamentName?: string | null;
+  placeLabel?: string | null;
   phone: string | null;
   customerName: string | null;
   claimedByName: string | null;
 };
+
+const TOURNAMENT_PLACES: FilterChoice[] = [
+  { id: "MIA_OI", label: "Mía Ơi" },
+  { id: "OLYMPIC_POOL", label: "Olympic" },
+  { id: "SPA", label: "Spa" },
+  { id: "LONG_NUONG", label: "Lòng Nướng" },
+];
 
 const REDEEM_ZONE: Record<"spa" | "grill", string> = {
   spa: "SAUNA",
@@ -282,6 +291,32 @@ export function DeskVipSubscribers({
     }
   }, []);
 
+  const loadTournament = useCallback(async () => {
+    const seq = ++listReq.current;
+    setError("");
+    setRedeemed(null);
+    try {
+      const res = await fetch("/api/crm/desk/tournament-vouchers", {
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (seq !== listReq.current) return;
+      if (res.status === 401 || res.status === 403) {
+        setRedeemed(null);
+        setError(data.error || "Phiên đăng nhập đã hết. Chọn lại khu.");
+        return;
+      }
+      if (!res.ok) {
+        setError(data.error || "Không tải được voucher đã đổi.");
+        return;
+      }
+      setRedeemed(Array.isArray(data.logs) ? data.logs : []);
+    } catch {
+      if (seq !== listReq.current) return;
+      setError("Không tải được voucher đã đổi.");
+    }
+  }, []);
+
   useEffect(() => {
     setGoi("");
     setSorts(["time-desc"]);
@@ -312,10 +347,12 @@ export function DeskVipSubscribers({
       void loadVip().catch(() => setError("Không tải được danh sách."));
     } else if (sector === "swim") {
       void loadSwim().catch(() => setError("Không tải được danh sách học viên."));
+    } else if (sector === "tournament") {
+      void loadTournament().catch(() => setError("Không tải được voucher đã đổi."));
     } else {
       void loadRedeemed(sector);
     }
-  }, [sector, loadVip, loadSwim, loadRedeemed]);
+  }, [sector, loadVip, loadSwim, loadRedeemed, loadTournament]);
 
   async function openLog(person: SwimStudent) {
     setLogFor({
@@ -351,6 +388,13 @@ export function DeskVipSubscribers({
         SWIM_PACKAGE_FILTERS,
         (students || []).map((row) => row.packageLabel),
         (label) => known.has(label)
+      );
+    }
+    if (sector === "tournament") {
+      return withExtras(
+        TOURNAMENT_PLACES,
+        (redeemed || []).map((row) => row.placeLabel || ""),
+        (label) => TOURNAMENT_PLACES.some((place) => place.label === label)
       );
     }
     const zone = sector === "spa" ? "SAUNA" : "LONG_NUONG";
@@ -415,7 +459,11 @@ export function DeskVipSubscribers({
   const redeemedShown = ordered(
     (redeemed || [])
       .filter((row) =>
-        labelSelected(row.offerTitle || "Voucher", selectedGoi, packageChoices)
+        labelSelected(
+          sector === "tournament" ? row.placeLabel || "" : row.offerTitle || "Voucher",
+          selectedGoi,
+          packageChoices
+        )
       )
       .filter((row) => matchesQuery(row.customerName || "Khách", row.claimedByName))
       .map((row) => ({
@@ -433,7 +481,9 @@ export function DeskVipSubscribers({
         ? "Không có học viên cho gói này."
         : sector === "vip"
           ? "Không có khách cho gói này."
-          : "Không có lượt đổi cho voucher này.";
+          : sector === "tournament"
+        ? "Không có lượt đổi tại khu này."
+        : "Không có lượt đổi cho voucher này.";
   const sourceCount =
     sector === "vip"
       ? rows?.length || 0
@@ -450,7 +500,9 @@ export function DeskVipSubscribers({
         ? "Khách học bơi"
         : sector === "spa"
           ? "Voucher Spa đã đổi"
-          : "Voucher Lòng Nướng đã đổi";
+          : sector === "grill"
+            ? "Voucher Lòng Nướng đã đổi"
+            : "Voucher giải đấu đã đổi";
   const subtitle =
     sector === "vip"
       ? rows
@@ -525,6 +577,20 @@ export function DeskVipSubscribers({
                 }}
               >
                 Voucher Lòng Nướng
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.pill,
+                  ...(sector === "tournament" ? styles.pillOn : null),
+                }}
+                onClick={() => {
+                  setGoi("");
+                  setRedeemed(null);
+                  setSector("tournament");
+                }}
+              >
+                Voucher giải đấu
               </button>
             </div>
             <p style={styles.mute}>{subtitle}</p>
@@ -784,7 +850,13 @@ export function DeskVipSubscribers({
                     <td style={styles.td}>{row.claimedByName || "—"}</td>
                     <td style={styles.td}>{row.phone || "—"}</td>
                     <td style={styles.td}>{formatWhen(row.at)}</td>
-                    <td style={styles.td}>{row.offerTitle || "Voucher"}</td>
+                    <td style={styles.td}>
+                      {sector === "tournament"
+                        ? [row.placeLabel, row.offerTitle, row.tournamentName]
+                            .filter(Boolean)
+                            .join(" · ") || "Voucher"
+                        : row.offerTitle || "Voucher"}
+                    </td>
                   </tr>
                   ))
                 )}

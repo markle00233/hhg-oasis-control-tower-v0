@@ -6,7 +6,7 @@ import {
   toSafeUser,
 } from "@/lib/auth";
 import { parseCartPromo } from "@/lib/cart-promo";
-import { CART_STATUS, isPastVnCutOff } from "@/lib/cart-status";
+import { CART_STATUS } from "@/lib/cart-status";
 import {
   DESK_ZONES,
   deskZoneAliases,
@@ -17,19 +17,11 @@ import {
   customerHasLoginAccount,
   deskSegmentOf,
 } from "@/lib/desk-segment";
-import {
-  isOlympicPackageId,
-  OLYMPIC_PACKAGE_IDS,
-  vipStartedAtFromExpiry,
-} from "@/lib/olympic-membership";
+import { vipStartedAtFromExpiry } from "@/lib/olympic-membership";
 import { phoneKeys } from "@/lib/swim-goi-bonus";
 import { swimBonusStartedAfter } from "@/lib/swim-packages";
 import { prisma } from "@/lib/prisma";
-import {
-  bookingIdFromCartItems,
-  formatVnDateTime,
-  withVnBookingClock,
-} from "@/lib/revise-booking";
+import { bookingIdFromCartItems, withVnBookingClock } from "@/lib/revise-booking";
 
 const STAFF_ID_KEYS = [
   "verifiedByUserId",
@@ -64,108 +56,6 @@ async function rememberStaffNames(ids: Set<string>) {
   }
 }
 
-let vipStartBackfillRunning = false;
-
-/** Ghi vipStartedAt sau khi trả bảng quầy — không chặn Tạo đơn / xác nhận. */
-function scheduleVipStartBackfill(customerIds: string[]) {
-  if (!customerIds.length || vipStartBackfillRunning) return;
-  vipStartBackfillRunning = true;
-  void (async () => {
-    try {
-      const customers = await prisma.appCustomer.findMany({
-        where: {
-          id: { in: customerIds },
-          vipStartedAt: null,
-        },
-        select: {
-          id: true,
-          phoneNormalized: true,
-          vipExpiresAt: true,
-          vipPlanLabel: true,
-        },
-      });
-      if (!customers.length) return;
-      const packageStart = new Map<string, Date>();
-      const orders = await prisma.appOrder.findMany({
-        where: {
-          customerId: { in: customers.map((c) => c.id) },
-          status: { not: "CANCELLED" },
-          items: { some: { itemId: { in: [...OLYMPIC_PACKAGE_IDS] } } },
-        },
-        select: { customerId: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
-      });
-      for (const order of orders) {
-        if (!packageStart.has(order.customerId)) {
-          packageStart.set(order.customerId, order.createdAt);
-        }
-      }
-      const missingAfterOrders = customers
-        .map((c) => c.id)
-        .filter((id) => !packageStart.has(id));
-      if (missingAfterOrders.length) {
-        const carts = await prisma.appServiceCart.findMany({
-          where: {
-            customerId: { in: missingAfterOrders },
-            status: { notIn: ["CANCELLED", "REJECTED"] },
-          },
-          select: { customerId: true, createdAt: true, items: true },
-          orderBy: { createdAt: "desc" },
-        });
-        for (const cart of carts) {
-          if (packageStart.has(cart.customerId)) continue;
-          const items = Array.isArray(cart.items) ? cart.items : [];
-          const bought = items.some((row) => {
-            if (!row || typeof row !== "object") return false;
-            return isOlympicPackageId(String((row as { id?: string }).id || ""));
-          });
-          if (bought) packageStart.set(cart.customerId, cart.createdAt);
-        }
-      }
-      const missingAfterCarts = customers
-        .map((c) => c.id)
-        .filter((id) => !packageStart.has(id));
-      if (missingAfterCarts.length) {
-        const offers = await prisma.appCollectedOffer.findMany({
-          where: {
-            customerId: { in: missingAfterCarts },
-            offerId: { startsWith: "hhg-oly-" },
-          },
-          select: { customerId: true, collectedAt: true },
-          orderBy: { collectedAt: "desc" },
-        });
-        for (const offer of offers) {
-          if (!packageStart.has(offer.customerId)) {
-            packageStart.set(offer.customerId, offer.collectedAt);
-          }
-        }
-      }
-      await Promise.all(
-        customers.map(async (c) => {
-          const start =
-            packageStart.get(c.id) ||
-            (c.vipExpiresAt
-              ? vipStartedAtFromExpiry(c.vipExpiresAt, c.vipPlanLabel)
-              : null);
-          if (!start) return;
-          await prisma.appCustomer
-            .updateMany({
-              where: { id: c.id, vipStartedAt: null },
-              data: { vipStartedAt: start },
-            })
-            .catch((err) => {
-              console.error("[desk] vip start backfill", err);
-            });
-        })
-      );
-    } catch (err) {
-      console.error("[desk] vip start backfill", err);
-    } finally {
-      vipStartBackfillRunning = false;
-    }
-  })();
-}
-
 function staffFromMeta(meta: Record<string, unknown>) {
   const written =
     typeof meta.staffName === "string" ? meta.staffName.trim() : "";
@@ -184,6 +74,44 @@ function vnDayBounds(ymd: string) {
   const start = new Date(`${ymd}T00:00:00+07:00`);
   const end = new Date(`${ymd}T24:00:00+07:00`);
   return { start, end };
+}
+
+/** Carts and scans in the window, then the desk loads those customers. */
+async function recentDeskCustomerIds(opts: {
+  aliases: string[];
+  since: Date;
+  cartSince: Date;
+  dayEnd: Date | null;
+}) {
+  const windowFor = (gte: Date) => ({
+    gte,
+    ...(opts.dayEnd ? { lt: opts.dayEnd } : {}),
+  });
+  const [carts, events] = await Promise.all([
+    prisma.appServiceCart.findMany({
+      where: {
+        createdAt: windowFor(opts.cartSince),
+        zoneCode: { in: opts.aliases },
+      },
+      select: { customerId: true },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+    }),
+    prisma.appServiceEvent.findMany({
+      where: {
+        createdAt: windowFor(opts.since),
+        eventType: "SERVICE_USE",
+        service: { serviceCode: { in: opts.aliases } },
+      },
+      select: { customerId: true },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+    }),
+  ]);
+  const ids = new Set<string>();
+  for (const row of carts) ids.add(row.customerId);
+  for (const row of events) ids.add(row.customerId);
+  return [...ids];
 }
 
 export async function GET(req: NextRequest) {
@@ -206,7 +134,6 @@ export async function GET(req: NextRequest) {
   let dayStart = new Date();
   dayStart.setHours(0, 0, 0, 0);
   let dayEnd: Date | null = null;
-  const now = new Date();
   if (viewDate) {
     const bounds = vnDayBounds(viewDate);
     dayStart = bounds.start;
@@ -251,141 +178,31 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Auto NO_SHOW chỉ khi xem realtime (không đụng dữ liệu ngày lịch sử)
-    // Quá 21:30 VN (hồ/resort) hoặc hết expiresAt → NO_SHOW
-    if (!viewDate) {
-      const poolLike =
-        zone === "OLYMPIC_POOL" ||
-        zone === "RESORT_POOL" ||
-        aliases.includes("OLYMPIC_POOL");
-      const noShowWhere = {
-        zoneCode: { in: aliases },
-        status: { in: [CART_STATUS.PENDING, CART_STATUS.OPEN] },
-        createdAt: { gte: poolLike && isPastVnCutOff(now) ? since : cartSince },
-        ...(poolLike && isPastVnCutOff(now)
-          ? {}
-          : { expiresAt: { lt: now } }),
-      };
-      void prisma.appServiceCart
-        .updateMany({
-          where: noShowWhere,
-          data: { status: CART_STATUS.NO_SHOW },
-        })
-        .catch(() => undefined);
-    }
-
-    /**
-     * Lòng Nướng: booking đã tạo nhưng thiếu cart PENDING → backfill để NV duyệt được.
-     */
-    if (zone === "LONG_NUONG" && !viewDate) {
-      try {
-        const { createServiceCart } = await import("@/lib/service-cart");
-        const orphanBookings = await prisma.appBooking.findMany({
-          where: {
-            createdAt: { gte: since },
-            status: {
-              in: ["PENDING", "CONFIRMED", "ARRIVED", "CHECKED_IN"],
-            },
-            customerId: { not: null },
-            service: { serviceCode: "LONG_NUONG" },
-          },
-          take: 40,
-          orderBy: { createdAt: "desc" },
-          include: {
-            resource: { select: { id: true, code: true, name: true } },
-            customer: { select: { id: true } },
-          },
-        });
-        const pending = orphanBookings.filter((b) => b.customerId && b.resource);
-        const carts = pending.length
-          ? await prisma.appServiceCart.findMany({
-              where: {
-                customerId: {
-                  in: [...new Set(pending.map((b) => b.customerId as string))],
-                },
-                zoneCode: "LONG_NUONG",
-                createdAt: { gte: since },
-              },
-              select: { customerId: true, items: true },
-            })
-          : [];
-        const notesByCustomer = new Map<string, string>();
-        for (const cart of carts) {
-          const items = Array.isArray(cart.items) ? cart.items : [];
-          const notes = items
-            .map((it) =>
-              it && typeof it === "object"
-                ? String((it as { note?: string }).note || "")
-                : ""
-            )
-            .join("\n");
-          notesByCustomer.set(
-            cart.customerId,
-            `${notesByCustomer.get(cart.customerId) || ""}\n${notes}`
-          );
-        }
-        await Promise.all(
-          pending.map(async (b) => {
-            const tag = `bookingId:${b.id}`;
-            if ((notesByCustomer.get(b.customerId as string) || "").includes(tag)) {
-              return;
-            }
-            const arriveLabel = formatVnDateTime(b.startAt);
-            await createServiceCart({
-              customerId: b.customerId as string,
-              zoneCode: "LONG_NUONG",
-              zoneName: "Lòng Nướng Chí Phèo",
-              items: [
-                {
-                  id: `table-${b.resource!.code}`,
-                  nameVi: `${b.resource!.name} · ${arriveLabel}`,
-                  qty: 1,
-                  priceVnd: 0,
-                  note: `resourceId:${b.resource!.id}|bookingId:${b.id}|code:${b.bookingCode}`,
-                },
-              ],
-              ttlHours: 48,
-            });
-          })
-        );
-      } catch (err) {
-        console.error("[crm/desk long-nuong backfill]", err);
-      }
-    }
-
     /**
      * Khách có cart hoặc lần quét trong ca phải hiện — kể cả đơn khách lẻ không SĐT.
+     * Tìm id từ cart/scan trước, rồi mới đọc khách. Tránh OR trên hai quan hệ.
      */
-    const rows = await prisma.appCustomer.findMany({
-      where: {
-        OR: [
-          {
-            serviceCarts: {
-              some: {
-                createdAt: {
-                  gte: cartSince,
-                  ...(dayEnd ? { lt: dayEnd } : {}),
-                },
-                zoneCode: { in: aliases },
-              },
-            },
-          },
-          {
-            events: {
-              some: {
-                createdAt: {
-                  gte: since,
-                  ...(dayEnd ? { lt: dayEnd } : {}),
-                },
-                eventType: "SERVICE_USE",
-                service: { serviceCode: { in: aliases } },
-              },
-            },
-          },
-        ],
-      },
+    const customerIds = await recentDeskCustomerIds({
+      aliases,
+      since,
+      cartSince,
+      dayEnd,
+    });
+    const pickedIds =
+      customerIds.length <= 150
+        ? customerIds
+        : (
+            await prisma.appCustomer.findMany({
+              where: { id: { in: customerIds } },
+              orderBy: { updatedAt: "desc" },
+              take: 150,
+              select: { id: true },
+            })
+          ).map((row) => row.id);
+    const rows = pickedIds.length
+      ? await prisma.appCustomer.findMany({
+      where: { id: { in: pickedIds } },
       orderBy: { updatedAt: "desc" },
-      take: 150,
       select: {
         id: true,
         customerCode: true,
@@ -505,7 +322,8 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-    });
+    })
+      : [];
 
     const phones = rows
       .map((r) => r.phoneNormalized)
@@ -580,7 +398,6 @@ export async function GET(req: NextRequest) {
           : null);
       if (start) packageStart.set(c.id, start);
     }
-    scheduleVipStartBackfill(vipMissingStart.map((c) => c.id));
 
       const bonusByPhone = new Map<string, number>();
       if (zone === "SAUNA" || miaOlympicSector(zone)) {

@@ -7,6 +7,8 @@ import {
 } from "@/lib/desk-segment";
 import { findCustomerByIdentityToken } from "@/lib/identity-qr";
 import { prisma } from "@/lib/prisma";
+import { voucherPassFromScan } from "@/lib/tournament";
+import { redeemTournamentVoucherScan } from "@/lib/tournament-redeem";
 import { redeemVoucherScan, voucherTokenFromScan } from "@/lib/voucher-redeem";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +33,54 @@ export async function POST(req: NextRequest) {
 
     const aliases = deskZoneAliases(zone);
     const now = new Date();
+
+    if (voucherPassFromScan(raw)) {
+      try {
+        const redeemed = await redeemTournamentVoucherScan({
+          raw,
+          deskZone: zone,
+          staffName: gate.user.displayName || gate.user.username,
+        });
+        if (!redeemed) {
+          return NextResponse.json(
+            { error: "QR voucher không hợp lệ." },
+            { status: 404 }
+          );
+        }
+        return NextResponse.json({
+          ok: true,
+          mode: "VOUCHER",
+          already: redeemed.already,
+          voucher: {
+            offerTitle: redeemed.title,
+            zoneCode: redeemed.zoneLabel,
+            status: "SCANNED",
+            scannedAt: redeemed.redeemedAt,
+            scannedByName: gate.user.displayName || gate.user.username,
+          },
+          log: {
+            at: redeemed.redeemedAt,
+            offerTitle: redeemed.title,
+          },
+          customer: {
+            id: redeemed.customer.id,
+            customerCode: redeemed.customer.customerCode,
+            fullName: redeemed.customer.fullName,
+            phone: redeemed.customer.phone,
+            shortId:
+              redeemed.customer.shortId || redeemed.customer.phoneLast4,
+          },
+        });
+      } catch (err) {
+        const status =
+          typeof err === "object" && err && "status" in err
+            ? Number((err as { status?: number }).status) || 400
+            : 500;
+        const message =
+          err instanceof Error ? err.message : "Không dùng được voucher.";
+        return NextResponse.json({ error: message }, { status });
+      }
+    }
 
     if (voucherTokenFromScan(raw)) {
       try {

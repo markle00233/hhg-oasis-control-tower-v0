@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
-import { getSessionCustomer } from "@/lib/session";
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { CUSTOMER_COOKIE, getSessionCustomer } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
   packageIdFromTier,
@@ -17,7 +18,41 @@ import {
 export const preferredRegion = "sin1";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+const ME_TTL_MS = 15_000;
+const meCache = new Map<string, { exp: number; body: unknown }>();
+
+function readCachedMe(token: string) {
+  const hit = meCache.get(token);
+  if (!hit) return null;
+  if (hit.exp <= Date.now()) {
+    meCache.delete(token);
+    return null;
+  }
+  return hit.body;
+}
+
+function storeCachedMe(token: string, body: unknown) {
+  const now = Date.now();
+  for (const [key, hit] of meCache) {
+    if (hit.exp <= now) meCache.delete(key);
+  }
+  meCache.delete(token);
+  meCache.set(token, { exp: now + ME_TTL_MS, body });
+  while (meCache.size > 400) {
+    const oldest = meCache.keys().next().value;
+    if (!oldest) break;
+    meCache.delete(oldest);
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const fresh = req.nextUrl.searchParams.get("fresh") === "1";
+  const token = (await cookies()).get(CUSTOMER_COOKIE)?.value || "";
+  if (!fresh && token) {
+    const cached = readCachedMe(token);
+    if (cached) return NextResponse.json(cached);
+  }
+
   const customer = await getSessionCustomer();
   if (!customer) {
     return NextResponse.json({ authenticated: false, customer: null });
@@ -97,7 +132,7 @@ export async function GET() {
     ? packageIdFromTier(membershipTier)
     : null;
 
-  return NextResponse.json({
+  const body = {
     authenticated: true,
     customer: {
       id: customer.id,
@@ -126,5 +161,7 @@ export async function GET() {
       /** −10% gói tháng nếu đã có đơn vé bơi hôm nay */
       sameDayMembershipDiscount,
     },
-  });
+  };
+  if (token) storeCachedMe(token, body);
+  return NextResponse.json(body);
 }

@@ -6,6 +6,15 @@ import { Shell } from "@/components/Shell";
 
 type Phase = "login" | "signup" | "confirm";
 
+/** Only the printed check-in QR may send someone back here after login. */
+function homeAfterAuth() {
+  const next = new URLSearchParams(window.location.search).get("next") || "";
+  if (next.startsWith("/t/") && !next.startsWith("//") && !next.includes("\\")) {
+    return next;
+  }
+  return "/home";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("login");
@@ -30,7 +39,7 @@ export default function LoginPage() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Đăng nhập thất bại");
-    router.replace("/home");
+    router.replace(homeAfterAuth());
   }
 
   async function onLogin(e: FormEvent) {
@@ -87,7 +96,7 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không tạo được tài khoản.");
-      router.replace("/home");
+      router.replace(homeAfterAuth());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tạo được tài khoản.");
     } finally {

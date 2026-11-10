@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import { fetchQrDataUrl } from "@/lib/qr-data-url";
 
 type Service = {
   serviceCode: string;
@@ -25,13 +26,13 @@ export default function DevQrPage() {
         const list: Service[] = data.services || [];
         setServices(list);
 
-        const QRCode = (await import("qrcode")).default;
         const map: Record<string, string> = {};
         for (const s of list) {
-          map[s.serviceCode] = await QRCode.toDataURL(s.scanUrl, {
+          map[s.serviceCode] = await fetchQrDataUrl(s.scanUrl, {
             margin: 1,
             width: 240,
-            color: { dark: "#0C1F1A", light: "#FFFFFF" },
+            dark: "#0C1F1A",
+            light: "#FFFFFF",
           });
         }
         if (!cancelled) setQrs(map);

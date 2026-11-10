@@ -750,6 +750,8 @@ model AppCustomer {
   offerClaimLogs   AppOfferClaimLog[]
   voucherRedemptions AppVoucherRedemption[]
   vipChoiceLogs    AppVipChoiceLog[]
+  tournamentCheckIns AppTournamentCheckIn[]
+  tournamentVouchers AppTournamentVoucher[]
 
   @@index([status])
   @@index([createdAt])
@@ -1164,4 +1166,128 @@ model AppSwimBonusLog {
 
   @@index([studentId, usedAt])
   @@map("app_swim_bonus_logs")
+}
+
+// ─── Giải đấu (athlete check-in + one event-day voucher) ──────
+// Check-in is attendance. The voucher is issued once per athlete.
+// They redeem it once, at any of Mía Ơi, Olympic, Spa, or Lòng Nướng.
+
+model AppTournament {
+  id          String   @id @default(cuid())
+  name        String
+  /// Inclusive start of the event window (Asia/Ho_Chi_Minh).
+  startsAt    DateTime
+  /// Exclusive end. Voucher and check-in are valid only inside [startsAt, endsAt).
+  endsAt      DateTime
+  /// UPCOMING | LIVE | ENDED
+  status      String   @default("UPCOMING")
+  /// Opaque QR token (tq_…) printed for athlete check-in. Not a customer QR.
+  checkInToken String  @unique
+  /// Court, e.g. Sân 2. Display only.
+  court       String?
+  /// Clock time on the event day, HH:mm. Display only; the voucher still covers the whole day.
+  eventTime   String?
+  /// First announced day. Kept when staff move the event, so the desk can show "dời về …".
+  originalStartsAt DateTime?
+  /// First announced clock, HH:mm. Null when the event was created without a time.
+  originalEventTime String?
+  summary     String?
+  /// One athlete voucher. Same amount at every sector. 0 = no voucher.
+  discountVnd          Int @default(50000)
+  /// Unused. Kept so older rows still load. The form writes discountVnd only.
+  miaOiDiscountVnd     Int @default(50000)
+  olympicDiscountVnd   Int @default(0)
+  spaDiscountVnd       Int @default(0)
+  longNuongDiscountVnd Int @default(30000)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  checkIns AppTournamentCheckIn[]
+  vouchers AppTournamentVoucher[]
+  assets   AppTournamentAsset[]
+
+  @@index([status, startsAt])
+  @@index([startsAt])
+  @@map("app_tournaments")
+}
+
+/// One attendance row per athlete per event. This is "giải tôi đã tham gia".
+model AppTournamentCheckIn {
+  id            String        @id @default(cuid())
+  tournamentId  String
+  tournament    AppTournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  customerId    String
+  customer      AppCustomer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// QR | STAFF | APP
+  source        String        @default("QR")
+  /// REGISTERED Tham gia | PRESENT Có mặt | NO_SHOW Không đến | CANCELLED Đã hủy
+  attendance    String        @default("REGISTERED")
+  /// Set only when the athlete checks in.
+  checkedInAt   DateTime?
+  createdAt     DateTime      @default(now())
+  checkedByName String?
+
+  @@unique([tournamentId, customerId])
+  @@index([customerId, checkedInAt])
+  @@map("app_tournament_check_ins")
+}
+
+/// One voucher per athlete per event. Redeemed once, at any sector.
+model AppTournamentVoucher {
+  id           String        @id @default(cuid())
+  tournamentId String
+  tournament   AppTournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     AppCustomer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// ISSUED | REDEEMED | EXPIRED
+  status       String        @default("ISSUED")
+  /// Opaque one-time staff QR (tv_…). Null until the athlete opens the card.
+  passToken    String?       @unique
+  passExpiresAt DateTime?
+  /// MIA_OI | OLYMPIC_POOL | SPA | LONG_NUONG — set once, when redeemed.
+  redeemedZone String?
+  redeemedVnd  Int?
+  redeemedAt   DateTime?
+  scannedByName String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  uses AppTournamentVoucherUse[]
+
+  @@unique([tournamentId, customerId])
+  @@index([customerId, status])
+  @@index([tournamentId, status])
+  @@map("app_tournament_vouchers")
+}
+
+/// Unused. A voucher is redeemed once; the zone is stored on the voucher.
+model AppTournamentVoucherUse {
+  id            String               @id @default(cuid())
+  voucherId     String
+  voucher       AppTournamentVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  zoneCode      String
+  amountVnd     Int
+  redeemedAt    DateTime             @default(now())
+  scannedByName String?
+
+  @@unique([voucherId, zoneCode])
+  @@index([zoneCode, redeemedAt])
+  @@map("app_tournament_voucher_uses")
+}
+
+/// One results image and one external gallery link per event. No photo album.
+model AppTournamentAsset {
+  id           String        @id @default(cuid())
+  tournamentId String
+  tournament   AppTournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  /// RESULTS_IMAGE | GALLERY_LINK
+  kind         String
+  /// Stored image path, or an https gallery URL (Drive / Facebook).
+  url          String
+  label        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([tournamentId, kind])
+  @@map("app_tournament_assets")
 }

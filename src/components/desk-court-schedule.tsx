@@ -500,7 +500,7 @@ export function DeskCourtSchedule({
         </div>
       </div>
 
-      <p style={{ margin: "10px 0 0", fontSize: 12, color: "#64748b" }}>
+      <p style={{ margin: "22px 0 28px", fontSize: 12, color: "#64748b" }}>
         Viền xanh dương = order từ app · viền cam = nhân viên ghi tại quầy
       </p>
 
