@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
+import { fetchQrDataUrl } from "@/lib/qr-data-url";
 
 type PassView = {
   token: string;
@@ -81,12 +82,12 @@ export default function VoucherQrPage({
     }
     let cancelled = false;
     (async () => {
-      const QRCode = (await import("qrcode")).default;
       const payload = `${window.location.origin}/v/${encodeURIComponent(token)}`;
-      const url = await QRCode.toDataURL(payload, {
+      const url = await fetchQrDataUrl(payload, {
         width: 280,
         margin: 2,
-        color: { dark: "#0b1220", light: "#ffffff" },
+        dark: "#0b1220",
+        light: "#ffffff",
       });
       if (!cancelled) setQrDataUrl(url);
     })().catch(() => undefined);

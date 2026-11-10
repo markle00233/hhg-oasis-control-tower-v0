@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
+import { fetchQrDataUrl } from "@/lib/qr-data-url";
 import {
   ATTENDANCE,
   ATTENDANCE_LABEL,
@@ -101,9 +102,8 @@ export default function TournamentScanPage({
     }
     let cancelled = false;
     void (async () => {
-      const QRCode = (await import("qrcode")).default;
       const payload = `${window.location.origin}/v/${encodeURIComponent(passToken)}`;
-      const url = await QRCode.toDataURL(payload, { width: 280, margin: 1 });
+      const url = await fetchQrDataUrl(payload, { width: 280, margin: 1 });
       if (!cancelled) setQrDataUrl(url);
     })().catch(() => undefined);
     return () => {

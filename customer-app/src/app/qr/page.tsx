@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
+import { fetchQrDataUrl } from "@/lib/qr-data-url";
 
 export default function MyOasisQrPage() {
   const router = useRouter();
@@ -37,14 +38,10 @@ export default function MyOasisQrPage() {
       setVipPlan(data.customer?.vipPlanLabel || null);
       setVipExp(data.customer?.vipExpiresLabel || null);
       try {
-        const QRCode = (await import("qrcode")).default;
-        const url = await QRCode.toDataURL(data.payload, {
-          width: 320,
-          margin: 2,
-          color: data.vip
-            ? { dark: "#3b0764", light: "#fef3c7" }
-            : { dark: "#0b1220", light: "#ffffff" },
-        });
+        const colors = data.vip
+          ? { dark: "#3b0764", light: "#fef3c7" }
+          : { dark: "#0b1220", light: "#ffffff" };
+        const url = await fetchQrDataUrl(data.payload, { width: 320, margin: 2, ...colors });
         if (!cancelled) setDataUrl(url);
       } catch {
         if (!cancelled) setError("Không render được QR");

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as QRCode from "qrcode";
 import {
   ATTENDANCE,
   ATTENDANCE_LABEL,
@@ -245,10 +244,17 @@ export function DeskTournaments({
       return;
     }
     let cancelled = false;
-    QRCode.toDataURL(detail.checkInUrl, {
-      width: 280,
-      margin: 1,
+    fetch("/api/desk/qr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: detail.checkInUrl, width: 280, margin: 1 }),
     })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("qr");
+        const data = (await res.json()) as { dataUrl?: string };
+        if (!data.dataUrl) throw new Error("qr");
+        return data.dataUrl;
+      })
       .then((url) => {
         if (!cancelled) setQrUrl(url);
       })
