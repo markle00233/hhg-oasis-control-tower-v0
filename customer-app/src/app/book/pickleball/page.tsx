@@ -256,7 +256,7 @@ export default function PickleballBookPage() {
     const t = setInterval(() => {
       if (document.visibilityState === "hidden") return;
       void loadCourts();
-    }, 5000);
+    }, 15000);
     return () => clearInterval(t);
   }, [loadCourts]);
 

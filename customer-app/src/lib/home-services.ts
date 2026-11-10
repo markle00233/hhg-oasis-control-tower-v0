@@ -40,6 +40,14 @@ export const HOME_GROUPS: HomeGroup[] = [
         fg: "#3f6212",
         mark: "PB",
       },
+      {
+        code: "TOURNAMENT",
+        name: "Giải đấu",
+        href: "/tournaments",
+        bg: "#fef3c7",
+        fg: "#92400e",
+        mark: "GĐ",
+      },
     ],
   },
   {

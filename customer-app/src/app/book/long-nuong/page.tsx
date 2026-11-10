@@ -121,7 +121,7 @@ export default function LongNuongBookPage() {
     const t = setInterval(() => {
       if (document.visibilityState === "hidden") return;
       void loadTables();
-    }, 5000);
+    }, 15000);
     return () => clearInterval(t);
   }, [loadTables]);
 

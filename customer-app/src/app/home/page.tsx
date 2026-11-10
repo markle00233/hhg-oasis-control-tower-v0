@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
@@ -19,6 +19,21 @@ function greeting() {
   if (h < 12) return "Chào buổi sáng";
   if (h < 18) return "Chào buổi chiều";
   return "Chào buổi tối";
+}
+
+function sameCards(a: ServiceCardViewModel[], b: ServiceCardViewModel[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].id !== b[i].id ||
+      a[i].status !== b[i].status ||
+      a[i].subtitle !== b[i].subtitle ||
+      a[i].totalLabel !== b[i].totalLabel
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export default function HomePage() {
@@ -40,46 +55,56 @@ export default function HomePage() {
   const [upcoming, setUpcoming] = useState<ServiceCardViewModel[]>([]);
   const [error, setError] = useState("");
   const [cardReady, setCardReady] = useState(false);
+  const [awaitingPay, setAwaitingPay] = useState(false);
+  const onAwaitingPayment = useCallback((waiting: boolean) => {
+    setAwaitingPay(waiting);
+  }, []);
+  const cardsAwaitingPay = useMemo(
+    () =>
+      [...active, ...upcoming].some((card) => card.status === "PENDING_APPROVAL"),
+    [active, upcoming]
+  );
+  const paymentPending = awaitingPay || cardsAwaitingPay;
+  const loadGen = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load(first: boolean) {
+  const loadHome = useCallback(
+    async (opts: { summary: boolean; fresh: boolean; prefetch: boolean }) => {
+      const gen = ++loadGen.current;
       const [meRes, sumRes] = await Promise.all([
-        fetchAuthMe(),
-        first
+        fetchAuthMe(opts.fresh ? { fresh: true } : undefined),
+        opts.summary
           ? fetch("/api/cards/summary", { cache: "no-store" })
           : Promise.resolve(null),
       ]);
-      if (meRes.status === 401) {
+      if (meRes.status === 401 || sumRes?.status === 401) {
         router.replace("/");
-        return true;
-      }
-      if (sumRes?.status === 401) {
-        router.replace("/");
-        return true;
+        return;
       }
       const me = meRes.ok ? await meRes.json() : null;
       const data = sumRes ? await sumRes.json() : null;
-      if (cancelled) return true;
+      if (loadGen.current !== gen) return;
       if (sumRes && !sumRes.ok) {
         setError(data?.error || "Không tải được Home");
         setCardReady(true);
-        return true;
+        return;
       }
       const customer = me?.customer;
       if (data) {
+        const nextActive = (data.active || []) as ServiceCardViewModel[];
+        const nextUpcoming = (data.upcoming || []) as ServiceCardViewModel[];
         setName(data.customer?.fullName || "");
-        setActive(data.active || []);
-        setUpcoming(data.upcoming || []);
+        setActive((prev) => (sameCards(prev, nextActive) ? prev : nextActive));
+        setUpcoming((prev) =>
+          sameCards(prev, nextUpcoming) ? prev : nextUpcoming
+        );
       }
       if (typeof customer?.pointsBalance === "number") {
         setPointsBalance(customer.pointsBalance);
       } else if (typeof data?.customer?.pointsBalance === "number") {
         setPointsBalance(data.customer.pointsBalance);
       }
-      const activeVip = !!customer?.vip;
       if (customer) {
+        const activeVip = !!customer.vip;
         setVip(activeVip);
         setGoldCard(customer.nameCardGold ?? activeVip);
         setGoldPlan(customer.nameCardPlan ?? null);
@@ -89,62 +114,49 @@ export default function HomePage() {
         setVipExpiresLabel(customer.vipExpiresLabel || null);
       }
       setCardReady(true);
-      if (first) {
+      if (opts.prefetch) {
         router.prefetch("/qr");
         router.prefetch("/book/pickleball");
+        router.prefetch("/tournaments");
         router.prefetch("/activity");
         router.prefetch("/account");
       }
-      return activeVip;
-    }
+    },
+    [router]
+  );
 
-    let timer = 0;
-    let inflight = false;
-    let done = false;
+  useEffect(() => {
+    void loadHome({ summary: true, fresh: false, prefetch: true }).catch(() => {
+      setCardReady(true);
+    });
+    return () => {
+      loadGen.current += 1;
+    };
+  }, [loadHome]);
 
-    function schedule() {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        if (cancelled || done) return;
-        if (document.visibilityState === "hidden") {
-          schedule();
-          return;
-        }
-        void tick(false);
-      }, 12000);
-    }
-
-    async function tick(first: boolean) {
-      if (cancelled || done || inflight) return;
-      inflight = true;
-      let stop = false;
-      try {
-        stop = await load(first);
-      } catch {
-        if (first && !cancelled) setCardReady(true);
-      } finally {
-        inflight = false;
-      }
-      if (cancelled || stop) {
-        done = stop;
-        return;
-      }
-      schedule();
-    }
-
-    void tick(true);
+  useEffect(() => {
+    if (!paymentPending) return;
+    let polls = 0;
+    const run = () => {
+      if (document.visibilityState === "hidden") return;
+      polls += 1;
+      void loadHome({
+        summary: polls % 2 === 0,
+        fresh: true,
+        prefetch: false,
+      }).catch(() => undefined);
+    };
+    const timer = window.setInterval(run, 12000);
     const onVisible = () => {
-      if (document.visibilityState !== "visible" || cancelled || done) return;
-      window.clearTimeout(timer);
-      void tick(false);
+      if (document.visibilityState === "visible") run();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
+      loadGen.current += 1;
+      window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [router]);
+  }, [paymentPending, loadHome]);
 
   const serviceCount = HOME_GROUPS.reduce((n, g) => n + g.services.length, 0);
 
@@ -303,6 +315,7 @@ export default function HomePage() {
           locked={vip}
           planLabel={vipPlanLabel}
           expiresLabel={vipExpiresLabel}
+          onAwaitingPayment={onAwaitingPayment}
         />
       </div>
     </Shell>

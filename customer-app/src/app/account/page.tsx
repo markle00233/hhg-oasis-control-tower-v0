@@ -1,10 +1,130 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
 import { fetchAuthMe } from "@/lib/auth-me-client";
+
+const PLACE_FILTERS = [
+  { id: "MIA_OI", label: "Mía Ơi" },
+  { id: "OLYMPIC_POOL", label: "Olympic" },
+  { id: "SPA", label: "Spa" },
+  { id: "LONG_NUONG", label: "Lòng Nướng" },
+  { id: "PICKLEBALL", label: "Pickleball" },
+] as const;
+
+type PlaceId = (typeof PLACE_FILTERS)[number]["id"];
+type WalletFilter = "ALL" | "TOURNAMENT" | PlaceId;
+
+/** Desks a tournament voucher can be scanned at. Same amount at each one. */
+const TOURNAMENT_ZONES: readonly PlaceId[] = [
+  "MIA_OI",
+  "OLYMPIC_POOL",
+  "SPA",
+  "LONG_NUONG",
+];
+
+const PLACE_LABEL = new Map<string, string>(
+  PLACE_FILTERS.map((place) => [place.id, place.label])
+);
+
+const vndFormat = new Intl.NumberFormat("vi-VN");
+
+type WalletCard = {
+  id: string;
+  title: string;
+  subtitle: string;
+  zoneCode: string;
+  zoneLabel: string;
+  href: string;
+  discountType: string;
+  discountVnd?: number;
+  discountPercent?: number;
+  sourceLabel?: string;
+  qtyTotal?: number | null;
+  qtyRemaining?: number | null;
+  exhausted?: boolean;
+  canUse?: boolean;
+  membership?: boolean;
+  membershipExpired?: boolean;
+  unlimitedInTerm?: boolean;
+  validUntilLabel?: string | null;
+  closedLabel?: string | null;
+  tournament?: boolean;
+  usableZones?: string[];
+};
+
+function normalizeZone(code: string) {
+  const z = String(code || "").trim().toUpperCase();
+  if (z === "SAUNA") return "SPA";
+  if (z === "OLYMPIC" || z === "GYM" || z === "VIP") return "OLYMPIC_POOL";
+  if (z === "MIAOI" || z === "MIA_OLYMPIC") return "MIA_OI";
+  if (z === "LONGNUONG" || z === "CHI_PHEO") return "LONG_NUONG";
+  return z;
+}
+
+type PreparedCard = WalletCard & {
+  tournament: boolean;
+  zones: PlaceId[];
+  spent: boolean;
+  placesLabel: string;
+};
+
+function isTournamentCard(card: WalletCard) {
+  return (
+    !!card.tournament ||
+    String(card.zoneCode || "").toUpperCase() === "TOURNAMENT"
+  );
+}
+
+function zonesFor(card: WalletCard, tournament: boolean): PlaceId[] {
+  const raw = tournament
+    ? card.usableZones?.length
+      ? card.usableZones
+      : TOURNAMENT_ZONES
+    : [card.zoneCode];
+  const zones: PlaceId[] = [];
+  for (const code of raw) {
+    const id = normalizeZone(code);
+    if (!PLACE_LABEL.has(id) || zones.includes(id as PlaceId)) continue;
+    zones.push(id as PlaceId);
+  }
+  return zones;
+}
+
+function cardSpent(card: WalletCard, tournament: boolean) {
+  if (tournament) return !card.canUse || !!card.exhausted;
+  const hasQty = card.qtyTotal != null && card.qtyTotal > 0;
+  return (
+    !!card.exhausted ||
+    !!card.membershipExpired ||
+    (hasQty && (card.qtyRemaining ?? 0) <= 0)
+  );
+}
+
+function prepareCard(card: WalletCard): PreparedCard {
+  const tournament = isTournamentCard(card);
+  const zones = zonesFor(card, tournament);
+  return {
+    ...card,
+    tournament,
+    zones,
+    spent: cardSpent(card, tournament),
+    placesLabel: zones
+      .map((id) => PLACE_LABEL.get(id))
+      .filter(Boolean)
+      .join(", "),
+  };
+}
+
+/** Usable cards first. On a place chip, that place's own voucher leads. */
+function walletRank(card: PreparedCard, filter: WalletFilter) {
+  const spent = card.spent ? 2 : 0;
+  if (filter === "ALL" || filter === "TOURNAMENT") return spent;
+  const onlyHere = card.zones.length === 1 && card.zones[0] === filter;
+  return spent + (onlyHere ? 0 : 1);
+}
 
 export default function AccountPage() {
   const router = useRouter();
@@ -21,28 +141,11 @@ export default function AccountPage() {
     packageLabel?: string | null;
     packageExpiresLabel?: string | null;
   } | null>(null);
-  const [vouchers, setVouchers] = useState<
-    {
-      id: string;
-      title: string;
-      subtitle: string;
-      zoneCode: string;
-      zoneLabel: string;
-      href: string;
-      discountType: string;
-      discountVnd?: number;
-      discountPercent?: number;
-      sourceLabel?: string;
-      qtyTotal?: number | null;
-      qtyRemaining?: number | null;
-      exhausted?: boolean;
-      canUse?: boolean;
-      membership?: boolean;
-      membershipExpired?: boolean;
-      unlimitedInTerm?: boolean;
-      validUntilLabel?: string | null;
-    }[]
-  >([]);
+  const [vouchers, setVouchers] = useState<WalletCard[]>([]);
+  const [tournamentVouchers, setTournamentVouchers] = useState<WalletCard[]>([]);
+  const [offersReady, setOffersReady] = useState(false);
+  const [tournamentReady, setTournamentReady] = useState(false);
+  const [placeFilter, setPlaceFilter] = useState<WalletFilter>("ALL");
   const [swimReady, setSwimReady] = useState(false);
   const [swimLessons, setSwimLessons] = useState<
     {
@@ -84,10 +187,11 @@ export default function AccountPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [me, offerRes, swimRes] = await Promise.all([
+      const [me, offerRes, swimRes, tournamentRes] = await Promise.all([
         fetchAuthMe(),
         fetch("/api/me/offers", { cache: "no-store" }),
         fetch("/api/me/swim", { cache: "no-store" }),
+        fetch("/api/me/tournament-vouchers", { cache: "no-store" }),
       ]);
       const meData = await me.json();
       if (!meData.authenticated) {
@@ -104,6 +208,18 @@ export default function AccountPage() {
           /* ignore */
         }
       }
+      if (!cancelled) setOffersReady(true);
+      if (tournamentRes.ok) {
+        try {
+          const td = await tournamentRes.json();
+          if (!cancelled && Array.isArray(td.wallet)) {
+            setTournamentVouchers(td.wallet);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!cancelled) setTournamentReady(true);
 
       if (swimRes.ok) {
         try {
@@ -122,6 +238,53 @@ export default function AccountPage() {
 
   const signedIn = !!customer;
   const vipOn = !!customer?.vip;
+  const walletReady = offersReady && tournamentReady;
+  const preparedCards = useMemo(
+    () => [...tournamentVouchers, ...vouchers].map(prepareCard),
+    [tournamentVouchers, vouchers]
+  );
+  const { placeOptions, hasTournament } = useMemo(() => {
+    const present = new Set<PlaceId>();
+    let tournament = false;
+    for (const card of preparedCards) {
+      if (card.tournament) tournament = true;
+      for (const zone of card.zones) present.add(zone);
+    }
+    return {
+      hasTournament: tournament,
+      placeOptions: PLACE_FILTERS.filter((place) => present.has(place.id)),
+    };
+  }, [preparedCards]);
+  const activePlace: WalletFilter =
+    placeFilter === "TOURNAMENT"
+      ? hasTournament
+        ? "TOURNAMENT"
+        : "ALL"
+      : placeFilter === "ALL" ||
+          placeOptions.some((place) => place.id === placeFilter)
+        ? placeFilter
+        : "ALL";
+  const shownCards = useMemo(() => {
+    const matched =
+      activePlace === "ALL"
+        ? preparedCards
+        : activePlace === "TOURNAMENT"
+          ? preparedCards.filter((card) => card.tournament)
+          : preparedCards.filter((card) => card.zones.includes(activePlace));
+    return [...matched].sort(
+      (a, b) => walletRank(a, activePlace) - walletRank(b, activePlace)
+    );
+  }, [preparedCards, activePlace]);
+  const filterChips = useMemo<{ id: WalletFilter; label: string }[]>(
+    () => [
+      { id: "ALL", label: "Tất cả" },
+      ...(hasTournament ? [{ id: "TOURNAMENT" as const, label: "Giải đấu" }] : []),
+      ...placeOptions,
+    ],
+    [hasTournament, placeOptions]
+  );
+  const activePlaceLabel = filterChips.find((chip) => chip.id === activePlace)
+    ?.label;
   useEffect(() => {
     if (!signedIn || vipOn) return;
     let cancelled = false;
@@ -290,16 +453,50 @@ export default function AccountPage() {
           )}
         </section>
 
-        {vouchers.length > 0 ? (
-          <section className="space-y-2">
+        <section className="space-y-3">
             <h2
-              className={`text-sm font-bold lowercase tracking-wide ${
+              className={`text-sm font-bold tracking-wide ${
                 customer?.vip ? "text-[#8a7429]" : "text-oasis-mute"
               }`}
             >
-              {customer?.vip ? "đặc quyền VIP / voucher" : "voucher của bạn"}
+              {customer?.vip ? "Đặc quyền VIP / Voucher" : "Voucher của bạn"}
             </h2>
+            {walletReady && preparedCards.length > 0 ? (
+              <div
+                role="group"
+                aria-label="Lọc voucher"
+                className="scrollbar-none flex gap-2 overflow-x-auto"
+                style={{
+                  marginLeft: -16,
+                  marginRight: -16,
+                  paddingLeft: 16,
+                  paddingRight: 16,
+                }}
+              >
+                {filterChips.map((chip) => (
+                  <PlaceChip
+                    key={chip.id}
+                    label={chip.label}
+                    active={activePlace === chip.id}
+                    vip={vipOn}
+                    onClick={() => setPlaceFilter(chip.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
+            {!walletReady ? (
+              <p className="text-sm text-oasis-mute">Đang tải voucher…</p>
+            ) : shownCards.length === 0 ? (
+              <p className="animate-settle rounded-[22px] bg-white/70 p-4 text-sm text-oasis-mute shadow-soft">
+                {preparedCards.length === 0
+                  ? "Chưa có voucher."
+                  : activePlace === "TOURNAMENT"
+                    ? "Chưa có voucher giải đấu."
+                    : `Không có voucher dùng được tại ${activePlaceLabel}.`}
+              </p>
+            ) : (
             <div
+              key={activePlace}
               className="scrollbar-none"
               style={{
                 display: "flex",
@@ -316,27 +513,29 @@ export default function AccountPage() {
                 paddingBottom: 4,
               }}
             >
-              {vouchers.map((v) => {
+              {shownCards.map((v, index) => {
                 const zone = String(v.zoneCode || "").toUpperCase();
-                const separateQr = zone === "SPA" || zone === "LONG_NUONG";
-                const href = v.href.includes("?")
-                  ? `${v.href}&voucher=${encodeURIComponent(v.id)}`
-                  : `${v.href}?voucher=${encodeURIComponent(v.id)}`;
+                const tournament = v.tournament;
+                const separateQr =
+                  !tournament && (zone === "SPA" || zone === "LONG_NUONG");
+                const href = tournament
+                  ? v.href
+                  : v.href.includes("?")
+                    ? `${v.href}&voucher=${encodeURIComponent(v.id)}`
+                    : `${v.href}?voucher=${encodeURIComponent(v.id)}`;
                 const deal =
                   v.discountType === "amount" && v.discountVnd
-                    ? `−${new Intl.NumberFormat("vi-VN").format(v.discountVnd)}đ`
+                    ? `−${vndFormat.format(v.discountVnd)}đ`
                     : v.discountType === "percent" && v.discountPercent
                       ? `−${v.discountPercent}%`
                       : "Ưu đãi";
-                const vipCard = !!customer?.vip;
+                const vipCard = vipOn;
                 const hasQty = v.qtyTotal != null && v.qtyTotal > 0;
                 const remaining = v.qtyRemaining ?? 0;
                 const membershipExpired = !!v.membershipExpired;
-                const exhausted =
-                  !!v.exhausted ||
-                  (hasQty && remaining <= 0) ||
-                  membershipExpired;
-                const cardClass = `relative flex shrink-0 flex-col justify-between rounded-[22px] p-4 shadow-soft ${
+                const exhausted = v.spent;
+                const where = v.placesLabel;
+                const cardClass = `animate-settle relative flex shrink-0 flex-col justify-between rounded-[22px] p-4 shadow-soft ${
                   vipCard ? "bg-black" : "bg-white"
                 } ${exhausted ? "opacity-55" : ""}`;
                 const cardStyle = {
@@ -345,6 +544,7 @@ export default function AccountPage() {
                   minHeight: 148,
                   scrollSnapAlign: "center" as const,
                   flexShrink: 0,
+                  animationDelay: `${Math.min(index, 5) * 40}ms`,
                 };
                 const body = (
                   <>
@@ -401,27 +601,45 @@ export default function AccountPage() {
                         vipCard ? "text-[#d4af37]" : "text-oasis-moss"
                       }`}
                     >
-                      {membershipExpired
-                        ? `Hết hạn gói${
-                            v.validUntilLabel ? ` · ${v.validUntilLabel}` : ""
-                          }`
-                        : exhausted
-                          ? hasQty
-                            ? `Hết lượt (0/${v.qtyTotal})`
-                            : "Không dùng được"
-                          : separateQr
-                            ? v.validUntilLabel
-                              ? `Đến ${v.validUntilLabel}`
-                              : v.zoneLabel
-                            : v.validUntilLabel
-                              ? `Đến ${v.validUntilLabel} · dùng tại ${v.zoneLabel} →`
-                              : `Chạm để dùng tại ${v.zoneLabel} →`}
+                      {tournament
+                        ? exhausted
+                          ? v.closedLabel || "Không dùng được"
+                          : `${
+                              v.validUntilLabel
+                                ? `Trong ngày ${v.validUntilLabel}`
+                                : "Trong ngày giải"
+                            }${where ? ` · ${where}` : ""}`
+                        : membershipExpired
+                          ? `Hết hạn gói${
+                              v.validUntilLabel ? ` · ${v.validUntilLabel}` : ""
+                            }`
+                          : exhausted
+                            ? hasQty
+                              ? `Hết lượt (0/${v.qtyTotal})`
+                              : "Không dùng được"
+                            : separateQr
+                              ? v.validUntilLabel
+                                ? `Đến ${v.validUntilLabel}`
+                                : v.zoneLabel
+                              : v.validUntilLabel
+                                ? `Đến ${v.validUntilLabel} · dùng tại ${v.zoneLabel} →`
+                                : `Chạm để dùng tại ${v.zoneLabel} →`}
                     </p>
                   </>
                 );
+                const qrClass = `mt-3 flex h-10 w-full items-center justify-center rounded-2xl text-xs font-bold ${
+                  vipCard ? "bg-[#d4af37] text-black" : "bg-oasis-deep text-oasis-sand"
+                }`;
                 return exhausted ? (
                   <div key={v.id} className={cardClass} style={cardStyle}>
                     {body}
+                  </div>
+                ) : tournament ? (
+                  <div key={v.id} className={cardClass} style={cardStyle}>
+                    {body}
+                    <Link href={href} className={qrClass}>
+                      Hiện QR voucher
+                    </Link>
                   </div>
                 ) : separateQr ? (
                   <div key={v.id} className={cardClass} style={cardStyle}>
@@ -430,11 +648,7 @@ export default function AccountPage() {
                       type="button"
                       disabled={voucherQrBusy === v.id}
                       onClick={() => void openVoucherQr(v.id)}
-                      className={`mt-3 flex h-10 w-full items-center justify-center rounded-2xl text-xs font-bold ${
-                        vipCard
-                          ? "bg-[#d4af37] text-black"
-                          : "bg-oasis-deep text-oasis-sand"
-                      } disabled:opacity-50`}
+                      className={`${qrClass} disabled:opacity-50`}
                     >
                       {voucherQrBusy === v.id ? "…" : "Hiện QR voucher"}
                     </button>
@@ -451,15 +665,16 @@ export default function AccountPage() {
                 );
               })}
             </div>
+            )}
             {voucherQrError ? (
               <p className="text-sm font-semibold text-oasis-coral">
                 {voucherQrError}
               </p>
             ) : null}
           </section>
-        ) : null}
 
         <div className="rounded-[28px] bg-white/85 p-2 shadow-soft">
+          <MenuLink href="/tournaments" label="Giải đấu" />
           <MenuLink href="/activity" label="Activity" />
           <MenuLink href="/messages" label="Messages" />
           <MenuLink href="/account/password" label="Đổi mật khẩu" last />
@@ -474,6 +689,35 @@ export default function AccountPage() {
         </button>
       </div>
     </Shell>
+  );
+}
+
+function PlaceChip({
+  label,
+  active,
+  vip,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  vip: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold transition duration-200 ease-out active:scale-95 ${
+        active
+          ? vip
+            ? "bg-[#d4af37] text-black"
+            : "bg-oasis-ink text-white"
+          : "bg-white text-oasis-mute shadow-soft"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
