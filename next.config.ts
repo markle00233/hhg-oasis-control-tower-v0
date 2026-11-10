@@ -4,6 +4,7 @@ const isAdminAllplace =
   process.env.NEXT_PUBLIC_APP_SURFACE === "adminAllplace";
 
 const nextConfig: NextConfig = {
+  transpilePackages: ["qrcode"],
   async redirects() {
     if (isAdminAllplace) {
       return [
