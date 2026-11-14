@@ -11,19 +11,31 @@ import {
   type TournamentStatus,
 } from "@/lib/tournament";
 
+type PendingSignup = {
+  id: string;
+  tournamentId: string;
+  tournamentName: string;
+  dayLabel: string;
+  fullName: string;
+  phone: string | null;
+  createdAt: string;
+};
+
 type TournamentRow = {
   id: string;
   name: string;
   court: string | null;
   eventTime: string | null;
   status: TournamentStatus;
-  rescheduleNote: string | null;
+  plannedWhen: string | null;
+  movedWhen: string | null;
   dayLabel: string;
   day: string;
   startsAt: string;
   endsAt: string;
   discountVnd: number;
   checkInCount: number;
+  pendingCount: number;
   voucherUsedCount: number;
   voucherOpenCount: number;
 };
@@ -47,7 +59,8 @@ type TournamentDetail = {
   eventTime: string | null;
   summary: string | null;
   status: TournamentStatus;
-  rescheduleNote: string | null;
+  plannedWhen: string | null;
+  movedWhen: string | null;
   dayLabel: string;
   day: string;
   startsAt: string;
@@ -108,6 +121,24 @@ function courtName(value: string | null | undefined) {
   return (value || "").replace(/\s+/g, " ").trim();
 }
 
+function DelayBand({ planned, moved }: { planned: string; moved: string }) {
+  return (
+    <div style={styles.delayBand}>
+      <div>
+        <div style={styles.delayKicker}>Giờ dự kiến</div>
+        <div style={styles.delayOld}>{planned}</div>
+      </div>
+      <div style={styles.delayArrow} aria-hidden>
+        →
+      </div>
+      <div>
+        <div style={styles.delayKicker}>Giờ dời</div>
+        <div style={styles.delayNew}>{moved}</div>
+      </div>
+    </div>
+  );
+}
+
 function timeBucket(eventTime: string | null): TimeFilter {
   const hour = Number(String(eventTime || "").slice(0, 2));
   if (!Number.isFinite(hour) || !eventTime) return "ALL";
@@ -133,16 +164,16 @@ function clock(iso: string) {
   });
 }
 
-function athleteLine(a: Athlete) {
-  const parts = [a.phone || "—"];
+function athleteDetail(a: Athlete) {
   if (a.attendance === ATTENDANCE.PRESENT && a.checkedInAt) {
-    parts.push(clock(a.checkedInAt));
-    parts.push(a.source === "STAFF" ? "Quầy" : a.source === "APP" ? "App" : "QR");
+    const parts = [
+      clock(a.checkedInAt),
+      a.source === "STAFF" ? "Quầy" : a.source === "APP" ? "App" : "QR",
+    ];
     if (a.checkedByName) parts.push(a.checkedByName);
-  } else if (a.createdAt) {
-    parts.push(clock(a.createdAt));
+    return parts.join(" · ");
   }
-  return parts.join(" · ");
+  return a.createdAt ? clock(a.createdAt) : "";
 }
 
 async function fileToResultsImage(file: File): Promise<string> {
@@ -179,6 +210,7 @@ export function DeskTournaments({
   onLogout: () => void;
 }) {
   const [rows, setRows] = useState<TournamentRow[]>([]);
+  const [pending, setPending] = useState<PendingSignup[]>([]);
   const [detail, setDetail] = useState<TournamentDetail | null>(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -206,12 +238,14 @@ export function DeskTournaments({
   const [courtFilter, setCourtFilter] = useState("ALL");
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("ALL");
   const [dayFilter, setDayFilter] = useState<DayFilter>("ALL");
+  const [reviewId, setReviewId] = useState("");
 
   const loadList = useCallback(async () => {
     const res = await fetch("/api/crm/desk/tournaments", { cache: "no-store" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Không tải được danh sách giải.");
     setRows(data.tournaments || []);
+    setPending(Array.isArray(data.pending) ? data.pending : []);
   }, []);
 
   const loadDetail = useCallback(async (id: string) => {
@@ -237,6 +271,20 @@ export function DeskTournaments({
       setError(e instanceof Error ? e.message : "Không tải được danh sách giải.")
     );
   }, [loadList]);
+
+  useEffect(() => {
+    if (detail) return;
+    const pull = () => {
+      if (document.visibilityState === "hidden") return;
+      void loadList().catch(() => undefined);
+    };
+    const timer = window.setInterval(pull, pending.length > 0 ? 4_000 : 10_000);
+    document.addEventListener("visibilitychange", pull);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pull);
+    };
+  }, [detail, loadList, pending.length]);
 
   useEffect(() => {
     if (!detail?.checkInUrl) {
@@ -355,6 +403,66 @@ export function DeskTournaments({
       setError(err instanceof Error ? err.message : "Không lưu được giải.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function reviewAthlete(
+    tournamentId: string,
+    checkInId: string,
+    decision: "approve" | "reject",
+    person?: { fullName: string; phone: string | null }
+  ) {
+    if (reviewId) return;
+    const athlete =
+      person ||
+      (detail?.id === tournamentId
+        ? detail.athletes.find((row) => row.id === checkInId)
+        : undefined);
+    const name = athlete?.fullName || "vận động viên";
+    const phone = athlete?.phone ? ` (${athlete.phone})` : "";
+    const question =
+      decision === "approve"
+        ? `Đã thu tiền của ${name}${phone}? Duyệt đăng ký sau khi thanh toán.`
+        : `Từ chối đăng ký của ${name}${phone}?`;
+    if (!window.confirm(question)) return;
+    setReviewId(checkInId);
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`/api/crm/desk/tournaments/${tournamentId}/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ checkInId, decision }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không duyệt được.");
+      setInfo(data.message || "Đã lưu.");
+      const attendance =
+        data.attendance === ATTENDANCE.CANCELLED
+          ? ATTENDANCE.CANCELLED
+          : ATTENDANCE.REGISTERED;
+      setPending((prev) => prev.filter((row) => row.id !== checkInId));
+      setDetail((prev) =>
+        prev && prev.id === tournamentId
+          ? {
+              ...prev,
+              athletes: prev.athletes.map((row) =>
+                row.id === checkInId ? { ...row, attendance } : row
+              ),
+            }
+          : prev
+      );
+      setRows((prev) =>
+        prev.map((row) =>
+          row.id === tournamentId
+            ? { ...row, pendingCount: Math.max(0, row.pendingCount - 1) }
+            : row
+        )
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không duyệt được.");
+    } finally {
+      setReviewId("");
     }
   }
 
@@ -542,6 +650,13 @@ export function DeskTournaments({
       }),
     [rows, statusFilter, activeCourt, timeFilter, dayFilter, todayKey]
   );
+  const pendingHere = detail
+    ? detail.athletes.reduce(
+        (count, athlete) =>
+          count + (athlete.attendance === ATTENDANCE.PENDING ? 1 : 0),
+        0
+      )
+    : 0;
   const filterLabel = useMemo(() => {
     const timeLabel = TIME_FILTERS.find((item) => item.id === timeFilter)?.label || "";
     const bits = [
@@ -771,6 +886,52 @@ export function DeskTournaments({
               </form>
             ) : null}
 
+            {pending.length > 0 ? (
+              <div style={styles.notice}>
+                <strong>Đăng ký chờ duyệt · {pending.length}</strong>
+                <p style={{ margin: 0 }}>
+                  Khách vừa bấm đăng ký. Gọi số điện thoại để thu tiền, rồi bấm Duyệt.
+                </p>
+                {pending.map((row) => (
+                  <div key={row.id} style={styles.noticeRow}>
+                    <div>
+                      <strong>{row.fullName}</strong>
+                      <div style={styles.noticeMeta}>
+                        {row.phone ? (
+                          <a href={`tel:${row.phone.replace(/\s/g, "")}`}>{row.phone}</a>
+                        ) : (
+                          "Không có số"
+                        )}
+                        {` · ${row.tournamentName} · ${row.dayLabel}`}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flex: "0 0 auto" }}>
+                      <button
+                        type="button"
+                        style={styles.btn}
+                        disabled={!!reviewId}
+                        onClick={() =>
+                          void reviewAthlete(row.tournamentId, row.id, "approve", row)
+                        }
+                      >
+                        {reviewId === row.id ? "…" : "Duyệt"}
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.ghost}
+                        disabled={!!reviewId}
+                        onClick={() =>
+                          void reviewAthlete(row.tournamentId, row.id, "reject", row)
+                        }
+                      >
+                        Từ chối
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             <div key={filterKey} style={styles.list}>
               {rows.length === 0 ? (
                 <p className="desk-tournament-note" style={styles.mute}>
@@ -788,6 +949,8 @@ export function DeskTournaments({
                     className="desk-tournament-row"
                     style={{
                       ...styles.row,
+                      flexDirection: "column",
+                      alignItems: "stretch",
                       animationDelay: `${Math.min(index, 7) * 28}ms`,
                     }}
                     onClick={() => {
@@ -799,28 +962,31 @@ export function DeskTournaments({
                       );
                     }}
                   >
-                    <div>
-                      <strong>{row.dayLabel}</strong>
-                      <div style={{ marginTop: 4 }}>{row.name}</div>
-                      <div style={styles.mute}>
-                        {[
-                          row.court,
-                          row.eventTime,
-                          `VĐV ${row.checkInCount}`,
-                          `Voucher còn ${row.voucherOpenCount}`,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
+                    <div style={styles.rowMain}>
+                      <div>
+                        <strong>{row.dayLabel}</strong>
+                        <div style={{ marginTop: 4 }}>{row.name}</div>
+                        <div style={styles.mute}>
+                          {[
+                            row.court,
+                            row.plannedWhen ? "" : row.eventTime,
+                            `VĐV ${row.checkInCount}`,
+                            row.pendingCount > 0 ? `Chờ duyệt ${row.pendingCount}` : "",
+                            `Voucher còn ${row.voucherOpenCount}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </div>
+                      <div style={styles.statusStack}>
+                        <span style={pillStyle(row.status)}>
+                          {TOURNAMENT_STATUS_LABEL[row.status] || row.status}
+                        </span>
                       </div>
                     </div>
-                    <div style={styles.statusStack}>
-                      <span style={pillStyle(row.status)}>
-                        {TOURNAMENT_STATUS_LABEL[row.status] || row.status}
-                      </span>
-                      {row.rescheduleNote ? (
-                        <span style={styles.delay}>{row.rescheduleNote}</span>
-                      ) : null}
-                    </div>
+                    {row.plannedWhen && row.movedWhen ? (
+                      <DelayBand planned={row.plannedWhen} moved={row.movedWhen} />
+                    ) : null}
                   </button>
                 ))
               )}
@@ -832,32 +998,44 @@ export function DeskTournaments({
               <span style={pillStyle(detail.status)}>
                 {TOURNAMENT_STATUS_LABEL[detail.status] || detail.status}
               </span>
-              {detail.rescheduleNote ? (
-                <span style={styles.delay}>{detail.rescheduleNote}</span>
-              ) : null}
             </div>
+            {detail.plannedWhen && detail.movedWhen ? (
+              <DelayBand planned={detail.plannedWhen} moved={detail.movedWhen} />
+            ) : null}
             <div style={styles.statusRow}>
               <button
                 type="button"
                 onClick={() => setAthletesOpen((open) => !open)}
                 style={{
                   ...styles.pillBtn,
-                  ...(athletesOpen
+                  ...(pendingHere > 0
                     ? {
-                        background: "#dcfce7",
-                        color: "#166534",
-                        border: "1px solid #86efac",
+                        background: "#ffedd5",
+                        color: "#9a3412",
+                        border: "1px solid #fdba74",
                       }
-                    : {}),
+                    : athletesOpen
+                      ? {
+                          background: "#dcfce7",
+                          color: "#166534",
+                          border: "1px solid #86efac",
+                        }
+                      : {}),
                 }}
               >
                 Vận động viên · {detail.athletes.length}
+                {pendingHere > 0 ? ` · chờ duyệt ${pendingHere}` : ""}
               </button>
             </div>
 
             {athletesOpen ? (
               <AthletePanel
                 athletes={detail.athletes}
+                ended={new Date(detail.endsAt).getTime() <= Date.now()}
+                reviewId={reviewId}
+                onReview={(checkInId, decision) =>
+                  void reviewAthlete(detail.id, checkInId, decision)
+                }
                 onClose={() => setAthletesOpen(false)}
               />
             ) : (
@@ -1052,18 +1230,40 @@ export function DeskTournaments({
 
 function AthletePanel({
   athletes,
+  ended,
+  reviewId,
+  onReview,
   onClose,
 }: {
   athletes: Athlete[];
+  ended: boolean;
+  reviewId: string;
+  onReview: (checkInId: string, decision: "approve" | "reject") => void;
   onClose: () => void;
 }) {
+  let waiting = 0;
+  for (const athlete of athletes) {
+    if (athlete.attendance === ATTENDANCE.PENDING) waiting += 1;
+  }
+  const ordered =
+    waiting > 0
+      ? [...athletes].sort(
+          (a, b) =>
+            Number(b.attendance === ATTENDANCE.PENDING) -
+            Number(a.attendance === ATTENDANCE.PENDING)
+        )
+      : athletes;
   return (
     <section>
       <div style={styles.top}>
         <div>
           <h2 style={styles.h2}>Vận động viên</h2>
           <p style={styles.athleteMeta}>
-            {athletes.length === 0 ? "Chưa có vận động viên." : `${athletes.length} người`}
+            {athletes.length === 0
+              ? "Chưa có vận động viên."
+              : waiting > 0
+                ? `${athletes.length} người · ${waiting} chờ duyệt. Gọi SĐT, thu tiền, rồi bấm Duyệt.`
+                : `${athletes.length} người`}
           </p>
         </div>
         <button type="button" style={styles.ghost} onClick={onClose}>
@@ -1071,20 +1271,54 @@ function AthletePanel({
         </button>
       </div>
       <div style={{ ...styles.athleteList, marginTop: 14 }}>
-        {athletes.length === 0 ? (
+        {ordered.length === 0 ? (
           <p style={styles.athleteCard}>Chưa có vận động viên.</p>
         ) : (
-          athletes.map((a) => (
+          ordered.map((a) => {
+            const detailText = athleteDetail(a);
+            return (
             <article key={a.id} style={styles.athleteCard}>
               <div>
                 <strong style={styles.athleteName}>{a.fullName}</strong>
-                <p style={styles.athleteMeta}>{athleteLine(a)}</p>
+                <p style={styles.athleteMeta}>
+                  {a.phone ? (
+                    <a href={`tel:${a.phone.replace(/\s/g, "")}`} style={{ color: "inherit" }}>
+                      {a.phone}
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                  {detailText ? ` · ${detailText}` : ""}
+                </p>
               </div>
-              <span style={{ ...styles.badge, ...attendanceStyle(a.attendance) }}>
-                {ATTENDANCE_LABEL[a.attendance] || a.attendance}
-              </span>
+              <div style={{ display: "grid", justifyItems: "end", gap: 8 }}>
+                <span style={{ ...styles.badge, ...attendanceStyle(a.attendance) }}>
+                  {ATTENDANCE_LABEL[a.attendance] || a.attendance}
+                </span>
+                {a.attendance === ATTENDANCE.PENDING ? (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      disabled={!!reviewId || ended}
+                      onClick={() => onReview(a.id, "approve")}
+                    >
+                      {reviewId === a.id ? "…" : "Duyệt"}
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.ghost}
+                      disabled={!!reviewId}
+                      onClick={() => onReview(a.id, "reject")}
+                    >
+                      Từ chối
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </article>
-          ))
+            );
+          })
         )}
       </div>
     </section>
@@ -1222,6 +1456,9 @@ function attendanceStyle(status: string): React.CSSProperties {
   }
   if (status === ATTENDANCE.NO_SHOW) {
     return { background: "#fef3c7", color: "#92400e", borderColor: "#fde68a" };
+  }
+  if (status === ATTENDANCE.PENDING) {
+    return { background: "#ffedd5", color: "#9a3412", borderColor: "#fdba74" };
   }
   if (status === ATTENDANCE.REGISTERED) {
     return { background: "#e0f2fe", color: "#075985", borderColor: "#bae6fd" };
@@ -1482,10 +1719,49 @@ const styles = {
     flexWrap: "wrap" as const,
     justifyContent: "flex-end",
   },
-  delay: {
-    fontSize: 12,
+  rowMain: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "center",
+    width: "100%",
+  } as const,
+  delayBand: {
+    display: "grid",
+    gridTemplateColumns: "1fr auto 1fr",
+    gap: 10,
+    alignItems: "center",
+    marginTop: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    background: "#fff7ed",
+    border: "1px solid #fdba74",
+    width: "100%",
+  } as const,
+  delayKicker: {
+    fontSize: 10,
+    fontWeight: 800,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase" as const,
+    color: "#9a3412",
+  } as const,
+  delayOld: {
+    marginTop: 2,
+    fontSize: 13,
     fontWeight: 700,
-    color: "#92400e",
+    color: "#9a3412",
+    textDecoration: "line-through",
+  } as const,
+  delayNew: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#7c2d12",
+  } as const,
+  delayArrow: {
+    fontSize: 18,
+    fontWeight: 800,
+    color: "#c2410c",
   } as const,
   athleteList: { display: "grid", gap: 8 } as const,
   athleteCard: {
@@ -1509,6 +1785,33 @@ const styles = {
     fontSize: 13,
     fontWeight: 500,
     color: "#64748b",
+  } as const,
+  notice: {
+    marginTop: 16,
+    padding: "12px 14px",
+    borderRadius: 14,
+    background: "#fff7ed",
+    color: "#9a3412",
+    display: "grid",
+    gap: 10,
+    fontSize: 14,
+    lineHeight: 1.45,
+  } as const,
+  noticeRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    background: "#fff",
+    color: "#0f172a",
+    borderRadius: 12,
+    padding: "10px 12px",
+  } as const,
+  noticeMeta: {
+    marginTop: 2,
+    fontSize: 13,
+    color: "#9a3412",
+    fontWeight: 600,
   } as const,
   pillBtn: {
     height: 36,

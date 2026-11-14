@@ -8,12 +8,11 @@ import type { ServiceCardViewModel } from "@/lib/service-cards";
 
 const SECTORS: { code: string; label: string; zones: string[] }[] = [
   { code: "MIA_OI", label: "Mía Ơi", zones: ["MIA_OI"] },
-  { code: "OLYMPIC_POOL", label: "Hồ Olympic", zones: ["OLYMPIC_POOL", "OLYMPIC"] },
+  { code: "OLYMPIC_POOL", label: "Hồ Olympic", zones: ["OLYMPIC_POOL", "OLYMPIC", "GYM", "RESORT_POOL"] },
   { code: "PICKLEBALL", label: "Pickleball", zones: ["PICKLEBALL"] },
   { code: "SPA", label: "Spa", zones: ["SPA", "SAUNA"] },
   { code: "LONG_NUONG", label: "Lòng nướng", zones: ["LONG_NUONG", "CHI_PHEO"] },
   { code: "VIP_RESORT", label: "VIP", zones: ["VIP_RESORT"] },
-  { code: "GYM", label: "Gym", zones: ["GYM", "RESORT_POOL"] },
 ];
 
 function cardVnd(card: ServiceCardViewModel) {

@@ -182,9 +182,6 @@ export const HOME_OFFERS: HomeOffer[] = [
   ...MARKETING_OFFERS,
 ];
 
-/** @deprecated use HOME_OFFERS */
-export const HOME_POSTERS = HOME_OFFERS;
-
 export function getOfferById(id: string) {
   return HOME_OFFERS.find((o) => o.id === id) || null;
 }

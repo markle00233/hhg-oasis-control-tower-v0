@@ -1,4 +1,4 @@
-/** Xuất PDF / in tất cả hoá đơn trong ngày (adminAllplace desk). */
+/** Báo cáo ca: in / lưu PDF hoá đơn trong ngày của một khu. */
 
 export type DayBillLine = {
   nameVi: string;
@@ -144,8 +144,8 @@ export function printDayBillsPdf(opts: {
   </style>
 </head>
 <body>
-  <h1>HHG OASIS · ${escapeHtml(zoneName)}</h1>
-  <div class="sub">Bảng hoá đơn ngày ${escapeHtml(dayLabel)}</div>
+  <h1>Báo cáo ca · ${escapeHtml(zoneName)}</h1>
+  <div class="sub">HHG Oasis · hoá đơn ngày ${escapeHtml(dayLabel)} · lưu bằng Print → Save as PDF</div>
   <div class="summary">
     <div><strong>${bills.length}</strong> hoá đơn</div>
     <div>Tổng ngày: <strong>${fmtVnd(dayTotal)}</strong></div>

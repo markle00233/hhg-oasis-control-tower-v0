@@ -122,7 +122,7 @@ export default function LoginPage() {
               ? "Tạo tài khoản bằng họ tên và số điện thoại."
               : phase === "confirm"
                 ? "Xác nhận đây là tài khoản của bạn."
-                : "Đăng nhập bằng mật khẩu."}
+                : "Đăng nhập bằng số điện thoại."}
           </p>
         </div>
 
@@ -218,14 +218,14 @@ export default function LoginPage() {
             >
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wide text-oasis-mute">
-                  Mật khẩu
+                  Số điện thoại
                 </span>
                 <input
                   type="tel"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className={fieldClass}
-                  autoComplete="current-password"
+                  autoComplete="tel"
                   inputMode="tel"
                   placeholder="09xxxxxxxx"
                   required

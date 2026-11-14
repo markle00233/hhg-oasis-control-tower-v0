@@ -12,7 +12,8 @@ import {
   newVoucherPassToken,
   registerBlockReason,
   registerWindowReason,
-  rescheduleNote,
+  scheduleFields,
+  scheduleShift,
   tournamentDayLabel,
   tournamentGivesVoucher,
   tournamentStatusAt,
@@ -129,7 +130,7 @@ export async function listTournaments(customerId: string) {
     galleryUrl: row.assets[0]?.url || null,
     startsAt: row.startsAt.toISOString(),
     status: tournamentStatusAt(row.startsAt, row.endsAt, row.eventTime, now),
-    rescheduleNote: rescheduleNote({
+    ...scheduleFields({
       originalStartsAt: row.originalStartsAt,
       originalEventTime: row.originalEventTime,
       startsAt: row.startsAt,
@@ -139,6 +140,61 @@ export async function listTournaments(customerId: string) {
       ? attendanceAfterWindow(row.checkIns[0].attendance, row.endsAt, now)
       : null,
   }));
+}
+
+const DELAY_ATTENDANCE = [
+  ATTENDANCE.PENDING,
+  ATTENDANCE.REGISTERED,
+  ATTENDANCE.PRESENT,
+  ATTENDANCE.NO_SHOW,
+];
+
+/** Delays for events this athlete actually joined. Skips the full catalog. */
+export async function listAthleteDelays(customerId: string) {
+  const rows = await prisma.appTournamentCheckIn.findMany({
+    where: {
+      customerId,
+      attendance: { in: DELAY_ATTENDANCE },
+      tournament: { originalStartsAt: { not: null } },
+    },
+    orderBy: { tournament: { startsAt: "desc" } },
+    select: {
+      tournament: {
+        select: {
+          id: true,
+          name: true,
+          startsAt: true,
+          eventTime: true,
+          originalStartsAt: true,
+          originalEventTime: true,
+        },
+      },
+    },
+  });
+  const notices: {
+    id: string;
+    name: string;
+    startsAt: string;
+    plannedWhen: string;
+    movedWhen: string;
+  }[] = [];
+  for (const row of rows) {
+    const shift = scheduleShift({
+      originalStartsAt: row.tournament.originalStartsAt,
+      originalEventTime: row.tournament.originalEventTime,
+      startsAt: row.tournament.startsAt,
+      eventTime: row.tournament.eventTime,
+    });
+    if (!shift) continue;
+    notices.push({
+      id: row.tournament.id,
+      name: row.tournament.name,
+      startsAt: row.tournament.startsAt.toISOString(),
+      plannedWhen: shift.plannedWhen,
+      movedWhen: shift.movedWhen,
+    });
+  }
+  return notices;
 }
 
 export async function joinTournament(
@@ -164,12 +220,18 @@ export async function joinTournament(
     where: { tournamentId_customerId: { tournamentId, customerId } },
   });
   if (existing) {
-    if (existing.attendance === ATTENDANCE.REGISTERED) {
+    if (
+      existing.attendance === ATTENDANCE.REGISTERED ||
+      existing.attendance === ATTENDANCE.PENDING
+    ) {
+      const pending = existing.attendance === ATTENDANCE.PENDING;
       return {
         ok: true,
         already: true,
-        attendance: ATTENDANCE.REGISTERED,
-        message: "Bạn đã đăng ký.",
+        attendance: existing.attendance,
+        message: pending
+          ? "Đăng ký đang chờ duyệt."
+          : "Bạn đã đăng ký.",
       };
     }
     return {
@@ -184,7 +246,7 @@ export async function joinTournament(
         tournamentId,
         customerId,
         source: CHECKIN_SOURCE.APP,
-        attendance: ATTENDANCE.REGISTERED,
+        attendance: ATTENDANCE.PENDING,
         checkedInAt: null,
       },
     });
@@ -196,16 +258,17 @@ export async function joinTournament(
       return {
         ok: true,
         already: true,
-        attendance: ATTENDANCE.REGISTERED,
-        message: "Bạn đã đăng ký.",
+        attendance: ATTENDANCE.PENDING,
+        message: "Đăng ký đang chờ duyệt.",
       };
     }
     throw err;
   }
   return {
     ok: true,
-    attendance: ATTENDANCE.REGISTERED,
-    message: "Đã đăng ký.",
+    attendance: ATTENDANCE.PENDING,
+    message:
+      "Chờ duyệt. Nhân viên sẽ gọi số của bạn để thu tiền, rồi duyệt trên quầy.",
   };
 }
 
@@ -273,7 +336,8 @@ export type ScanEvent = {
   resultsImage: string | null;
   discountVnd: number;
   status: string;
-  rescheduleNote: string | null;
+  plannedWhen: string | null;
+  movedWhen: string | null;
   open: boolean;
   ended: boolean;
   loggedIn: boolean;
@@ -366,7 +430,7 @@ function presentEvent(
       tournament.eventTime,
       opts.now
     ),
-    rescheduleNote: rescheduleNote({
+    ...scheduleFields({
       originalStartsAt: tournament.originalStartsAt,
       originalEventTime: tournament.originalEventTime,
       startsAt: tournament.startsAt,
@@ -460,6 +524,10 @@ export async function scanCheckIn(customerId: string, token: string): Promise<
         ok: false,
         status: 400,
         error: reason
+          .replace(
+            "Đăng ký đang chờ duyệt. Thu tiền rồi bấm Duyệt.",
+            "Đăng ký đang chờ duyệt. Nhân viên sẽ liên hệ để thanh toán."
+          )
           .replace("Vận động viên đã hủy.", "Bạn đã hủy đăng ký.")
           .replace("Vận động viên không đến.", "Bạn không còn trong danh sách giải này."),
       };
@@ -507,7 +575,7 @@ export async function scanCheckIn(customerId: string, token: string): Promise<
 }
 
 export async function scanRegister(customerId: string, token: string): Promise<
-  | { ok: true; already: boolean; event: ScanEvent }
+  | { ok: true; already: boolean; message: string; event: ScanEvent }
   | { ok: false; status: number; error: string }
 > {
   const tournament = await eventByToken(token);
@@ -515,7 +583,12 @@ export async function scanRegister(customerId: string, token: string): Promise<
   const joined = await joinTournament(customerId, tournament.id);
   if (!joined.ok) return joined;
   const event = await loadScanEvent(token, customerId);
-  return { ok: true, already: !!joined.already, event: event! };
+  return {
+    ok: true,
+    already: !!joined.already,
+    message: joined.message,
+    event: event!,
+  };
 }
 
 export type WalletTournamentVoucher = {

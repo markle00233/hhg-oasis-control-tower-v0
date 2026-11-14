@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
+import { DelayTimes } from "@/components/delay-times";
 import { fetchAuthMe } from "@/lib/auth-me-client";
 
 type InboxItem = {
@@ -11,38 +13,131 @@ type InboxItem = {
   body: string;
   at: string;
   unread?: boolean;
+  href?: string;
+  plannedWhen?: string;
+  movedWhen?: string;
 };
 
-/** Placeholder inbox until FCM / push backend is wired. */
-const DEMO_INBOX: InboxItem[] = [
-  {
-    id: "1",
+type MeCustomer = {
+  vip?: boolean;
+  vipPlanLabel?: string | null;
+  vipExpiresAt?: string | null;
+  vipExpiresLabel?: string | null;
+  packageLabel?: string | null;
+};
+
+type DelayNotice = {
+  id: string;
+  name: string;
+  startsAt: string;
+  plannedWhen: string;
+  movedWhen: string;
+};
+
+function delayNotices(rows: DelayNotice[]): InboxItem[] {
+  const items: InboxItem[] = [];
+  for (const row of rows) {
+    if (!row.plannedWhen || !row.movedWhen) continue;
+    items.push({
+      id: `delay-${row.id}`,
+      title: `Giải dời giờ · ${row.name}`,
+      body: `Giờ dự kiến ${row.plannedWhen}. Giờ thi đấu đã dời về ${row.movedWhen}.`,
+      at: row.startsAt,
+      unread: true,
+      href: "/tournaments",
+      plannedWhen: row.plannedWhen,
+      movedWhen: row.movedWhen,
+    });
+  }
+  return items;
+}
+
+const VN_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function daysUntil(iso: string, now = new Date()) {
+  const end = new Date(iso);
+  if (Number.isNaN(end.getTime())) return 99;
+  const index = (value: Date) => {
+    const [year, month, day] = VN_DAY.format(value).split("-").map(Number);
+    return Date.UTC(year || 0, (month || 1) - 1, day || 1);
+  };
+  return Math.round((index(end) - index(now)) / 86_400_000);
+}
+
+function noticesFor(customer: MeCustomer | null, delays: InboxItem[]): InboxItem[] {
+  const now = new Date().toISOString();
+  const items: InboxItem[] = [...delays];
+  const expiresAt = customer?.vipExpiresAt || "";
+  if (customer?.vip && expiresAt) {
+    const left = daysUntil(expiresAt);
+    const plan = customer.packageLabel || customer.vipPlanLabel || "Gói bơi tháng";
+    const when = customer.vipExpiresLabel || new Date(expiresAt).toLocaleDateString("vi-VN");
+    if (left < 0) {
+      items.push({
+        id: "swim-expired",
+        title: "Gói bơi tháng đã hết hạn",
+        body: `${plan} hết hạn ${when}. Gia hạn gói tháng để tiếp tục bơi và giữ ưu đãi kèm theo.`,
+        at: expiresAt,
+        unread: true,
+      });
+    } else if (left <= 14) {
+      items.push({
+        id: "swim-expiring",
+        title: "Gói bơi tháng sắp hết hạn",
+        body: `${plan} còn ${left === 0 ? "hôm nay" : `${left} ngày`} (đến ${when}). Gia hạn sớm để giữ suất bơi và ưu đãi tháng mới.`,
+        at: now,
+        unread: true,
+      });
+    }
+  }
+  items.push({
+    id: "welcome",
     title: "Chào mừng đến Oasis",
-    body: "Quét QR tại từng khu để check-in. Đặt Pickleball & order Mía Ơi ngay trong app.",
-    at: new Date().toISOString(),
-    unread: true,
-  },
-];
+    body: "Quét QR tại từng khu để check-in. Đặt sân, gọi món và xem giải đấu ngay trong app.",
+    at: now,
+  });
+  return items;
+}
 
 export default function MessagesPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [items] = useState<InboxItem[]>(DEMO_INBOX);
+  const [items, setItems] = useState<InboxItem[]>([]);
 
   useEffect(() => {
-    let cancelled = false;
+    const ctrl = new AbortController();
     (async () => {
-      const me = await fetchAuthMe();
+      const delayPromise = fetch("/api/me/tournament-delays", {
+        cache: "no-store",
+        signal: ctrl.signal,
+      })
+        .then(async (res) => {
+          if (!res.ok) return [] as DelayNotice[];
+          const body = await res.json();
+          return (body.delays || []) as DelayNotice[];
+        })
+        .catch((err) => {
+          if (err instanceof DOMException && err.name === "AbortError") throw err;
+          return [] as DelayNotice[];
+        });
+      const [me, delays] = await Promise.all([fetchAuthMe(), delayPromise]);
+      if (ctrl.signal.aborted) return;
       const data = await me.json();
       if (!data.authenticated) {
         router.replace("/login");
         return;
       }
-      if (!cancelled) setReady(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
+      setItems(noticesFor(data.customer || null, delayNotices(delays)));
+      setReady(true);
+    })().catch((err) => {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+    });
+    return () => ctrl.abort();
   }, [router]);
 
   if (!ready) {
@@ -61,7 +156,7 @@ export default function MessagesPage() {
             Messages
           </h1>
           <p className="mt-1 text-sm text-oasis-mute">
-            Tin nhắn & thông báo từ HHG Oasis
+            Tin nhắn và thông báo từ HHG Oasis
           </p>
         </header>
 
@@ -82,21 +177,22 @@ export default function MessagesPage() {
               <p className="mt-2 text-sm leading-relaxed text-oasis-mute">
                 {m.body}
               </p>
+              {m.plannedWhen && m.movedWhen ? (
+                <DelayTimes planned={m.plannedWhen} moved={m.movedWhen} />
+              ) : null}
+              {m.href ? (
+                <Link
+                  href={m.href}
+                  className="mt-3 inline-block text-sm font-bold text-oasis-ink"
+                >
+                  Xem giải đấu
+                </Link>
+              ) : null}
               <p className="mt-3 text-[11px] font-semibold text-oasis-mute">
                 {new Date(m.at).toLocaleString("vi-VN")}
               </p>
             </article>
           ))}
-        </div>
-
-        <div className="rounded-[22px] border border-dashed border-oasis-line bg-white/50 p-4 text-sm text-oasis-mute">
-          <p className="font-semibold text-oasis-ink">Push notification (FCM)</p>
-          <p className="mt-2 leading-relaxed">
-            Web <strong>có hỗ trợ FCM</strong> qua Web Push + service worker
-            (HTTPS). Chrome / Edge / Firefox / Android ổn; iOS chỉ khi user
-            thêm web app ra Home Screen (iOS 16.4+). Chưa bật trong bản này —
-            inbox đang là placeholder.
-          </p>
         </div>
       </div>
     </Shell>

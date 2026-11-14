@@ -53,11 +53,6 @@ export function scanPathForService(serviceCode: string) {
   return `/s/${encodeURIComponent(serviceCode)}`;
 }
 
-/** Legacy path kept for older printed QRs. */
-export function legacyScanPathForService(serviceCode: string) {
-  return `/scan/${encodeURIComponent(serviceCode)}`;
-}
-
 export function scanUrlForService(serviceCode: string) {
   return `${publicAppUrl()}${scanPathForService(serviceCode)}`;
 }

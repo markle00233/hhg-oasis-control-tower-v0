@@ -1929,6 +1929,20 @@ async function fileToBillPhoto(file: File): Promise<string> {
   return url;
 }
 
+type DeskOverview = {
+  todayRevenueVnd: number;
+  todayOrders: number;
+  todayGuests: number;
+  pointsRedeemed: number;
+  voucherClaims: number;
+  zones: {
+    id: string;
+    label: string;
+    points: number;
+    claims: number;
+  }[];
+};
+
 export default function DeskAdministrationPage() {
   const [step, setStep] = useState<Step>("pick");
   const [picked, setPicked] = useState<DeskZone | null>(null);
@@ -1938,6 +1952,11 @@ export default function DeskAdministrationPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   /** ADMINISTRATION global — được Đổi khu */
   const [isSystemAdminUser, setIsSystemAdminUser] = useState(false);
+  const [tournamentPending, setTournamentPending] = useState(0);
+  const [overviewLoad, setOverviewLoad] = useState<{
+    key: string;
+    data: DeskOverview;
+  } | null>(null);
   const [arrivals, setArrivals] = useState<Arrival[]>([]);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Arrival | null>(null);
@@ -2068,6 +2087,36 @@ export default function DeskAdministrationPage() {
     setServiceFilter("");
     setListMenu(null);
   }, [zone]);
+
+  const overviewKey =
+    step === "dashboard" &&
+    !!zone &&
+    zone !== "TOURNAMENT" &&
+    zone !== "ADMIN" &&
+    !isSwimLessonDesk(zone)
+      ? zone
+      : step === "pick" && isSystemAdminUser
+        ? "*"
+        : "";
+  const overview = overviewLoad?.key === overviewKey ? overviewLoad.data : null;
+
+  useEffect(() => {
+    if (!overviewKey) return;
+    const ctrl = new AbortController();
+    const query =
+      overviewKey === "*" ? "" : `?zone=${encodeURIComponent(overviewKey)}`;
+    void fetch(`/api/crm/desk/overview${query}`, {
+      cache: "no-store",
+      signal: ctrl.signal,
+    })
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (ctrl.signal.aborted || !data?.ok) return;
+        setOverviewLoad({ key: overviewKey, data });
+      })
+      .catch(() => undefined);
+    return () => ctrl.abort();
+  }, [overviewKey]);
   /** Menu phía trên — gộp Mía+Hồ hoặc Spa. Hồ riêng vẫn bán vé dưới từng lần quét. */
   const hasCatalog = isMiaOi || isSpa;
   const title = dashboardTitle(zoneName || "…");
@@ -2454,6 +2503,32 @@ export default function DeskAdministrationPage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (step !== "pick" || !isSystemAdminUser) return;
+    let cancelled = false;
+    const pull = () => {
+      if (document.visibilityState === "hidden") return;
+      void fetch("/api/crm/desk/tournaments?summary=1", {
+        cache: "no-store",
+        credentials: "same-origin",
+      })
+        .then(async (res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (cancelled || !data) return;
+          setTournamentPending(Number(data.pendingCount) || 0);
+        })
+        .catch(() => undefined);
+    };
+    pull();
+    const timer = window.setInterval(pull, 8_000);
+    document.addEventListener("visibilitychange", pull);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pull);
+    };
+  }, [step, isSystemAdminUser]);
 
   const pendingApprovalCount = useMemo(
     () =>
@@ -5370,8 +5445,43 @@ export default function DeskAdministrationPage() {
               }}
             >
               <strong style={{ fontSize: 15 }}>Giải đấu</strong>
+              {tournamentPending > 0 ? (
+                <span style={{ fontSize: 12, fontWeight: 800 }}>
+                  {tournamentPending} chờ duyệt
+                </span>
+              ) : null}
             </button>
           </div>
+          {isSystemAdminUser && overview ? (
+            <div style={{ marginTop: 18 }}>
+              <p style={{ ...styles.eyebrow, marginBottom: 8 }}>Thống kê tổng quan</p>
+              <p style={{ margin: "0 0 10px", fontSize: 13, color: "#334155" }}>
+                Hôm nay {formatVnd(overview.todayRevenueVnd)} · {overview.todayOrders} đơn ·{" "}
+                {overview.todayGuests} khách
+              </p>
+              <div style={{ display: "grid", gap: 6 }}>
+                {overview.zones.map((row) => (
+                  <div
+                    key={row.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      fontSize: 13,
+                    }}
+                  >
+                    <strong>{row.label}</strong>
+                    <span style={{ color: "#64748b" }}>
+                      {row.points} điểm đổi · {row.claims} voucher
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ ...styles.mute, marginTop: 8, fontSize: 12 }}>
+                Điểm và voucher tính trong tháng này. Lòng nướng, spa, nước, hồ bơi, pickleball.
+              </p>
+            </div>
+          ) : null}
           <p style={{ ...styles.mute, marginTop: 16, fontSize: 12 }}>
             Acc admin lớn: <strong>{ADMIN_PANEL_USERNAME}</strong> — mọi khu.
             <br />
@@ -5658,7 +5768,7 @@ export default function DeskAdministrationPage() {
               }
             }}
           >
-            Xuất all PDF hôm nay
+            Báo cáo ca PDF
           </button>
           {isSystemAdminUser ? (
             <button type="button" style={styles.actionGhost} onClick={backToPick}>
@@ -6621,6 +6731,16 @@ export default function DeskAdministrationPage() {
             <span className="desk-sheet-chip" style={styles.sheetChip}>
               {visibleTickets.length} dòng
             </span>
+            {overview ? (
+              <span className="desk-sheet-chip" style={styles.sheetChip}>
+                Doanh thu {formatVnd(overview.todayRevenueVnd)}
+              </span>
+            ) : null}
+            {overview ? (
+              <span className="desk-sheet-chip" style={styles.sheetChip}>
+                Tháng này {overview.pointsRedeemed} điểm · {overview.voucherClaims} voucher
+              </span>
+            ) : null}
             <button
               type="button"
               className="desk-sheet-chip"

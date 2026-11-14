@@ -53,11 +53,6 @@ const META: Record<string, { title: string; body: string; accent: string }> = {
     body: "Vé lẻ · Gói tháng (+ voucher HHG, −10% nếu đăng ký cùng ngày với đơn bơi) · Phụ kiện (từ 02 món −10%). Tích điểm: 10K sau giảm = 1 điểm.",
     accent: "#1e3a8a",
   },
-  GYM: {
-    title: "Gym",
-    body: "Chọn gói → Áp voucher (nếu có) → gửi đơn. Quầy duyệt là thanh toán xong.",
-    accent: "#3730a3",
-  },
   VIP_RESORT: {
     title: "VIP Resort",
     body: "Chọn tiện ích / ưu đãi / thẻ → có thể áp nhiều voucher → gửi đơn. Quầy duyệt là thanh toán xong.",
@@ -74,23 +69,6 @@ const META: Record<string, { title: string; body: string; accent: string }> = {
     accent: "#9a3412",
   },
 };
-
-const GYM_PACKAGES: ServicePackage[] = [
-  {
-    id: "gym-day",
-    category: "gym",
-    nameVi: "Vé ngày",
-    priceVnd: 80_000,
-    note: "Gym trong ngày",
-  },
-  {
-    id: "gym-month",
-    category: "gym",
-    nameVi: "Gói tháng",
-    priceVnd: 600_000,
-    note: "30 ngày",
-  },
-];
 
 const LONG_NUONG_PACKAGES: ServicePackage[] = [
   {
@@ -315,8 +293,8 @@ export default function ServiceInfoPage({
     if (code === "SAUNA" || code === "JACUZZI") {
       router.replace("/services/VIP_RESORT");
     }
-    if (code === "RESORT_POOL") {
-      router.replace("/services/GYM");
+    if (code === "RESORT_POOL" || code === "GYM") {
+      router.replace("/services/OLYMPIC_POOL");
     }
     if (code === "CHI_PHEO") {
       router.replace("/services/LONG_NUONG");
@@ -410,7 +388,6 @@ export default function ServiceInfoPage({
     if (code === "OLYMPIC_POOL") return OLYMPIC_ORDER_CATALOG;
     if (code === "SPA") return SPA_MENU;
     if (code === "VIP_RESORT") return [...VIP_DEALS, ...VIP_PREPAID];
-    if (code === "GYM") return GYM_PACKAGES;
     if (code === "LONG_NUONG") return LONG_NUONG_PACKAGES;
     return [];
   }, [code]);
@@ -926,19 +903,18 @@ export default function ServiceInfoPage({
           </>
         ) : null}
 
-        {code === "GYM" || code === "LONG_NUONG" ? (
+        {code === "LONG_NUONG" ? (
           <section className="space-y-3">
             <h2 className="font-display text-xl font-semibold text-oasis-ink">
-              {code === "GYM" ? "Gói Gym" : "Set · multiple choice"}
+              Set · multiple choice
             </h2>
-            {(code === "GYM" ? GYM_PACKAGES : LONG_NUONG_PACKAGES).map((p) => (
+            {LONG_NUONG_PACKAGES.map((p) => (
               <PackageCard
                 key={p.id}
                 p={p}
                 selected={!!selected[p.id]}
                 qty={selected[p.id] || 1}
                 showQty
-                {...(code === "LONG_NUONG" ? {} : voucherField)}
                 onToggle={() => setSelected((s) => toggleId(s, p.id))}
                 onQty={(n) => setSelected((s) => setQty(s, p.id, n))}
               />
@@ -1073,7 +1049,7 @@ export default function ServiceInfoPage({
           </>
         ) : null}
 
-        {!["OLYMPIC_POOL", "SPA", "VIP_RESORT", "GYM", "LONG_NUONG"].includes(
+        {!["OLYMPIC_POOL", "SPA", "VIP_RESORT", "LONG_NUONG"].includes(
           code
         ) ? (
           <Link

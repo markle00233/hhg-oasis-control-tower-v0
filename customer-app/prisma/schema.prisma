@@ -488,7 +488,7 @@ model AppTournamentCheckIn {
   customer      AppCustomer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
   /// QR | STAFF | APP
   source        String        @default("QR")
-  /// REGISTERED Tham gia | PRESENT Có mặt | NO_SHOW Không đến | CANCELLED Đã hủy
+  /// PENDING Chờ duyệt | REGISTERED Tham gia | PRESENT Có mặt | NO_SHOW Không đến | CANCELLED Đã hủy
   attendance    String        @default("REGISTERED")
   /// Set only when the athlete checks in.
   checkedInAt   DateTime?
