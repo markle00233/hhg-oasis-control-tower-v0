@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/Shell";
+import { DelayTimes } from "@/components/delay-times";
 import {
   ATTENDANCE,
   ATTENDANCE_LABEL,
@@ -20,7 +21,8 @@ type Entry = {
   galleryUrl: string | null;
   startsAt: string;
   status: TournamentStatus;
-  rescheduleNote: string | null;
+  plannedWhen: string | null;
+  movedWhen: string | null;
   attendance: TournamentAttendance | null;
 };
 
@@ -72,6 +74,7 @@ function timeBucket(eventTime: string | null): TimeId {
 function inFilter(row: Entry, filter: FilterId) {
   if (filter === "MINE") {
     return (
+      row.attendance === ATTENDANCE.PENDING ||
       row.attendance === ATTENDANCE.REGISTERED ||
       row.attendance === ATTENDANCE.PRESENT ||
       row.attendance === ATTENDANCE.NO_SHOW
@@ -87,6 +90,7 @@ const EVENT_TONE: Record<TournamentStatus, string> = {
 };
 
 const TONE: Record<TournamentAttendance, string> = {
+  PENDING: "bg-orange-100 text-orange-900",
   REGISTERED: "bg-sky-100 text-sky-900",
   PRESENT: "bg-green-100 text-green-800",
   NO_SHOW: "bg-amber-100 text-amber-900",
@@ -329,7 +333,7 @@ export default function TournamentsPage() {
         ) : (
           <div key={`${filter}|${court}|${time}`} className="space-y-3">
             {shown.map((row, index) => {
-              const place = [row.dayLabel, row.court, row.eventTime]
+              const place = [row.dayLabel, row.court, row.plannedWhen ? null : row.eventTime]
                 .filter(Boolean)
                 .join(" · ");
               const attendance = row.attendance;
@@ -360,11 +364,6 @@ export default function TournamentsPage() {
                       >
                         {TOURNAMENT_STATUS_LABEL[row.status]}
                       </span>
-                      {row.rescheduleNote ? (
-                        <span className="max-w-[9.5rem] text-right text-xs font-bold text-amber-800">
-                          {row.rescheduleNote}
-                        </span>
-                      ) : null}
                       {attendance ? (
                         <span
                           className={`rounded-full px-3 py-1 text-xs font-extrabold ${TONE[attendance]}`}
@@ -374,16 +373,27 @@ export default function TournamentsPage() {
                       ) : null}
                     </div>
                   </div>
+                  {row.plannedWhen && row.movedWhen ? (
+                    <DelayTimes planned={row.plannedWhen} moved={row.movedWhen} />
+                  ) : null}
                   <div className="mt-3">
-                    {attendance === ATTENDANCE.REGISTERED ? (
-                      <button
-                        type="button"
-                        disabled={busyId === row.id}
-                        onClick={() => void act(row.id, "cancel")}
-                        className="h-11 rounded-2xl border border-oasis-line px-4 text-sm font-bold text-oasis-ink"
-                      >
-                        Hủy đăng ký
-                      </button>
+                    {attendance === ATTENDANCE.REGISTERED ||
+                    attendance === ATTENDANCE.PENDING ? (
+                      <div>
+                        {attendance === ATTENDANCE.PENDING ? (
+                          <p className="mb-2 text-sm text-oasis-mute">
+                            Chờ duyệt. Nhân viên sẽ gọi để thu tiền, rồi bấm Duyệt trên quầy.
+                          </p>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={busyId === row.id}
+                          onClick={() => void act(row.id, "cancel")}
+                          className="h-11 rounded-2xl border border-oasis-line px-4 text-sm font-bold text-oasis-ink"
+                        >
+                          Hủy đăng ký
+                        </button>
+                      </div>
                     ) : !attendance && row.status === "UPCOMING" ? (
                       <button
                         type="button"
@@ -391,7 +401,7 @@ export default function TournamentsPage() {
                         onClick={() => void act(row.id, "join")}
                         className="h-11 rounded-2xl bg-oasis-ink px-4 text-sm font-bold text-white"
                       >
-                        Tham gia
+                        Đăng ký
                       </button>
                     ) : null}
                   </div>

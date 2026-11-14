@@ -5,7 +5,7 @@ import { packageIdFromVipPlanLabel, vouchersClaimableAtZone } from "@/lib/hhg-vo
 import { monthPackageFilters } from "@/lib/olympic-pool-menu";
 import { SWIM_PACKAGES, swimBonusExpiresAt } from "@/lib/swim-packages";
 
-type Sector = "vip" | "swim" | "spa" | "grill" | "tournament";
+type Sector = "vip" | "swim" | "spa" | "grill" | "tournament" | "checkin";
 
 type Subscriber = {
   id: string;
@@ -35,6 +35,15 @@ type BonusLog = {
   id: string;
   purpose: string;
   usedAt: string;
+};
+
+type CheckinPhone = {
+  id: string;
+  fullName: string;
+  phone: string;
+  lastAt: string;
+  zone: string;
+  visits: number;
 };
 
 type RedeemedVoucher = {
@@ -92,21 +101,135 @@ function bonusLabel(row: SwimStudent) {
   return `${count} · đến ${formatWhen(until.toISOString())}`;
 }
 
-type AdminSort = "time-desc" | "time-asc" | "staff" | "name";
+type AdminSort =
+  | "time-desc"
+  | "time-asc"
+  | "expires-desc"
+  | "expires-asc"
+  | "staff"
+  | "name"
+  | "phone"
+  | "plan"
+  | "sessions"
+  | "bonus"
+  | "visits";
 
-const ADMIN_SORTS: { id: AdminSort; label: string }[] = [
-  { id: "time-desc", label: "Mới nhất" },
-  { id: "time-asc", label: "Cũ nhất" },
-  { id: "staff", label: "Nhân viên đứng ca" },
-  { id: "name", label: "Tên khách" },
-];
+function sortsFor(sector: Sector): { id: AdminSort; label: string }[] {
+  const newest = sector === "checkin" ? "Check-in mới" : "Mới nhất";
+  const oldest = sector === "checkin" ? "Check-in cũ" : "Cũ nhất";
+  const people: { id: AdminSort; label: string }[] = [
+    { id: "name", label: "Họ tên" },
+    ...(sector === "checkin"
+      ? []
+      : [{ id: "staff" as const, label: "Nhân viên đứng ca" }]),
+    { id: "phone", label: "Số điện thoại" },
+  ];
+  const time: { id: AdminSort; label: string }[] = [
+    { id: "time-desc", label: newest },
+    { id: "time-asc", label: oldest },
+  ];
+  if (sector === "vip" || sector === "swim") {
+    return [
+      ...time,
+      { id: "expires-desc", label: "Hết hạn gần" },
+      { id: "expires-asc", label: "Hết hạn xa" },
+      ...people,
+      { id: "plan", label: "Gói" },
+      ...(sector === "swim"
+        ? [
+            { id: "sessions" as const, label: "Buổi" },
+            { id: "bonus" as const, label: "Lượt tự chọn" },
+          ]
+        : []),
+    ];
+  }
+  if (sector === "checkin") {
+    return [
+      ...time,
+      ...people,
+      { id: "plan", label: "Khu" },
+      { id: "visits", label: "Số lần" },
+    ];
+  }
+  return [...time, ...people, { id: "plan", label: "Voucher" }];
+}
 
 const SORT_GROUP: Record<AdminSort, string> = {
   "time-desc": "time",
   "time-asc": "time",
+  "expires-desc": "expires",
+  "expires-asc": "expires",
   staff: "staff",
   name: "name",
+  phone: "phone",
+  plan: "plan",
+  sessions: "sessions",
+  bonus: "bonus",
+  visits: "visits",
 };
+
+type FieldId =
+  | "name"
+  | "staff"
+  | "phone"
+  | "started"
+  | "expires"
+  | "plan"
+  | "sessions"
+  | "bonus";
+
+const EMPTY_FIELD_QUERY: Record<FieldId, string> = {
+  name: "",
+  staff: "",
+  phone: "",
+  started: "",
+  expires: "",
+  plan: "",
+  sessions: "",
+  bonus: "",
+};
+
+function fieldChoicesFor(sector: Sector) {
+  const started =
+    sector === "vip" || sector === "swim"
+      ? "Ngày đăng ký"
+      : sector === "checkin"
+        ? "Check-in"
+        : "Thời điểm";
+  const list: { id: FieldId; label: string }[] = [
+    { id: "name", label: "Họ tên" },
+    ...(sector === "checkin"
+      ? []
+      : [{ id: "staff" as const, label: "Nhân viên đứng ca" }]),
+    { id: "phone", label: "Số điện thoại" },
+    { id: "started", label: started },
+  ];
+  if (sector === "vip" || sector === "swim") {
+    list.push({ id: "expires", label: "Hết hạn" }, { id: "plan", label: "Gói" });
+  } else if (sector === "checkin") {
+    list.push({ id: "plan", label: "Khu" });
+  } else {
+    list.push({ id: "plan", label: "Voucher" });
+  }
+  if (sector === "swim") {
+    list.push(
+      { id: "sessions", label: "Buổi" },
+      { id: "bonus", label: "Lượt tự chọn" }
+    );
+  }
+  return list;
+}
+
+function fieldPlaceholder(id: FieldId) {
+  if (id === "name") return "Tìm tên khách";
+  if (id === "staff") return "Tìm nhân viên";
+  if (id === "phone") return "Tìm số điện thoại";
+  if (id === "plan") return "Tìm gói, khu hoặc voucher";
+  if (id === "sessions") return "vd. 8/12";
+  if (id === "bonus") return "vd. 2/4";
+  if (id === "expires") return "vd. 10/03/2028";
+  return "vd. 10/01/2027";
+}
 
 type FilterChoice = { id: string; label: string };
 
@@ -174,31 +297,112 @@ function foldVi(value: string) {
 
 function toggleAdminSort(current: AdminSort[], next: AdminSort) {
   const group = SORT_GROUP[next];
-  const idx = current.findIndex((id) => SORT_GROUP[id] === group);
-  if (idx >= 0 && current[idx] === next) {
-    const removed = current.filter((_, i) => i !== idx);
-    return removed.length ? removed : current;
+  const without = current.filter((id) => SORT_GROUP[id] !== group);
+  if (current[0] === next) {
+    return without.length ? without : current;
   }
-  if (idx >= 0) {
-    const copy = [...current];
-    copy[idx] = next;
-    return copy;
-  }
-  return [...current, next];
+  return [next, ...without.filter((id) => id !== next)];
 }
 
-function compareListed(
-  a: { id: string; name: string; at: string | null; staff: string | null },
-  b: { id: string; name: string; at: string | null; staff: string | null },
-  sort: AdminSort
-) {
-  if (sort === "name") return a.name.localeCompare(b.name, "vi");
-  if (sort === "staff") {
-    return (a.staff || "").localeCompare(b.staff || "", "vi");
+type Sortable = {
+  id: string;
+  name: string;
+  at: string | null;
+  staff: string | null;
+  phone?: string | null;
+  expiresAt?: string | null;
+  plan?: string | null;
+  sessions?: string | null;
+  bonus?: string | null;
+  visits?: number;
+};
+
+function textSort(a: string | null | undefined, b: string | null | undefined) {
+  return (a || "").localeCompare(b || "", "vi");
+}
+
+function compareListed(a: Sortable, b: Sortable, sort: AdminSort) {
+  if (sort === "name") return textSort(a.name, b.name);
+  if (sort === "staff") return textSort(a.staff, b.staff);
+  if (sort === "phone") {
+    const pa = (a.phone || "").replace(/\D/g, "");
+    const pb = (b.phone || "").replace(/\D/g, "");
+    if (!pa && !pb) return 0;
+    if (!pa) return 1;
+    if (!pb) return -1;
+    return pa.localeCompare(pb);
   }
-  const ta = a.at ? new Date(a.at).getTime() : 0;
-  const tb = b.at ? new Date(b.at).getTime() : 0;
-  return sort === "time-asc" ? ta - tb : tb - ta;
+  if (sort === "plan") return textSort(a.plan, b.plan);
+  if (sort === "sessions") return textSort(a.sessions, b.sessions);
+  if (sort === "bonus") return textSort(a.bonus, b.bonus);
+  if (sort === "visits") return (a.visits || 0) - (b.visits || 0);
+  const key = sort.startsWith("expires") ? "expiresAt" : "at";
+  const ta = a[key] ? new Date(a[key] as string).getTime() : 0;
+  const tb = b[key] ? new Date(b[key] as string).getTime() : 0;
+  return sort.endsWith("asc") ? ta - tb : tb - ta;
+}
+
+function CheckinPhoneCell({
+  customerId,
+  phone,
+  onSaved,
+}: {
+  customerId: string;
+  phone: string;
+  onSaved: (phone: string) => void;
+}) {
+  const [value, setValue] = useState(phone);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => setValue(phone), [phone]);
+
+  async function save() {
+    const next = value.trim();
+    if (!next || next === phone) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/crm/desk/checkin-phones", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ customerId, phone: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Không lưu được số.");
+      const saved = String(data.phone || next);
+      setValue(saved);
+      onSaved(saved);
+      setMsg("Đã lưu");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Không lưu được số.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <input
+        value={value}
+        inputMode="tel"
+        aria-label="Số điện thoại"
+        placeholder="Nhập số để lưu"
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+        }}
+        style={styles.phoneInput}
+      />
+      <button type="button" style={styles.logBtn} disabled={busy} onClick={() => void save()}>
+        {busy ? "…" : "Lưu"}
+      </button>
+      {msg ? (
+        <span style={{ fontSize: 12, color: msg === "Đã lưu" ? "#166534" : "#b91c1c" }}>
+          {msg}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export function DeskVipSubscribers({
@@ -211,11 +415,13 @@ export function DeskVipSubscribers({
   const [sector, setSector] = useState<Sector>("vip");
   const [goi, setGoi] = useState("");
   const [sorts, setSorts] = useState<AdminSort[]>(["time-desc"]);
-  const [staffQuery, setStaffQuery] = useState("");
-  const [nameQuery, setNameQuery] = useState("");
-  const [menu, setMenu] = useState<null | "filter" | "sort">(null);
+  const [fieldOn, setFieldOn] = useState<FieldId[]>([]);
+  const [fieldQuery, setFieldQuery] =
+    useState<Record<FieldId, string>>(EMPTY_FIELD_QUERY);
+  const [menu, setMenu] = useState<null | "filter" | "fields" | "sort">(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Subscriber[] | null>(null);
+  const [checkins, setCheckins] = useState<CheckinPhone[] | null>(null);
   const [students, setStudents] = useState<SwimStudent[] | null>(null);
   const [redeemed, setRedeemed] = useState<RedeemedVoucher[] | null>(null);
   const [error, setError] = useState("");
@@ -244,6 +450,34 @@ export function DeskVipSubscribers({
     }
     setRows(Array.isArray(data.subscribers) ? data.subscribers : []);
   }, []);
+
+  const loadCheckins = useCallback(async () => {
+    setError("");
+    const res = await fetch("/api/crm/desk/checkin-phones", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) {
+      setCheckins(null);
+      setError(data.error || "Phiên đăng nhập đã hết. Chọn lại khu.");
+      return;
+    }
+    if (!res.ok) {
+      setError(data.error || "Không tải được số check-in.");
+      return;
+    }
+    setCheckins(Array.isArray(data.phones) ? data.phones : []);
+  }, []);
+
+  function rememberPhone(id: string, phone: string) {
+    setCheckins((prev) =>
+      prev ? prev.map((row) => (row.id === id ? { ...row, phone } : row)) : prev
+    );
+    setRows((prev) =>
+      prev ? prev.map((row) => (row.id === id ? { ...row, phone } : row)) : prev
+    );
+    setStudents((prev) =>
+      prev ? prev.map((row) => (row.id === id ? { ...row, phone } : row)) : prev
+    );
+  }
 
   const loadSwim = useCallback(async () => {
     setError("");
@@ -320,8 +554,8 @@ export function DeskVipSubscribers({
   useEffect(() => {
     setGoi("");
     setSorts(["time-desc"]);
-    setStaffQuery("");
-    setNameQuery("");
+    setFieldOn([]);
+    setFieldQuery(EMPTY_FIELD_QUERY);
     setMenu(null);
   }, [sector]);
 
@@ -345,6 +579,8 @@ export function DeskVipSubscribers({
     if (sector !== "swim") setLogFor(null);
     if (sector === "vip") {
       void loadVip().catch(() => setError("Không tải được danh sách."));
+    } else if (sector === "checkin") {
+      void loadCheckins().catch(() => setError("Không tải được số check-in."));
     } else if (sector === "swim") {
       void loadSwim().catch(() => setError("Không tải được danh sách học viên."));
     } else if (sector === "tournament") {
@@ -352,7 +588,7 @@ export function DeskVipSubscribers({
     } else {
       void loadRedeemed(sector);
     }
-  }, [sector, loadVip, loadSwim, loadRedeemed, loadTournament]);
+  }, [sector, loadVip, loadCheckins, loadSwim, loadRedeemed, loadTournament]);
 
   async function openLog(person: SwimStudent) {
     setLogFor({
@@ -397,6 +633,13 @@ export function DeskVipSubscribers({
         (label) => TOURNAMENT_PLACES.some((place) => place.label === label)
       );
     }
+    if (sector === "checkin") {
+      return withExtras(
+        [],
+        (checkins || []).map((row) => row.zone),
+        () => false
+      );
+    }
     const zone = sector === "spa" ? "SAUNA" : "LONG_NUONG";
     const vouchers = vouchersClaimableAtZone(zone).map((voucher) => ({
       id: voucher.id,
@@ -408,22 +651,47 @@ export function DeskVipSubscribers({
       (redeemed || []).map((row) => row.offerTitle || "Voucher"),
       (label) => known.has(label)
     );
-  }, [sector, rows, students, redeemed]);
+  }, [sector, rows, students, redeemed, checkins]);
   const selectedChoice = packageChoices.find((item) => item.id === goi) || null;
   const selectedGoi = selectedChoice?.id || "";
   const activeSorts: AdminSort[] = sorts.length ? sorts : ["time-desc"];
-  function matchesQuery(name: string, staff: string | null) {
-    if (activeSorts.includes("staff") && staffQuery.trim()) {
-      if (!foldVi(staff || "").includes(foldVi(staffQuery.trim()))) return false;
-    }
-    if (activeSorts.includes("name") && nameQuery.trim()) {
-      if (!foldVi(name).includes(foldVi(nameQuery.trim()))) return false;
+  const sortChoices = sortsFor(sector);
+  const fieldChoices = fieldChoicesFor(sector);
+  function matchesFields(row: {
+    name: string;
+    staff: string | null;
+    phone?: string | null;
+    at: string | null;
+    expiresAt?: string | null;
+    plan?: string | null;
+    sessions?: string | null;
+    bonus?: string | null;
+  }) {
+    const text: Record<FieldId, string> = {
+      name: row.name,
+      staff: row.staff || "",
+      phone: row.phone || "",
+      started: formatWhen(row.at),
+      expires: formatWhen(row.expiresAt ?? null),
+      plan: row.plan || "",
+      sessions: row.sessions || "",
+      bonus: row.bonus || "",
+    };
+    for (const id of fieldOn) {
+      const q = fieldQuery[id].trim();
+      if (!q) continue;
+      if (id === "phone") {
+        const digits = q.replace(/\D/g, "");
+        if (digits) {
+          if (!(row.phone || "").replace(/\D/g, "").includes(digits)) return false;
+          continue;
+        }
+      }
+      if (!foldVi(text[id]).includes(foldVi(q))) return false;
     }
     return true;
   }
-  function ordered<T extends { id: string; name: string; at: string | null; staff: string | null }>(
-    list: T[]
-  ) {
+  function ordered<T extends Sortable>(list: T[]) {
     const copy = [...list];
     copy.sort((a, b) => {
       for (const sort of activeSorts) {
@@ -437,24 +705,45 @@ export function DeskVipSubscribers({
   const vipShown = ordered(
     (rows || [])
       .filter((row) => planSelected(row.planLabel, selectedGoi))
-      .filter((row) => matchesQuery(row.fullName, row.staffName))
       .map((row) => ({
         ...row,
         name: row.fullName,
         at: row.startedAt,
         staff: row.staffName,
+        phone: row.phone,
+        expiresAt: row.expiresAt,
+        plan: displayPlanLabel(row.planLabel),
       }))
+      .filter((row) => matchesFields(row))
   );
   const swimShown = ordered(
     (students || [])
       .filter((row) => labelSelected(row.packageLabel, selectedGoi, SWIM_PACKAGE_FILTERS))
-      .filter((row) => matchesQuery(row.fullName, row.createdByName))
       .map((row) => ({
         ...row,
         name: row.fullName,
         at: row.startedAt,
         staff: row.createdByName,
+        phone: row.phone,
+        expiresAt: row.expiresAt,
+        plan: row.packageLabel,
+        sessions: sessionsLabel(row),
+        bonus: bonusLabel(row),
       }))
+      .filter((row) => matchesFields(row))
+  );
+  const checkinShown = ordered(
+    (checkins || [])
+      .filter((row) => labelSelected(row.zone, selectedGoi, packageChoices))
+      .map((row) => ({
+        ...row,
+        name: row.fullName,
+        at: row.lastAt,
+        staff: null,
+        phone: row.phone,
+        plan: row.zone,
+      }))
+      .filter((row) => matchesFields(row))
   );
   const redeemedShown = ordered(
     (redeemed || [])
@@ -465,15 +754,22 @@ export function DeskVipSubscribers({
           packageChoices
         )
       )
-      .filter((row) => matchesQuery(row.customerName || "Khách", row.claimedByName))
       .map((row) => ({
         ...row,
         name: row.customerName || "Khách",
         at: row.at,
         staff: row.claimedByName,
+        phone: row.phone,
+        plan:
+          sector === "tournament"
+            ? [row.placeLabel, row.offerTitle, row.tournamentName]
+                .filter(Boolean)
+                .join(" · ") || "Voucher"
+            : row.offerTitle || "Voucher",
       }))
+      .filter((row) => matchesFields(row))
   );
-  const searching = Boolean(staffQuery.trim() || nameQuery.trim());
+  const searching = fieldOn.some((id) => fieldQuery[id].trim());
   const emptyFilter =
     searching
       ? "Không có khách cho bộ lọc này."
@@ -481,21 +777,28 @@ export function DeskVipSubscribers({
         ? "Không có học viên cho gói này."
         : sector === "vip"
           ? "Không có khách cho gói này."
+          : sector === "checkin"
+            ? "Không có số cho khu này."
           : sector === "tournament"
         ? "Không có lượt đổi tại khu này."
         : "Không có lượt đổi cho voucher này.";
   const sourceCount =
     sector === "vip"
       ? rows?.length || 0
+      : sector === "checkin"
+        ? checkins?.length || 0
       : sector === "swim"
         ? students?.length || 0
         : redeemed?.length || 0;
   const swimCount = swimShown.length;
   const vipCount = vipShown.length;
   const redeemedCount = redeemedShown.length;
+  const checkinCount = checkinShown.length;
   const title =
     sector === "vip"
       ? "Khách đang dùng gói VIP"
+      : sector === "checkin"
+        ? "SĐT đã check-in"
       : sector === "swim"
         ? "Khách học bơi"
         : sector === "spa"
@@ -508,6 +811,10 @@ export function DeskVipSubscribers({
       ? rows
         ? `${vipCount} khách còn hạn`
         : "Tên, số điện thoại, ngày đăng ký, gói và ngày hết hạn."
+      : sector === "checkin"
+        ? checkins
+          ? `${checkinCount} số đã lưu từ check-in`
+          : "Số khách đưa lúc check-in. Sửa rồi bấm Lưu để giữ lại."
       : sector === "swim"
         ? students
           ? `${swimCount} học viên`
@@ -536,6 +843,19 @@ export function DeskVipSubscribers({
                 }}
               >
                 Gói VIP
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.pill,
+                  ...(sector === "checkin" ? styles.pillOn : null),
+                }}
+                onClick={() => {
+                  setGoi("");
+                  setSector("checkin");
+                }}
+              >
+                SĐT check-in
               </button>
               <button
                 type="button"
@@ -626,22 +946,36 @@ export function DeskVipSubscribers({
                   ],
                 },
                 {
+                  id: "fields" as const,
+                  value:
+                    fieldChoices
+                      .filter((choice) => fieldOn.includes(choice.id))
+                      .map((choice) => choice.label)
+                      .join(" · ") || "Lọc trường",
+                  active: fieldOn.length > 0 || menu === "fields",
+                  options: fieldChoices.map((choice) => ({
+                    id: choice.id,
+                    label: choice.label,
+                    on: fieldOn.includes(choice.id),
+                    search: "field",
+                  })),
+                },
+                {
                   id: "sort" as const,
                   value:
                     activeSorts
-                      .map((id) => ADMIN_SORTS.find((item) => item.id === id)?.label)
+                      .map((id) => sortChoices.find((item) => item.id === id)?.label)
                       .filter(Boolean)
                       .join(" · ") || "Mới nhất",
                   active:
                     activeSorts.length !== 1 ||
                     activeSorts[0] !== "time-desc" ||
                     menu === "sort",
-                  options: ADMIN_SORTS.map((item) => ({
+                  options: sortChoices.map((item) => ({
                     id: item.id,
                     label: item.label,
                     on: activeSorts.includes(item.id),
-                    search:
-                      item.id === "staff" ? "staff" : item.id === "name" ? "name" : "",
+                    search: "",
                   })),
                 },
               ]
@@ -669,6 +1003,7 @@ export function DeskVipSubscribers({
                       style={{
                         ...styles.menu,
                         ...(item.id === "filter" ? styles.menuScroll : null),
+                        ...(item.id === "fields" ? styles.menuFields : null),
                         ...(item.id === "sort" ? styles.menuSort : null),
                       }}
                     >
@@ -676,12 +1011,21 @@ export function DeskVipSubscribers({
                         <div key={opt.id || "all"}>
                           <button
                             type="button"
-                            role={item.id === "sort" ? "menuitemcheckbox" : "menuitemradio"}
+                            role={item.id === "filter" ? "menuitemradio" : "menuitemcheckbox"}
                             aria-checked={opt.on}
                             onClick={() => {
                               if (item.id === "filter") {
                                 setGoi(opt.id);
                                 setMenu(null);
+                                return;
+                              }
+                              if (item.id === "fields") {
+                                const id = opt.id as FieldId;
+                                setFieldOn((cur) =>
+                                  cur.includes(id)
+                                    ? cur.filter((itemId) => itemId !== id)
+                                    : [...cur, id]
+                                );
                                 return;
                               }
                               setSorts((cur) => toggleAdminSort(cur, opt.id as AdminSort));
@@ -693,21 +1037,15 @@ export function DeskVipSubscribers({
                           >
                             {opt.label}
                           </button>
-                          {opt.search && opt.on ? (
+                          {item.id === "fields" && opt.on ? (
                             <input
                               type="search"
-                              value={opt.search === "staff" ? staffQuery : nameQuery}
-                              placeholder={
-                                opt.search === "staff" ? "Tìm nhân viên" : "Tìm tên khách"
-                              }
-                              aria-label={
-                                opt.search === "staff"
-                                  ? "Tìm nhân viên đứng ca"
-                                  : "Tìm tên khách"
-                              }
+                              value={fieldQuery[opt.id as FieldId]}
+                              placeholder={fieldPlaceholder(opt.id as FieldId)}
+                              aria-label={opt.label}
                               onChange={(e) => {
-                                if (opt.search === "staff") setStaffQuery(e.target.value);
-                                else setNameQuery(e.target.value);
+                                const id = opt.id as FieldId;
+                                setFieldQuery((cur) => ({ ...cur, [id]: e.target.value }));
                               }}
                               style={styles.menuSearch}
                             />
@@ -818,6 +1156,51 @@ export function DeskVipSubscribers({
             </table>
           </div>
         )
+        ) : sector === "checkin" ? (
+          checkins === null ? (
+            error ? null : <p style={styles.mute}>Đang tải…</p>
+          ) : checkins.length === 0 ? (
+            <p style={styles.mute}>Chưa có lượt check-in nào được lưu số.</p>
+          ) : (
+            <div style={{ overflowX: "auto", marginTop: 16 }}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Họ tên</th>
+                    <th style={styles.th}>Số điện thoại</th>
+                    <th style={styles.th}>Check-in gần nhất</th>
+                    <th style={styles.th}>Khu</th>
+                    <th style={styles.th}>Số lần</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {checkinShown.length === 0 ? (
+                    <tr>
+                      <td style={styles.td} colSpan={5}>
+                        {emptyFilter}
+                      </td>
+                    </tr>
+                  ) : (
+                    checkinShown.map((row) => (
+                      <tr key={row.id}>
+                        <td style={{ ...styles.td, fontWeight: 700 }}>{row.fullName}</td>
+                        <td style={styles.td}>
+                          <CheckinPhoneCell
+                            customerId={row.id}
+                            phone={row.phone}
+                            onSaved={(phone) => rememberPhone(row.id, phone)}
+                          />
+                        </td>
+                        <td style={styles.td}>{formatWhen(row.lastAt)}</td>
+                        <td style={styles.td}>{row.zone}</td>
+                        <td style={{ ...styles.td, fontWeight: 800 }}>{row.visits}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )
         ) : redeemed === null ? (
           error ? null : <p style={styles.mute}>Đang tải…</p>
         ) : redeemed.length === 0 ? (
@@ -1024,6 +1407,12 @@ const styles = {
     maxHeight: 360,
     overflowY: "auto" as const,
   },
+  menuFields: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 8,
+    minWidth: 260,
+  },
   menuSort: {
     display: "flex",
     flexDirection: "column" as const,
@@ -1056,6 +1445,14 @@ const styles = {
     padding: "0 10px",
     fontSize: 13,
     boxSizing: "border-box" as const,
+  },
+  phoneInput: {
+    height: 34,
+    width: 140,
+    borderRadius: 8,
+    border: "1px solid #e2e8f0",
+    padding: "0 10px",
+    fontSize: 14,
   },
   th: {
     textAlign: "left" as const,

@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
+import { DelayTimes } from "@/components/delay-times";
 import { fetchQrDataUrl } from "@/lib/qr-data-url";
 import {
   ATTENDANCE,
@@ -28,6 +29,12 @@ function scanPrompt(event: EventView): ScanPrompt {
   const attendance = event.attendance || "";
   if (!event.loggedIn) return { kind: "login" };
   if (attendance === ATTENDANCE.PRESENT) return { kind: "present" };
+  if (attendance === ATTENDANCE.PENDING) {
+    return {
+      kind: "note",
+      text: "Chờ duyệt. Nhân viên sẽ gọi để thu tiền, rồi duyệt. Check-in mở sau khi được duyệt.",
+    };
+  }
   if (attendance === ATTENDANCE.CANCELLED) return { kind: "cancelled" };
   if (attendance === ATTENDANCE.NO_SHOW) {
     return { kind: "note", text: "Bạn không còn trong danh sách giải này." };
@@ -58,7 +65,8 @@ type EventView = {
   resultsImage: string | null;
   discountVnd: number;
   status: TournamentStatus;
-  rescheduleNote: string | null;
+  plannedWhen: string | null;
+  movedWhen: string | null;
   open: boolean;
   ended: boolean;
   loggedIn: boolean;
@@ -131,11 +139,12 @@ export default function TournamentScanPage({
       if (!res.ok) throw new Error(data.error || "Không lưu được.");
       setEvent(data.event);
       setInfo(
-        intent === "register"
-          ? "Đã đăng ký. Trạng thái: Tham gia."
-          : data.already
-            ? "Bạn đã check-in."
-            : "Đã check-in. Trạng thái: Có mặt."
+        data.message ||
+          (intent === "register"
+            ? "Chờ duyệt. Nhân viên sẽ gọi để thu tiền, rồi duyệt trên quầy."
+            : data.already
+              ? "Bạn đã check-in."
+              : "Đã check-in. Trạng thái: Có mặt.")
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được.");
@@ -144,7 +153,9 @@ export default function TournamentScanPage({
     }
   }
 
-  const place = [event?.dayLabel, event?.court, event?.eventTime].filter(Boolean).join(" · ");
+  const place = [event?.dayLabel, event?.court, event?.plannedWhen ? null : event?.eventTime]
+    .filter(Boolean)
+    .join(" · ");
   const attendance = event?.attendance || "";
   const prompt = event ? scanPrompt(event) : null;
   const loginHref = `/login?next=${encodeURIComponent(`/t/${token}`)}`;
@@ -187,12 +198,10 @@ export default function TournamentScanPage({
                 <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-extrabold">
                   {TOURNAMENT_STATUS_LABEL[event.status] || event.status}
                 </span>
-                {event.rescheduleNote ? (
-                  <span className="text-sm font-semibold text-oasis-gold">
-                    {event.rescheduleNote}
-                  </span>
-                ) : null}
               </div>
+              {event.plannedWhen && event.movedWhen ? (
+                <DelayTimes planned={event.plannedWhen} moved={event.movedWhen} tone="dark" />
+              ) : null}
               {attendance ? (
                 <p className="mt-3 text-sm font-bold">
                   {ATTENDANCE_LABEL[attendance as keyof typeof ATTENDANCE_LABEL] || attendance}
@@ -224,7 +233,7 @@ export default function TournamentScanPage({
                 href={loginHref}
                 className="flex h-12 items-center justify-center rounded-2xl bg-oasis-ink text-sm font-bold text-white"
               >
-                {event.status === "UPCOMING" ? "Đăng nhập để tham gia" : "Đăng nhập"}
+                {event.status === "UPCOMING" ? "Đăng nhập để đăng ký" : "Đăng nhập"}
               </Link>
             ) : null}
             {prompt?.kind === "cancelled" ? (
@@ -249,7 +258,7 @@ export default function TournamentScanPage({
                 onClick={() => void act(prompt.kind === "check-in" ? "check-in" : "register")}
                 className="h-12 w-full rounded-2xl bg-oasis-ink text-sm font-bold text-white"
               >
-                {prompt.kind === "check-in" ? "Check-in" : "Tham gia"}
+                {prompt.kind === "check-in" ? "Check-in" : "Đăng ký"}
               </button>
             ) : null}
 

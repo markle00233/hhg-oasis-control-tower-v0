@@ -221,7 +221,26 @@ export async function POST(
     });
 
     if (intent === "register") {
-      if (existing?.attendance === ATTENDANCE.REGISTERED) {
+      if (
+        existing?.attendance === ATTENDANCE.REGISTERED ||
+        existing?.attendance === ATTENDANCE.PENDING
+      ) {
+        if (existing.attendance === ATTENDANCE.PENDING) {
+          await prisma.appTournamentCheckIn.update({
+            where: { id: existing.id },
+            data: {
+              attendance: ATTENDANCE.REGISTERED,
+              checkedByName: staffName,
+            },
+          });
+          return NextResponse.json({
+            ok: true,
+            already: false,
+            fullName: name,
+            attendance: ATTENDANCE.REGISTERED,
+            message: `Đã duyệt ${name}.`,
+          });
+        }
         return NextResponse.json({
           ok: true,
           already: true,

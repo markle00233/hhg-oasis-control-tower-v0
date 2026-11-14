@@ -15,7 +15,7 @@ import {
   parseCourt,
   parseEventTime,
   parseVoucherZone,
-  rescheduleNote,
+  scheduleFields,
   tournamentDayLabel,
   tournamentStatusAt,
   vnCivilDayKey,
@@ -53,7 +53,7 @@ function present(
     eventTime: row.eventTime,
     summary: row.summary,
     status: tournamentStatusAt(row.startsAt, row.endsAt, row.eventTime),
-    rescheduleNote: rescheduleNote({
+    ...scheduleFields({
       originalStartsAt: row.originalStartsAt,
       originalEventTime: row.originalEventTime,
       startsAt: row.startsAt,

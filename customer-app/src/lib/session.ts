@@ -98,7 +98,6 @@ export async function getSessionCustomer(opts?: { touch?: boolean }) {
           username: true,
           status: true,
           createdAt: true,
-          passwordHash: true,
           updatedAt: true,
           fullName: true,
           phone: true,

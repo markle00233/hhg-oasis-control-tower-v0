@@ -3,7 +3,8 @@
  * Keep in sync with customer-app/src/lib/tournament.ts.
  *
  * One row per athlete per event.
- * Signup stores Tham gia. Check-in stores Có mặt.
+ * Signup from the app stores Chờ duyệt. Staff approve after payment stores Tham gia.
+ * Check-in stores Có mặt.
  * The event day ending without check-in stores Không đến.
  * The athlete cancelling their entry stores Đã hủy.
  * The voucher is separate: one per athlete, one amount, redeemed once
@@ -14,6 +15,17 @@
 import { randomBytes } from "crypto";
 
 export const VN_TZ = "Asia/Ho_Chi_Minh";
+
+const VN_DAY_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: VN_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const VN_WEEKDAY_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: VN_TZ,
+  weekday: "short",
+});
 
 export const TOURNAMENT_STATUS = {
   UPCOMING: "UPCOMING",
@@ -36,8 +48,9 @@ export const CHECKIN_SOURCE = {
   APP: "APP",
 } as const;
 
-/** Written by signup, check-in, the event ending, or the athlete cancelling. */
+/** Written by signup, approval, check-in, the event ending, or the athlete cancelling. */
 export const ATTENDANCE = {
+  PENDING: "PENDING",
   REGISTERED: "REGISTERED",
   PRESENT: "PRESENT",
   NO_SHOW: "NO_SHOW",
@@ -48,18 +61,20 @@ export type TournamentAttendance =
   (typeof ATTENDANCE)[keyof typeof ATTENDANCE];
 
 export const ATTENDANCE_LABEL: Record<TournamentAttendance, string> = {
+  PENDING: "Chờ duyệt",
   REGISTERED: "Tham gia",
   PRESENT: "Có mặt",
   NO_SHOW: "Không đến",
   CANCELLED: "Đã hủy",
 };
 
-/** A signup that outlasts the event day is a no-show. */
+/** A signup that outlasts the event day is a no-show. A request still waiting stays Chờ duyệt. */
 export function attendanceAfterWindow(
   attendance: string,
   endsAt: Date,
   now = new Date()
 ): TournamentAttendance {
+  if (attendance === ATTENDANCE.PENDING) return ATTENDANCE.PENDING;
   if (
     attendance === ATTENDANCE.REGISTERED &&
     now.getTime() >= endsAt.getTime()
@@ -75,6 +90,7 @@ export function attendanceAfterWindow(
 /** Null when a new signup can be stored. REGISTERED means they are already in. */
 export function registerBlockReason(attendance: string): string | null {
   if (attendance === ATTENDANCE.REGISTERED) return null;
+  if (attendance === ATTENDANCE.PENDING) return "Đang chờ duyệt.";
   if (attendance === ATTENDANCE.PRESENT) return "Vận động viên đã check-in.";
   if (attendance === ATTENDANCE.CANCELLED) return "Vận động viên đã hủy.";
   if (attendance === ATTENDANCE.NO_SHOW) return "Vận động viên không đến.";
@@ -83,6 +99,9 @@ export function registerBlockReason(attendance: string): string | null {
 
 /** Null when check-in may create Có mặt, including a first arrival. */
 export function checkInBlockReason(attendance: string): string | null {
+  if (attendance === ATTENDANCE.PENDING) {
+    return "Đăng ký đang chờ duyệt. Thu tiền rồi bấm Duyệt.";
+  }
   if (
     attendance === ATTENDANCE.REGISTERED ||
     attendance === ATTENDANCE.PRESENT
@@ -108,7 +127,12 @@ export function cancelBlockReason(
   ) {
     return "Giải đã kết thúc.";
   }
-  if (attendance !== ATTENDANCE.REGISTERED) return "Không hủy được.";
+  if (
+    attendance !== ATTENDANCE.REGISTERED &&
+    attendance !== ATTENDANCE.PENDING
+  ) {
+    return "Không hủy được.";
+  }
   return null;
 }
 
@@ -168,12 +192,7 @@ export const VOUCHER_CONDITIONS = [
 ] as const;
 
 export function vnCivilDayKey(d: Date) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: VN_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
+  return VN_DAY_FMT.format(d);
 }
 
 const WEEKDAY_VI: Record<string, string> = {
@@ -220,32 +239,51 @@ export function registerWindowReason(
   return "Giải đã kết thúc.";
 }
 
-/** Shown beside the status after the day or the clock is moved. */
-export function rescheduleNote(opts: {
+export type ScheduleShift = {
+  plannedWhen: string;
+  movedWhen: string;
+};
+
+function announcedWhen(day: Date, eventTime: string | null) {
+  return [tournamentDayLabel(day), eventTime].filter(Boolean).join(" ");
+}
+
+/** Null when the event is still on the first announced day and clock. */
+export function scheduleShift(opts: {
   originalStartsAt: Date | null;
   originalEventTime: string | null;
   startsAt: Date;
   eventTime: string | null;
-}) {
+}): ScheduleShift | null {
   if (!opts.originalStartsAt) return null;
   const sameDay =
     vnCivilDayKey(opts.originalStartsAt) === vnCivilDayKey(opts.startsAt);
   const sameTime = (opts.originalEventTime || "") === (opts.eventTime || "");
   if (sameDay && sameTime) return null;
-  const when = [tournamentDayLabel(opts.startsAt), opts.eventTime]
-    .filter(Boolean)
-    .join(" ");
-  return `dời về ${when}`;
+  return {
+    plannedWhen: announcedWhen(opts.originalStartsAt, opts.originalEventTime),
+    movedWhen: announcedWhen(opts.startsAt, opts.eventTime),
+  };
+}
+
+/** Both the first announced slot and the delayed slot. Null fields when nothing moved. */
+export function scheduleFields(opts: {
+  originalStartsAt: Date | null;
+  originalEventTime: string | null;
+  startsAt: Date;
+  eventTime: string | null;
+}) {
+  const shift = scheduleShift(opts);
+  return {
+    plannedWhen: shift?.plannedWhen || null,
+    movedWhen: shift?.movedWhen || null,
+  };
 }
 
 /** e.g. T7 07/11/2026 — the Vietnam civil day of `startsAt`. */
 export function tournamentDayLabel(startsAt: Date) {
   const key = vnCivilDayKey(startsAt);
-  const noon = new Date(`${key}T12:00:00+07:00`);
-  const wd = new Intl.DateTimeFormat("en-US", {
-    timeZone: VN_TZ,
-    weekday: "short",
-  }).format(noon);
+  const wd = VN_WEEKDAY_FMT.format(startsAt);
   const [year, month, day] = key.split("-");
   return `${WEEKDAY_VI[wd] || wd} ${day}/${month}/${year}`;
 }

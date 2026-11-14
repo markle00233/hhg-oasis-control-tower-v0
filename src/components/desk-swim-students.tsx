@@ -21,6 +21,7 @@ type Student = {
   note: string | null;
   createdByName: string | null;
   hasBillPhoto: boolean;
+  expiresAt: string | null;
   updatedAt: string;
 };
 
@@ -34,6 +35,33 @@ type AccountHit = {
 };
 
 const BILL_MAX_CHARS = 700_000;
+
+const VN_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const VN_LABEL = new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+
+function vnDayNumber(value: Date) {
+  const [year, month, day] = VN_DAY.format(value).split("-").map(Number);
+  return Date.UTC(year || 0, (month || 1) - 1, day || 1);
+}
+
+/** Calendar days in Vietnam, so "còn N ngày" matches the date on the row. */
+function expiryInfo(iso: string | null, now = Date.now()) {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  const left = Math.round((vnDayNumber(at) - vnDayNumber(new Date(now))) / 86_400_000);
+  return {
+    left,
+    label: VN_LABEL.format(at),
+    soon: left <= 14 && left >= -7,
+    hot: left <= 14,
+  };
+}
 
 /** Shrink a phone photo until the data URL is small enough to store and send. */
 async function fileToBillPhoto(file: File): Promise<string> {
@@ -227,6 +255,18 @@ export function DeskSwimStudents({
     });
     return sorted;
   }, [students, packageFilter, sort]);
+
+  const expiringSoon = useMemo(() => {
+    const now = Date.now();
+    const rows: { student: Student; left: number; label: string }[] = [];
+    for (const student of students) {
+      if (student.status !== "ACTIVE") continue;
+      const info = expiryInfo(student.expiresAt, now);
+      if (!info?.soon) continue;
+      rows.push({ student, left: info.left, label: info.label });
+    }
+    return rows;
+  }, [students]);
 
   useEffect(() => {
     const delay = q.trim() ? 280 : 0;
@@ -762,6 +802,40 @@ export function DeskSwimStudents({
           <p style={{ ...styles.err, marginTop: 12 }}>{error}</p>
         ) : null}
 
+        {expiringSoon.length > 0 ? (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 14px",
+              borderRadius: 14,
+              background: "#fff7ed",
+              color: "#9a3412",
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            <strong>Gói tháng sắp hết hạn · {expiringSoon.length}</strong>
+            <div style={{ marginTop: 6, display: "grid", gap: 2 }}>
+              {expiringSoon.map(({ student, left, label }) => {
+                const when =
+                  left < 0
+                    ? `đã hết hạn ${label}`
+                    : left === 0
+                      ? "hết hạn hôm nay"
+                      : `còn ${left} ngày · ${label}`;
+                return (
+                  <div key={student.id}>
+                    {student.fullName} ({student.phone || "không có SĐT"}) {when}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 6 }}>
+              Gọi khách để gia hạn gói tháng.
+            </div>
+          </div>
+        ) : null}
+
         <div style={{ marginTop: 16, overflowX: "auto" }}>
           <table style={styles.table}>
             <thead>
@@ -770,6 +844,7 @@ export function DeskSwimStudents({
                 <th style={styles.th}>Nhân viên đứng ca</th>
                 <th style={styles.th}>SĐT</th>
                 <th style={styles.th}>Gói</th>
+                <th style={styles.th}>Hết hạn</th>
                 <th style={styles.th}>Buổi</th>
                 <th style={styles.th}>Lượt TC</th>
                 <th style={styles.th}>TT</th>
@@ -779,12 +854,14 @@ export function DeskSwimStudents({
             <tbody>
               {visibleStudents.length === 0 ? (
                 <tr>
-                  <td style={styles.td} colSpan={8}>
+                  <td style={styles.td} colSpan={9}>
                     Chưa có học viên. Thêm ở form trên.
                   </td>
                 </tr>
               ) : (
-                visibleStudents.map((s) => (
+                visibleStudents.map((s) => {
+                  const expiry = expiryInfo(s.expiresAt);
+                  return (
                   <tr key={s.id}>
                     <td style={{ ...styles.td, fontWeight: 700 }}>
                       {s.fullName}
@@ -797,6 +874,15 @@ export function DeskSwimStudents({
                     <td style={styles.td}>{s.createdByName || "—"}</td>
                     <td style={styles.td}>{s.phone || "—"}</td>
                     <td style={styles.td}>{s.packageLabel}</td>
+                    <td
+                      style={{
+                        ...styles.td,
+                        color: expiry?.hot ? "#c2410c" : undefined,
+                        fontWeight: expiry?.hot ? 800 : 400,
+                      }}
+                    >
+                      {expiry?.label || "—"}
+                    </td>
                     <td style={{ ...styles.td, fontWeight: 800 }}>
                       {s.sessionsTotal > 0
                         ? `${s.sessionsLeft}/${s.sessionsTotal}`
@@ -890,7 +976,8 @@ export function DeskSwimStudents({
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

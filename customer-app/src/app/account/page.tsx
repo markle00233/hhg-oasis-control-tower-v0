@@ -676,8 +676,7 @@ export default function AccountPage() {
         <div className="rounded-[28px] bg-white/85 p-2 shadow-soft">
           <MenuLink href="/tournaments" label="Giải đấu" />
           <MenuLink href="/activity" label="Activity" />
-          <MenuLink href="/messages" label="Messages" />
-          <MenuLink href="/account/password" label="Đổi mật khẩu" last />
+          <MenuLink href="/messages" label="Messages" last />
         </div>
 
         <button

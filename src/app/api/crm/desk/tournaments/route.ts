@@ -11,7 +11,7 @@ import {
   newCheckInToken,
   parseCourt,
   parseEventTime,
-  rescheduleNote,
+  scheduleFields,
   tournamentDayLabel,
   tournamentStatusAt,
   vnCivilDayKey,
@@ -30,13 +30,23 @@ function voucherAmount(body: Record<string, unknown>) {
   return money(body.discountVnd, DEFAULT_VOUCHER_DISCOUNT_VND);
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const gate = await requireTournamentDesk();
   if ("error" in gate) return gate.error;
+  if (new URL(req.url).searchParams.get("summary") === "1") {
+    try {
+      const pendingCount = await prisma.appTournamentCheckIn.count({
+        where: { attendance: "PENDING" },
+      });
+      return NextResponse.json({ ok: true, pendingCount });
+    } catch (err) {
+      return tournamentDbError(err, "Không đếm được đăng ký chờ duyệt.");
+    }
+  }
   try {
     await closeMissedAthletes();
     await syncTournamentStatuses();
-    const [rows, voucherCounts] = await Promise.all([
+    const [rows, voucherCounts, pendingCounts, waiting] = await Promise.all([
       prisma.appTournament.findMany({
         orderBy: { startsAt: "desc" },
         select: {
@@ -57,7 +67,27 @@ export async function GET() {
         by: ["tournamentId", "status"],
         _count: { _all: true },
       }),
+      prisma.appTournamentCheckIn.groupBy({
+        by: ["tournamentId"],
+        where: { attendance: "PENDING" },
+        _count: { _all: true },
+      }),
+      prisma.appTournamentCheckIn.findMany({
+        where: { attendance: "PENDING" },
+        orderBy: { createdAt: "desc" },
+        take: 40,
+        select: {
+          id: true,
+          tournamentId: true,
+          createdAt: true,
+          customer: { select: { fullName: true, phone: true } },
+          tournament: { select: { name: true, startsAt: true } },
+        },
+      }),
     ]);
+    const pendingByTournament = new Map(
+      pendingCounts.map((row) => [row.tournamentId, row._count._all])
+    );
     const vouchers = new Map<string, { issued: number; used: number }>();
     for (const row of voucherCounts) {
       const slot = vouchers.get(row.tournamentId) || { issued: 0, used: 0 };
@@ -67,6 +97,15 @@ export async function GET() {
     }
     return NextResponse.json({
       ok: true,
+      pending: waiting.map((row) => ({
+        id: row.id,
+        tournamentId: row.tournamentId,
+        tournamentName: row.tournament.name,
+        dayLabel: tournamentDayLabel(row.tournament.startsAt),
+        fullName: row.customer.fullName || "Khách",
+        phone: row.customer.phone,
+        createdAt: row.createdAt.toISOString(),
+      })),
       tournaments: rows.map((row) => {
         const count = vouchers.get(row.id);
         return {
@@ -80,7 +119,7 @@ export async function GET() {
           startsAt: row.startsAt.toISOString(),
           endsAt: row.endsAt.toISOString(),
           status: tournamentStatusAt(row.startsAt, row.endsAt, row.eventTime),
-          rescheduleNote: rescheduleNote({
+          ...scheduleFields({
             originalStartsAt: row.originalStartsAt,
             originalEventTime: row.originalEventTime,
             startsAt: row.startsAt,
@@ -88,6 +127,7 @@ export async function GET() {
           }),
           discountVnd: row.discountVnd,
           checkInCount: row._count.checkIns,
+          pendingCount: pendingByTournament.get(row.id) || 0,
           voucherUsedCount: count?.used || 0,
           voucherOpenCount: count?.issued || 0,
         };

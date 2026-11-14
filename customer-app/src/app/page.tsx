@@ -74,7 +74,7 @@ export default function GatePage() {
         </div>
 
         <p className="text-center text-xs text-oasis-mute">
-          Mật khẩu là số điện thoại đã đăng ký.
+          Đăng nhập bằng số điện thoại đã đăng ký.
         </p>
       </div>
     </main>
