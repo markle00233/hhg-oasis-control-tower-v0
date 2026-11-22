@@ -25,12 +25,13 @@ function generateCustomerCode() {
 /** Khách lẻ không đăng nhập. Hash một lần cho cả process, không bcrypt mỗi đơn. */
 let sharedWalkInHash: Promise<string> | null = null;
 function walkInPasswordHash() {
-  sharedWalkInHash ??= hashPassword(randomBytes(24).toString("base64url")).catch(
-    (err) => {
-      sharedWalkInHash = null;
-      throw err;
-    }
-  );
+  sharedWalkInHash ??= hashPassword(
+    randomBytes(24).toString("base64url"),
+    8
+  ).catch((err) => {
+    sharedWalkInHash = null;
+    throw err;
+  });
   return sharedWalkInHash;
 }
 
@@ -49,6 +50,17 @@ export async function POST(req: NextRequest) {
 
     const anonymous = body.anonymous === true;
     const fullName = String(body.fullName || "").trim().slice(0, 120);
+    const preferredService = deskZoneServiceCode(zone);
+    const servicePromise = prisma.appService.findFirst({
+      where: {
+        OR: [
+          { serviceCode: preferredService },
+          ...(preferredService !== zone ? [{ serviceCode: zone }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    void servicePromise.catch(() => undefined);
     let customer: Awaited<ReturnType<typeof prisma.appCustomer.create>> | null =
       null;
     let created = false;
@@ -144,20 +156,24 @@ export async function POST(req: NextRequest) {
           String(customer.segment || "").toUpperCase() === "VIP" &&
           (!customer.vipExpiresAt ||
             customer.vipExpiresAt.getTime() > Date.now());
+        const nextSegment = keepVip ? "VIP" : customer.segment;
+        const nextName = customer.fullName || fullName;
         const patch: Prisma.AppCustomerUpdateInput = {
-          fullName: customer.fullName || fullName,
-          status: "ACTIVE",
-          segment: keepVip ? "VIP" : customer.segment,
+          ...(customer.fullName ? {} : { fullName: nextName }),
+          ...(customer.status === "ACTIVE" ? {} : { status: "ACTIVE" }),
+          ...(customer.segment === nextSegment ? {} : { segment: nextSegment }),
           ...(!customer.identityToken
             ? { identityToken: `oq_${randomBytes(18).toString("base64url")}` }
             : {}),
         };
-        customer = await prisma.appCustomer.update({
-          where: { id: customer.id },
-          data: patch,
-        });
+        if (Object.keys(patch).length) {
+          customer = await prisma.appCustomer.update({
+            where: { id: customer.id },
+            data: patch,
+          });
+        }
       } else {
-        const passwordHash = await hashPassword(password);
+        const passwordHash = await hashPassword(password, 8);
         for (let i = 0; i < 6; i++) {
           const customerCode = generateCustomerCode();
           try {
@@ -200,40 +216,33 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /** Prefer mapped code (MIA_OLYMPIC → OLYMPIC_POOL) so vé hồ unlocks on the board. */
-    const preferredService = deskZoneServiceCode(zone);
-    const service = await prisma.appService.findFirst({
-      where: {
-        OR: [
-          { serviceCode: preferredService },
-          ...(preferredService !== zone ? [{ serviceCode: zone }] : []),
-        ],
-      },
-      select: { id: true },
-    });
+    const service = await servicePromise;
 
     let scanEventId: string | null = null;
-    if (service) {
-      const scan = await prisma.appServiceEvent.create({
-        data: {
-          customerId: customer.id,
-          serviceId: service.id,
-          eventType: "SERVICE_USE",
-          operationalStatus: "NEW",
-          metadata: {
-            source: "desk_walkin_order",
-            createdByStaffId: gate.user.id,
-            staffName: gate.user.displayName || gate.user.username,
-            ...(anonymous ? { anonymous: true } : {}),
-          },
-        },
-      });
-      scanEventId = scan.id;
-    }
-
-    const crm = customer.phoneNormalized
-      ? await activeCrmMemberships([customer.phoneNormalized])
-      : new Map();
+    const [scan, crm] = await Promise.all([
+      service
+        ? prisma.appServiceEvent.create({
+            data: {
+              customerId: customer.id,
+              serviceId: service.id,
+              eventType: "SERVICE_USE",
+              operationalStatus: "NEW",
+              metadata: {
+                source: "desk_walkin_order",
+                createdByStaffId: gate.user.id,
+                staffName: gate.user.displayName || gate.user.username,
+                ...(anonymous ? { anonymous: true } : {}),
+              },
+            },
+          })
+        : Promise.resolve(null),
+      customer.phoneNormalized
+        ? activeCrmMemberships([customer.phoneNormalized])
+        : Promise.resolve(
+            new Map<string, { planLabel: string; expiresAt: Date | null }>()
+          ),
+    ]);
+    scanEventId = scan?.id || null;
     const marked = deskSegmentOf({
       segment: customer.segment,
       vipExpiresAt: customer.vipExpiresAt,

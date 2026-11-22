@@ -167,6 +167,8 @@ type Scan = {
   /** Nhân viên xác thực / mở đơn. */
   staffName?: string | null;
   hasBillPhoto?: boolean;
+  /** Quầy đã huỷ đơn gắn với lần quét này. */
+  orderCancelled?: boolean;
 };
 
 type DayOrder = {
@@ -269,7 +271,7 @@ function arrivalSnapshot(rows: Arrival[]) {
       const scans = (a.todayScans || [])
         .map(
           (s) =>
-            `${s.id}:${s.operationalStatus || ""}:${s.ticketVerified ? 1 : 0}:${s.orderId || ""}:${s.staffName || ""}`
+            `${s.id}:${s.operationalStatus || ""}:${s.ticketVerified ? 1 : 0}:${s.orderCancelled ? 1 : 0}:${s.hasBillPhoto ? 1 : 0}:${s.orderId || ""}:${s.staffName || ""}`
         )
         .join(",");
       const orders = (a.todayOrders || [])
@@ -438,6 +440,15 @@ function orderSettled(t: DeskTicket) {
   return t.orderStatus === "ordered" || status === "OPEN" || status === "USED";
 }
 
+/** Thanh toán flips to Đã xác nhận only after chứng từ is attached. */
+function paymentConfirmed(t: DeskTicket, zone: string | null) {
+  const code = t.cart?.zoneCode || t.scan?.serviceCode || zone;
+  if (zoneRequiresBillPhoto(code)) {
+    return !!(t.cart?.hasBillPhoto || t.scan?.hasBillPhoto);
+  }
+  return orderSettled(t);
+}
+
 function orderInk(settled: boolean) {
   return settled ? "#047857" : "#b45309";
 }
@@ -565,6 +576,7 @@ function withManualDiscount(
 }
 
 function scanLooksFinalized(s: Scan) {
+  if (s.orderCancelled) return false;
   return !!(
     s.ticketVerified ||
     s.orderId ||
@@ -873,6 +885,31 @@ function applySaleToArrival(
     };
   }
   return next;
+}
+
+function withCartStatus(
+  arrival: Arrival,
+  token: string,
+  status: string,
+  note?: { adminNote: string | null }
+): Arrival {
+  const patch = (cart: GuestCartPreview): GuestCartPreview =>
+    cart.token === token
+      ? { ...cart, status, ...(note ? { adminNote: note.adminNote } : {}) }
+      : cart;
+  const carts = (arrival.carts || []).map(patch);
+  return {
+    ...arrival,
+    carts,
+    openCart: arrival.openCart
+      ? arrival.openCart.token === token
+        ? patch(arrival.openCart)
+        : arrival.openCart
+      : arrival.openCart,
+    needsApproval: carts.some((cart) => cart.status === "PENDING_APPROVAL"),
+    checkedIn:
+      arrival.checkedIn || status === "OPEN" || status === "USED",
+  };
 }
 
 function withCartUsed(
@@ -1938,6 +1975,8 @@ type DeskOverview = {
   zones: {
     id: string;
     label: string;
+    revenueVnd?: number;
+    orders?: number;
     points: number;
     claims: number;
   }[];
@@ -2002,6 +2041,7 @@ export default function DeskAdministrationPage() {
   const [ordering, setOrdering] = useState(false);
   const [billViewer, setBillViewer] = useState<string | null>(null);
   const [billBusyToken, setBillBusyToken] = useState<string | null>(null);
+  const [billViewToken, setBillViewToken] = useState<string | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(
     null
   );
@@ -2314,8 +2354,13 @@ export default function DeskAdministrationPage() {
     return sum;
   }, [cartLines, catalogMenu]);
 
-  const load = useCallback(async () => {
-    if (!zone) return;
+  const load = useCallback(async (): Promise<{
+    arrivals: Arrival[] | null;
+    stale: boolean;
+  }> => {
+    const missed = { arrivals: null, stale: false };
+    const dropped = { arrivals: null, stale: true };
+    if (!zone) return missed;
     const seq = ++loadSeq.current;
     const requested = zone;
     try {
@@ -2328,29 +2373,29 @@ export default function DeskAdministrationPage() {
         cache: "no-store",
         credentials: "same-origin",
       });
-      if (seq !== loadSeq.current) return;
-      if (zoneRef.current !== requested) return;
+      if (seq !== loadSeq.current) return dropped;
+      if (zoneRef.current !== requested) return dropped;
 
       if (res.status === 401) {
         authFailStreak.current += 1;
         // Xác nhận session thật sự mất — tránh logout vì race / deploy
-        if (authFailStreak.current < 2) return;
+        if (authFailStreak.current < 2) return missed;
         const me = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "same-origin",
         })
           .then((r) => r.json())
           .catch(() => null);
-        if (seq !== loadSeq.current) return;
-        if (zoneRef.current !== requested) return;
+        if (seq !== loadSeq.current) return dropped;
+        if (zoneRef.current !== requested) return dropped;
         if (me?.authenticated === true) {
           authFailStreak.current = 0;
           setError("Không tải được dữ liệu quầy. Thử Làm mới.");
-          return;
+          return missed;
         }
         setStep("login");
         setArrivals([]);
-        return;
+        return missed;
       }
       if (res.status === 403) {
         authFailStreak.current = 0;
@@ -2360,12 +2405,12 @@ export default function DeskAdministrationPage() {
             ? data.error
             : "Không có quyền khu vực này."
         );
-        return;
+        return missed;
       }
 
       const data = await res.json();
-      if (seq !== loadSeq.current) return;
-      if (zoneRef.current !== requested) return;
+      if (seq !== loadSeq.current) return dropped;
+      if (zoneRef.current !== requested) return dropped;
       if (!res.ok) throw new Error(data.error || "Load failed");
       authFailStreak.current = 0;
       const nextArrivals: Arrival[] = data.arrivals || [];
@@ -2381,10 +2426,12 @@ export default function DeskAdministrationPage() {
       setIsAdmin(!!data.isAdmin);
       setIsSystemAdminUser(!!data.isSystemAdmin);
       setError("");
+      return { arrivals: nextArrivals, stale: false };
     } catch (e) {
-      if (seq !== loadSeq.current) return;
-      if (zoneRef.current !== requested) return;
+      if (seq !== loadSeq.current) return dropped;
+      if (zoneRef.current !== requested) return dropped;
       setError(e instanceof Error ? e.message : "Load failed");
+      return missed;
     }
   }, [zone, viewDate]);
 
@@ -2621,16 +2668,14 @@ export default function DeskAdministrationPage() {
       setRejectReason("");
       if (action === "finalize") {
         setOrderMsg("Đã chốt đơn.");
-        setGuestCart((prev) =>
-          prev && prev.token === token ? { ...prev, status: "USED" } : prev
-        );
+        rememberDeskCart(token, "USED");
       } else if (action === "approve") {
         setOrderMsg("Đã xác nhận thanh toán. Bổ sung chứng từ, rồi chốt đơn.");
-        setGuestCart((prev) =>
-          prev && prev.token === token ? { ...prev, status: "OPEN" } : prev
-        );
+        rememberDeskCart(token, "OPEN", { adminNote: null });
+      } else {
+        rememberDeskCart(token, "REJECTED", { adminNote: reason || "" });
       }
-      await load();
+      void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Thao tác thất bại");
     } finally {
@@ -2656,15 +2701,42 @@ export default function DeskAdministrationPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không kết thúc được");
       setOrderMsg("Đã dùng — kết thúc lượt.");
-      setGuestCart((prev) =>
-        prev && prev.token === token ? { ...prev, adminNote: "Đã dùng" } : prev
-      );
-      await load();
+      rememberDeskCart(token, "USED", { adminNote: "Đã dùng" });
+      void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không kết thúc được");
     } finally {
       setApprovingToken(null);
     }
+  }
+
+  function markBillAttached(token: string) {
+    const eventId = token.startsWith("event:") ? token.slice("event:".length) : "";
+    const patch = (arrival: Arrival): Arrival => {
+      let changed = false;
+      const carts = (arrival.carts || []).map((c) => {
+        if (c.token !== token || c.hasBillPhoto) return c;
+        changed = true;
+        return { ...c, hasBillPhoto: true };
+      });
+      let openCart = arrival.openCart;
+      if (openCart && openCart.token === token && !openCart.hasBillPhoto) {
+        changed = true;
+        openCart = { ...openCart, hasBillPhoto: true };
+      }
+      const todayScans = (arrival.todayScans || []).map((s) => {
+        if (!eventId || s.id !== eventId || s.hasBillPhoto) return s;
+        changed = true;
+        return { ...s, hasBillPhoto: true };
+      });
+      if (!changed) return arrival;
+      return { ...arrival, carts, openCart, todayScans };
+    };
+    setArrivals((rows) => rows.map(patch));
+    setSelected((prev) => (prev ? patch(prev) : prev));
+    setGuestCart((prev) =>
+      prev && prev.token === token ? { ...prev, hasBillPhoto: true } : prev
+    );
   }
 
   async function saveBillPhoto(token: string, file: File) {
@@ -2680,11 +2752,9 @@ export default function DeskAdministrationPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không lưu được ảnh bill");
-      setGuestCart((prev) =>
-        prev && prev.token === token ? { ...prev, hasBillPhoto: true } : prev
-      );
-      setOrderMsg("Đã bổ sung chứng từ.");
-      await load();
+      markBillAttached(token);
+      setOrderMsg("Đã bổ sung chứng từ. Bấm Xem chứng từ trên dòng này.");
+      void load().then(() => markBillAttached(token));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được ảnh bill");
     } finally {
@@ -2694,7 +2764,7 @@ export default function DeskAdministrationPage() {
 
   async function openBillPhoto(token: string) {
     if (!zone || !token) return;
-    setBillBusyToken(token);
+    setBillViewToken(token);
     setError("");
     try {
       const res = await fetch(
@@ -2706,7 +2776,7 @@ export default function DeskAdministrationPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không mở được ảnh bill");
     } finally {
-      setBillBusyToken(null);
+      setBillViewToken(null);
     }
   }
 
@@ -2729,6 +2799,21 @@ export default function DeskAdministrationPage() {
     const canFinalize = has && status === "OPEN" && zoneRequiresBillPhoto(zone);
     return (
       <div style={styles.billRow} onClick={(e) => e.stopPropagation()}>
+        {has ? (
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 800,
+              color: "#047857",
+              background: "#d1fae5",
+              borderRadius: 999,
+              padding: "4px 8px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Đã bổ sung
+          </span>
+        ) : null}
         {canEdit ? (
           <label
             title="CK: chụp màn hình chuyển khoản. Tiền mặt: ảnh bill in từ Fabi. Làm trong ca."
@@ -2737,7 +2822,7 @@ export default function DeskAdministrationPage() {
             {billBusyToken === token
               ? "Đang lưu…"
               : has
-                ? "Đổi chứng từ"
+                ? "Đổi"
                 : "Bổ sung chứng từ"}
             <input
               type="file"
@@ -2756,9 +2841,10 @@ export default function DeskAdministrationPage() {
           <button
             type="button"
             style={styles.billBtn}
+            disabled={billViewToken === token}
             onClick={() => void openBillPhoto(token)}
           >
-            Xem chứng từ
+            {billViewToken === token ? "Đang mở…" : "Xem chứng từ"}
           </button>
         ) : partial ? (
           <span style={{ fontSize: 12, fontWeight: 700, color: "#b45309", whiteSpace: "nowrap" }}>
@@ -3248,14 +3334,12 @@ export default function DeskAdministrationPage() {
         setScanOpen(false);
         setManualToken("");
 
-        // Refresh list (SERVICE_USE vừa tạo + cart) rồi mở khách
-        await load();
-        const refreshed = await fetch(
-          `/api/crm/desk?hours=12&zone=${encodeURIComponent(zone)}`,
-          { cache: "no-store" }
-        );
-        const listData = await refreshed.json();
-        const list: Arrival[] = listData.arrivals || [];
+        // Một lần tải bảng (lần quét vừa tạo + cart) rồi mở khách.
+        // Chỉ tải lại khi poll khác thắng cuộc, không tính thêm lần 401.
+        let loaded = await load();
+        if (loaded.stale) loaded = await load();
+        const list = loaded.arrivals;
+        if (!list) throw new Error("Không tải được dữ liệu quầy");
         const fromList = list.find((a) => a.id === cust.id);
         const membership = data.membership as {
           planLabel?: string;
@@ -3905,18 +3989,91 @@ export default function DeskAdministrationPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không undo được");
       const token = String(data.cartToken || ticket.cart?.token || "");
-      if (token && guestCart?.token === token) {
-        setGuestCart((prev) =>
-          prev ? { ...prev, status: "OPEN", adminNote: null } : prev
-        );
-      }
       const restored = Math.max(0, Math.round(Number(data.restored) || 0));
+      const reopen = new Set<string>(
+        (Array.isArray(data.reopenedScanIds) ? data.reopenedScanIds : [])
+          .map((id: unknown) => String(id))
+          .filter(Boolean)
+      );
+      if (ticket.scan?.id) reopen.add(ticket.scan.id);
+      commitGuestSale(selected.id, (arrival) => {
+        const todayOrders = (arrival.todayOrders || []).filter(
+          (row) => row.id !== ticket.orderId
+        );
+        const active = todayOrders.filter((row) => row.status !== "CANCELLED");
+        const todayScans = (arrival.todayScans || []).flatMap((scan) => {
+          if (
+            scan.eventType === "SPA_ORDER" &&
+            (scan.orderId === ticket.orderId || reopen.has(scan.id))
+          ) {
+            return [];
+          }
+          if (!reopen.has(scan.id) && scan.orderId !== ticket.orderId) {
+            return [scan];
+          }
+          return [
+            {
+              ...scan,
+              ticketVerified: false,
+              operationalStatus: "NEW",
+              orderSummary: null,
+              totalVnd: null,
+              orderId: null,
+              ticketItems: [],
+            },
+          ];
+        });
+        let next: Arrival = {
+          ...arrival,
+          todayOrders,
+          todayScans,
+          todayOrderCount: active.length,
+          todayPackageVnd: active.reduce(
+            (sum, row) => sum + (row.totalVnd || 0),
+            0
+          ),
+          swimBonusLeft:
+            typeof arrival.swimBonusLeft === "number"
+              ? arrival.swimBonusLeft + restored
+              : arrival.swimBonusLeft,
+        };
+        if (token) {
+          const cart =
+            (arrival.carts || []).find((row) => row.token === token) ||
+            (arrival.openCart?.token === token ? arrival.openCart : null);
+          if (
+            cart &&
+            (cart.status === "USED" ||
+              (cart.adminNote || "").trim() === "Đã dùng")
+          ) {
+            next = withCartStatus(next, token, "OPEN", {
+              adminNote:
+                (cart.adminNote || "").trim() === "Đã dùng"
+                  ? null
+                  : cart.adminNote || null,
+            });
+          }
+        }
+        return next;
+      });
+      if (token && guestCart?.token === token) {
+        setGuestCart((prev) => {
+          if (!prev) return prev;
+          const done = (prev.adminNote || "").trim() === "Đã dùng";
+          if (prev.status !== "USED" && !done) return prev;
+          return {
+            ...prev,
+            status: "OPEN",
+            adminNote: done ? null : prev.adminNote ?? null,
+          };
+        });
+      }
       setOrderMsg(
         restored > 0
           ? `Đã undo đơn spa · hoàn ${restored} lượt tự chọn`
           : "Đã undo đơn spa"
       );
-      await load();
+      void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không undo được");
     } finally {
@@ -3988,16 +4145,54 @@ export default function DeskAdministrationPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không huỷ được đơn");
-      if (typeof data.pointsBalance === "number") {
-        setSelected((prev) =>
-          prev ? { ...prev, pointsBalance: data.pointsBalance } : prev
+      const pointsBalance =
+        typeof data.pointsBalance === "number" ? data.pointsBalance : null;
+      commitGuestSale(selected.id, (arrival) => {
+        const todayOrders = (arrival.todayOrders || []).map((row) =>
+          row.id === orderId ? { ...row, status: "CANCELLED" } : row
         );
-      }
+        const tokens = new Set<string>();
+        const todayScans = (arrival.todayScans || []).map((scan) => {
+          if (scan.orderId !== orderId && scan.miaOrderId !== orderId) {
+            return scan;
+          }
+          if (scan.cartToken) tokens.add(scan.cartToken);
+          return {
+            ...scan,
+            ticketVerified: false,
+            orderCancelled: true,
+            orderId: scan.orderId === orderId ? null : scan.orderId,
+            miaOrderId: scan.miaOrderId === orderId ? null : scan.miaOrderId,
+            orderSummary: null,
+            totalVnd: null,
+            ticketItems: [],
+            operationalStatus: "NEW",
+          };
+        });
+        const active = todayOrders.filter((row) => row.status !== "CANCELLED");
+        let next: Arrival = {
+          ...arrival,
+          todayOrders,
+          todayScans,
+          todayOrderCount: active.length,
+          todayPackageVnd: active.reduce(
+            (sum, row) => sum + (row.totalVnd || 0),
+            0
+          ),
+          ...(pointsBalance != null ? { pointsBalance } : {}),
+        };
+        for (const token of tokens) {
+          next = withCartStatus(next, token, "CANCELLED", {
+            adminNote: "Quầy huỷ đơn",
+          });
+        }
+        return next;
+      });
       const bits = ["Đã huỷ đơn"];
       if (data.pointsRefunded) bits.push(`hoàn ${data.pointsRefunded} điểm`);
       if (data.pointsClawed) bits.push(`thu ${data.pointsClawed} điểm`);
       setOrderMsg(bits.join(" · "));
-      await load();
+      void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không huỷ được đơn");
     } finally {
@@ -4967,6 +5162,31 @@ export default function DeskAdministrationPage() {
     });
   }
 
+  /** Paint a cart status on the sheet, then the next load reconciles with the server. */
+  function rememberDeskCart(
+    token: string,
+    status: string,
+    note?: { adminNote: string | null }
+  ) {
+    setGuestCart((prev) => {
+      if (!prev || prev.token !== token) return prev;
+      return {
+        ...prev,
+        status,
+        ...(note ? { adminNote: note.adminNote } : {}),
+      };
+    });
+    const host = arrivals.find(
+      (row) =>
+        (row.carts || []).some((cart) => cart.token === token) ||
+        row.openCart?.token === token
+    );
+    if (!host) return;
+    commitGuestSale(host.id, (arrival) =>
+      withCartStatus(arrival, token, status, note)
+    );
+  }
+
   async function confirmMiaCart(mode: "cart" | "added") {
     if (!selected || !guestCart?.token || !miaCartOpen() || ordering) return;
     if (savingOrder.current) return;
@@ -5471,14 +5691,20 @@ export default function DeskAdministrationPage() {
                     }}
                   >
                     <strong>{row.label}</strong>
-                    <span style={{ color: "#64748b" }}>
-                      {row.points} điểm đổi · {row.claims} voucher
+                    <span style={{ textAlign: "right" }}>
+                      <span style={{ color: "#0f172a", fontWeight: 800 }}>
+                        {formatVnd(row.revenueVnd || 0)}
+                      </span>
+                      <span style={{ color: "#64748b" }}>
+                        {" "}
+                        · {row.orders || 0} đơn · {row.points} điểm đổi · {row.claims} voucher
+                      </span>
                     </span>
                   </div>
                 ))}
               </div>
               <p style={{ ...styles.mute, marginTop: 8, fontSize: 12 }}>
-                Điểm và voucher tính trong tháng này. Lòng nướng, spa, nước, hồ bơi, pickleball.
+                Số tiền và số đơn là hôm nay. Điểm và voucher tính trong tháng này.
               </p>
             </div>
           ) : null}
@@ -7161,9 +7387,9 @@ export default function DeskAdministrationPage() {
                             ? "Đã huỷ"
                             : "Khách xoá"}
                         </span>
-                      ) : t.cart ? (
+                      ) : paymentConfirmed(t, zone) ? (
                         <span
-                          title="Đã xác nhận thanh toán. Chứng từ thiếu vẫn là hoàn thành 1 phần ở cột hoá đơn."
+                          title="Đã bổ sung chứng từ."
                           style={{
                             ...styles.pill,
                             background: "#d1fae5",

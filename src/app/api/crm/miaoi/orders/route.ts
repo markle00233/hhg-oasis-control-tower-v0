@@ -66,7 +66,7 @@ async function findOpenShellToFinalize(opts: {
 
 /** Gắn đơn Mía vào lần quét đã tạo — không tạo thêm dòng lịch sử. */
 async function finalizeShellWithMiaOrder(opts: {
-  shellId: string;
+  shell: { id: string; metadata: unknown };
   orderId: string;
   totalVnd: number;
   items: {
@@ -82,13 +82,9 @@ async function finalizeShellWithMiaOrder(opts: {
   manualDiscountVnd?: number;
   manualDiscountNote?: string;
 }) {
-  const shell = await prisma.appServiceEvent.findUnique({
-    where: { id: opts.shellId },
-  });
-  if (!shell) return null;
-  const prev = eventMeta(shell.metadata);
+  const prev = eventMeta(opts.shell.metadata);
   await prisma.appServiceEvent.update({
-    where: { id: shell.id },
+    where: { id: opts.shell.id },
     data: {
       operationalStatus: "ACKNOWLEDGED",
       metadata: {
@@ -112,7 +108,7 @@ async function finalizeShellWithMiaOrder(opts: {
       },
     },
   });
-  return shell.id;
+  return opts.shell.id;
 }
 
 /** Live Mía Ơi orders for desk (Mía Ơi zone or SYSTEM_ADMIN). */
@@ -207,16 +203,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Chọn ít nhất 1 món." }, { status: 400 });
     }
 
-    const customer = await prisma.appCustomer.findUnique({
-      where: { id: customerId },
-    });
+    const [customer, service] = await Promise.all([
+      prisma.appCustomer.findUnique({
+        where: { id: customerId },
+      }),
+      prisma.appService.findUnique({
+        where: { serviceCode: "MIA_OI" },
+      }),
+    ]);
     if (!customer || customer.status !== "ACTIVE") {
       return NextResponse.json({ error: "Khách không hợp lệ." }, { status: 404 });
     }
-
-    const service = await prisma.appService.findUnique({
-      where: { serviceCode: "MIA_OI" },
-    });
 
     const orderItems: (RedeemableLine & {
       nameVi: string;
@@ -367,7 +364,7 @@ export async function POST(req: NextRequest) {
 
     if (shellToFinish) {
       await finalizeShellWithMiaOrder({
-        shellId: shellToFinish.id,
+        shell: shellToFinish,
         orderId: order.id,
         totalVnd,
         items: metaItems,

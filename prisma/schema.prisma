@@ -890,6 +890,7 @@ model AppServiceCart {
   updatedAt  DateTime @updatedAt
 
   @@index([customerId, status, createdAt])
+  @@index([zoneCode, createdAt])
   @@index([expiresAt])
   @@map("app_service_carts")
 }
@@ -966,6 +967,7 @@ model AppServiceEvent {
   @@index([customerId, createdAt])
   @@index([serviceId, createdAt])
   @@index([customerId, serviceId, createdAt])
+  @@index([eventType, createdAt])
   @@index([deviceId])
   @@index([operationalStatus, createdAt])
   @@map("app_service_events")

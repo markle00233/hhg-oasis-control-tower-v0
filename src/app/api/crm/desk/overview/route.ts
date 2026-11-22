@@ -129,9 +129,13 @@ export async function GET(req: NextRequest) {
 
   const points = new Map<BucketId, number>();
   const voucherClaims = new Map<BucketId, number>();
+  const revenue = new Map<BucketId, number>();
+  const orderCount = new Map<BucketId, number>();
   for (const bucket of visible) {
     points.set(bucket.id, 0);
     voucherClaims.set(bucket.id, 0);
+    revenue.set(bucket.id, 0);
+    orderCount.set(bucket.id, 0);
   }
 
   let todayRevenueVnd = 0;
@@ -141,9 +145,13 @@ export async function GET(req: NextRequest) {
     const bucket = bucketFor(order.service?.serviceCode);
     if (bucket && !visibleIds.has(bucket)) continue;
     if (!bucket && allowed) continue;
-    todayRevenueVnd += order.totalVnd || 0;
+    const amount = order.totalVnd || 0;
+    todayRevenueVnd += amount;
     todayOrders += 1;
     if (order.customerId) guests.add(order.customerId);
+    if (!bucket) continue;
+    revenue.set(bucket, (revenue.get(bucket) || 0) + amount);
+    orderCount.set(bucket, (orderCount.get(bucket) || 0) + 1);
   }
 
   for (const row of redeems) {
@@ -161,6 +169,8 @@ export async function GET(req: NextRequest) {
   const zones = visible.map((bucket) => ({
     id: bucket.id,
     label: bucket.label,
+    revenueVnd: revenue.get(bucket.id) || 0,
+    orders: orderCount.get(bucket.id) || 0,
     points: points.get(bucket.id) || 0,
     claims: voucherClaims.get(bucket.id) || 0,
   }));

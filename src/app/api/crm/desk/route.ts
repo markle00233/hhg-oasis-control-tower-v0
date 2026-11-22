@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import {
   isDeskAdminForZone,
   isSystemAdmin,
@@ -114,6 +115,98 @@ async function recentDeskCustomerIds(opts: {
   return [...ids];
 }
 
+type DeskEventRecord = {
+  id: string;
+  eventType: string;
+  operationalStatus: string;
+  createdAt: Date;
+  metadata: Prisma.JsonValue;
+  service: { serviceCode: string; serviceName: string };
+};
+
+/**
+ * Ảnh bill nằm trong metadata và có thể nặng vài trăm KB.
+ * Bỏ `billPhoto` ngay trên Postgres để danh sách quầy không kéo cả ảnh.
+ */
+async function loadDeskEvents(opts: {
+  customerIds: string[];
+  dayStart: Date;
+  dayEnd: Date | null;
+  aliases: string[];
+  eventTypes: string[];
+}) {
+  const grouped = new Map<string, DeskEventRecord[]>();
+  if (!opts.customerIds.length || !opts.aliases.length || !opts.eventTypes.length) {
+    return grouped;
+  }
+  const rows = await prisma.$queryRaw<
+    {
+      id: string;
+      customerId: string;
+      eventType: string;
+      operationalStatus: string;
+      createdAt: Date;
+      metadata: Prisma.JsonValue;
+      serviceCode: string;
+      serviceName: string;
+    }[]
+  >(Prisma.sql`
+    SELECT id, "customerId", "eventType", "operationalStatus", "createdAt",
+           metadata, "serviceCode", "serviceName"
+    FROM (
+      SELECT e.id,
+             e."customerId",
+             e."eventType",
+             e."operationalStatus",
+             e."createdAt",
+             CASE
+               WHEN e.metadata IS NULL THEN NULL
+               WHEN jsonb_typeof(e.metadata) = 'object' THEN e.metadata - 'billPhoto'
+               ELSE e.metadata
+             END AS metadata,
+             s."serviceCode" AS "serviceCode",
+             s."serviceName" AS "serviceName",
+             ROW_NUMBER() OVER (
+               PARTITION BY e."customerId"
+               ORDER BY e."createdAt" DESC
+             ) AS rn
+      FROM app_service_events e
+      INNER JOIN app_services s ON s.id = e."serviceId"
+      WHERE e."customerId" IN (${Prisma.join(opts.customerIds)})
+        AND e."createdAt" >= ${opts.dayStart}
+        ${opts.dayEnd ? Prisma.sql`AND e."createdAt" < ${opts.dayEnd}` : Prisma.empty}
+        AND e."eventType" IN (${Prisma.join(opts.eventTypes)})
+        AND s."serviceCode" IN (${Prisma.join(opts.aliases)})
+    ) ranked
+    WHERE rn <= 40
+    ORDER BY "createdAt" DESC
+  `);
+  for (const row of rows) {
+    const list = grouped.get(row.customerId) || [];
+    list.push({
+      id: row.id,
+      eventType: row.eventType,
+      operationalStatus: row.operationalStatus,
+      createdAt: row.createdAt,
+      metadata: row.metadata,
+      service: {
+        serviceCode: row.serviceCode,
+        serviceName: row.serviceName,
+      },
+    });
+    grouped.set(row.customerId, list);
+  }
+  return grouped;
+}
+
+function deskEventTypes(zone: string) {
+  const types = ["SERVICE_USE"];
+  if (zone === "MIA_OI" || miaOlympicSector(zone)) types.push("MIA_OI_ORDER");
+  if (zone === "SAUNA") types.push("SPA_ORDER");
+  if (zone === "OLYMPIC_POOL" || miaOlympicSector(zone)) types.push("POOL_ORDER");
+  return types;
+}
+
 export async function GET(req: NextRequest) {
   const hours = Math.min(
     Math.max(Number(req.nextUrl.searchParams.get("hours") || 12) || 12, 1),
@@ -222,54 +315,6 @@ export async function GET(req: NextRequest) {
         adminNote: true,
         createdAt: true,
         updatedAt: true,
-        events: {
-          where: {
-            createdAt: {
-              gte: dayStart,
-              ...(dayEnd ? { lt: dayEnd } : {}),
-            },
-            OR: [
-              {
-                eventType: "SERVICE_USE",
-                service: { serviceCode: { in: aliases } },
-              },
-              ...(zone === "MIA_OI" || miaOlympicSector(zone)
-                ? [
-                    {
-                      eventType: "MIA_OI_ORDER" as const,
-                      service: { serviceCode: { in: aliases } },
-                    },
-                  ]
-                : []),
-              ...(zone === "SAUNA"
-                ? [
-                    {
-                      eventType: "SPA_ORDER" as const,
-                      service: { serviceCode: { in: aliases } },
-                    },
-                  ]
-                : []),
-              ...(zone === "OLYMPIC_POOL" || miaOlympicSector(zone)
-                ? [
-                    {
-                      eventType: "POOL_ORDER" as const,
-                      service: { serviceCode: { in: aliases } },
-                    },
-                  ]
-                : []),
-            ],
-          },
-          orderBy: { createdAt: "desc" },
-          take: 40,
-          select: {
-            id: true,
-            eventType: true,
-            operationalStatus: true,
-            createdAt: true,
-            metadata: true,
-            service: { select: { serviceCode: true, serviceName: true } },
-          },
-        },
         orders: {
           where: {
             createdAt: {
@@ -325,6 +370,14 @@ export async function GET(req: NextRequest) {
     })
       : [];
 
+    const eventsPromise = loadDeskEvents({
+      customerIds: rows.map((r) => r.id),
+      dayStart,
+      dayEnd,
+      aliases,
+      eventTypes: deskEventTypes(zone),
+    });
+
     const phones = rows
       .map((r) => r.phoneNormalized)
       .filter((p): p is string => !!p);
@@ -332,62 +385,116 @@ export async function GET(req: NextRequest) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const membershipPromise = phones.length
+      ? prisma.crmCustomer
+          .findMany({
+            where: {
+              phoneNormalized: { in: phones },
+              memberships: {
+                some: {
+                  status: "ACTIVE",
+                  expiryDate: { gte: today },
+                },
+              },
+            },
+            select: {
+              phoneNormalized: true,
+              memberships: {
+                where: {
+                  status: "ACTIVE",
+                  expiryDate: { gte: today },
+                },
+                orderBy: { expiryDate: "desc" },
+                take: 1,
+                select: {
+                  startDate: true,
+                  expiryDate: true,
+                  plan: { select: { name: true, planCode: true } },
+                },
+              },
+            },
+          })
+          .catch(() => [])
+      : Promise.resolve([]);
+
+    const bonusPhones =
+      zone === "SAUNA" || miaOlympicSector(zone)
+        ? [
+            ...new Set(
+              rows.flatMap((c) => [
+                ...phoneKeys(c.phoneNormalized),
+                ...phoneKeys(c.phone),
+              ])
+            ),
+          ]
+        : [];
+    const bonusPromise = bonusPhones.length
+      ? prisma.appSwimStudent.findMany({
+          where: {
+            status: "ACTIVE",
+            bonusVisitsTotal: { gt: 0 },
+            bonusVisitsLeft: { gt: 0 },
+            startedAt: { gt: swimBonusStartedAfter() },
+            OR: [
+              { phoneNormalized: { in: bonusPhones } },
+              { phone: { in: bonusPhones } },
+            ],
+          },
+          select: { phone: true, phoneNormalized: true, bonusVisitsLeft: true },
+        })
+      : Promise.resolve([]);
+
+    const bookingIds = new Set<string>();
+    for (const c of rows) {
+      for (const cart of c.serviceCarts) {
+        const id = bookingIdFromCartItems(cart.items);
+        if (id) bookingIds.add(id);
+        if (!Array.isArray(cart.items)) continue;
+        for (const raw of cart.items) {
+          if (!raw || typeof raw !== "object") continue;
+          const note = String((raw as { note?: string }).note || "");
+          const fromNote = note.match(/bookingId:([^|\s]+)/)?.[1]?.trim();
+          if (fromNote) bookingIds.add(fromNote);
+        }
+      }
+    }
+    const bookingPromise = bookingIds.size
+      ? prisma.appBooking.findMany({
+          where: { id: { in: [...bookingIds] } },
+          select: { id: true, startAt: true, endAt: true },
+        })
+      : Promise.resolve([]);
+
+    const [members, students, foundBookings, eventsByCustomer] =
+      await Promise.all([
+        membershipPromise,
+        bonusPromise,
+        bookingPromise,
+        eventsPromise,
+      ]);
+
     const memberPhones = new Set<string>();
     const membershipByPhone = new Map<
       string,
       { planLabel: string | null; expiresAt: Date | null; startDate: Date | null }
     >();
-    if (phones.length) {
-      try {
-        const members = await prisma.crmCustomer.findMany({
-          where: {
-            phoneNormalized: { in: phones },
-            memberships: {
-              some: {
-                status: "ACTIVE",
-                expiryDate: { gte: today },
-              },
-            },
-          },
-          select: {
-            phoneNormalized: true,
-            memberships: {
-              where: {
-                status: "ACTIVE",
-                expiryDate: { gte: today },
-              },
-              orderBy: { expiryDate: "desc" },
-              take: 1,
-              select: {
-                startDate: true,
-                expiryDate: true,
-                plan: { select: { name: true, planCode: true } },
-              },
-            },
-          },
+    for (const m of members) {
+      memberPhones.add(m.phoneNormalized);
+      const mem = m.memberships[0];
+      if (mem) {
+        membershipByPhone.set(m.phoneNormalized, {
+          planLabel: mem.plan?.name || mem.plan?.planCode || "Hội viên",
+          expiresAt: mem.expiryDate,
+          startDate: mem.startDate,
         });
-        for (const m of members) {
-          memberPhones.add(m.phoneNormalized);
-          const mem = m.memberships[0];
-          if (mem) {
-            membershipByPhone.set(m.phoneNormalized, {
-              planLabel: mem.plan?.name || mem.plan?.planCode || "Hội viên",
-              expiresAt: mem.expiryDate,
-              startDate: mem.startDate,
-            });
-          }
-        }
-      } catch {
-        /* CRM tables may be empty */
       }
     }
 
     const packageStart = new Map<string, Date>();
-    const vipMissingStart = rows.filter(
-      (c) =>
-        String(c.segment || "").toUpperCase() === "VIP" && !c.vipStartedAt
-    );
-    for (const c of vipMissingStart) {
+    for (const c of rows) {
+      if (String(c.segment || "").toUpperCase() !== "VIP" || c.vipStartedAt) {
+        continue;
+      }
       const crm = c.phoneNormalized
         ? membershipByPhone.get(c.phoneNormalized)?.startDate
         : null;
@@ -399,72 +506,31 @@ export async function GET(req: NextRequest) {
       if (start) packageStart.set(c.id, start);
     }
 
-      const bonusByPhone = new Map<string, number>();
-      if (zone === "SAUNA" || miaOlympicSector(zone)) {
-        const phones = [
-          ...new Set(
-            rows.flatMap((c) => [
-              ...phoneKeys(c.phoneNormalized),
-              ...phoneKeys(c.phone),
-            ])
-          ),
-        ];
-        if (phones.length) {
-          const students = await prisma.appSwimStudent.findMany({
-            where: {
-              status: "ACTIVE",
-              bonusVisitsTotal: { gt: 0 },
-              bonusVisitsLeft: { gt: 0 },
-              startedAt: { gt: swimBonusStartedAfter() },
-              OR: [
-                { phoneNormalized: { in: phones } },
-                { phone: { in: phones } },
-              ],
-            },
-            select: { phone: true, phoneNormalized: true, bonusVisitsLeft: true },
-          });
-          for (const student of students) {
-            for (const key of [
-              ...phoneKeys(student.phoneNormalized),
-              ...phoneKeys(student.phone),
-            ]) {
-              const prev = bonusByPhone.get(key);
-              bonusByPhone.set(
-                key,
-                prev == null
-                  ? student.bonusVisitsLeft
-                  : Math.max(prev, student.bonusVisitsLeft)
-              );
-            }
-          }
-        }
+    const bonusByPhone = new Map<string, number>();
+    for (const student of students) {
+      for (const key of [
+        ...phoneKeys(student.phoneNormalized),
+        ...phoneKeys(student.phone),
+      ]) {
+        const prev = bonusByPhone.get(key);
+        bonusByPhone.set(
+          key,
+          prev == null
+            ? student.bonusVisitsLeft
+            : Math.max(prev, student.bonusVisitsLeft)
+        );
       }
+    }
 
-      const bookingIds = new Set<string>();
-      for (const c of rows) {
-        for (const cart of c.serviceCarts) {
-          const id = bookingIdFromCartItems(cart.items);
-          if (id) bookingIds.add(id);
-          if (!Array.isArray(cart.items)) continue;
-          for (const raw of cart.items) {
-            if (!raw || typeof raw !== "object") continue;
-            const note = String((raw as { note?: string }).note || "");
-            const fromNote = note.match(/bookingId:([^|\s]+)/)?.[1]?.trim();
-            if (fromNote) bookingIds.add(fromNote);
-          }
-        }
-      }
-      const bookingClocks = new Map<string, { startAt: Date; endAt: Date }>();
-      if (bookingIds.size) {
-        const found = await prisma.appBooking.findMany({
-          where: { id: { in: [...bookingIds] } },
-          select: { id: true, startAt: true, endAt: true },
-        });
-        for (const b of found) bookingClocks.set(b.id, b);
-      }
+    const bookingClocks = new Map<string, { startAt: Date; endAt: Date }>();
+    for (const b of foundBookings) bookingClocks.set(b.id, b);
+      const deskRows = rows.map((c) => ({
+        ...c,
+        events: eventsByCustomer.get(c.id) || [],
+      }));
 
       const staffIds = new Set<string>();
-      for (const c of rows) {
+      for (const c of deskRows) {
         for (const o of c.orders) {
           if (o.createdById) staffIds.add(o.createdById);
         }
@@ -478,7 +544,7 @@ export async function GET(req: NextRequest) {
       }
       await rememberStaffNames(staffIds);
 
-      const arrivals = rows
+      const arrivals = deskRows
       .map((c) => {
         const crmMember = !!(
           c.phoneNormalized && memberPhones.has(c.phoneNormalized)
@@ -511,12 +577,14 @@ export async function GET(req: NextRequest) {
           const orderItems = Array.isArray(meta.items)
             ? (meta.items as { name?: string; qty?: number }[])
             : [];
+          const orderCancelled = meta.orderCancelled === true;
           const ticketVerified =
-            meta.ticketVerified === true ||
-            !!meta.orderId ||
-            e.eventType === "MIA_OI_ORDER" ||
-            e.eventType === "SPA_ORDER" ||
-            e.eventType === "POOL_ORDER";
+            !orderCancelled &&
+            (meta.ticketVerified === true ||
+              !!meta.orderId ||
+              e.eventType === "MIA_OI_ORDER" ||
+              e.eventType === "SPA_ORDER" ||
+              e.eventType === "POOL_ORDER");
           const orderSummary =
             e.eventType === "MIA_OI_ORDER" ||
             e.eventType === "SPA_ORDER" ||
@@ -567,6 +635,7 @@ export async function GET(req: NextRequest) {
                 : null,
             staffName: staffFromMeta(meta),
             hasBillPhoto,
+            orderCancelled,
             ticketItems: orderItems.map((i) => {
               const row = i as {
                 name?: string;
