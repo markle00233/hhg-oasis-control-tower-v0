@@ -105,10 +105,17 @@ export function buildCustomerSearchWhere(query: string): Prisma.CustomerWhereInp
   const or: Prisma.CustomerWhereInput[] = [];
 
   if (looksLikePhone) {
-    or.push(
-      { phone: { contains: phoneNorm } },
-      { phoneNormalized: { contains: phoneNorm } }
-    );
+    if (phoneNorm.length === 4) {
+      or.push({ phoneNormalized: { endsWith: phoneNorm } });
+    } else {
+      or.push({ phoneNormalized: { startsWith: phoneNorm } });
+      if (phoneNorm.startsWith("0") && phoneNorm.length > 1) {
+        or.push({ phoneNormalized: { startsWith: `84${phoneNorm.slice(1)}` } });
+      }
+      if (phoneNorm.startsWith("84") && phoneNorm.length > 2) {
+        or.push({ phoneNormalized: { startsWith: `0${phoneNorm.slice(2)}` } });
+      }
+    }
   }
 
   if (looksLikeCode || q.toUpperCase().startsWith("CUS")) {

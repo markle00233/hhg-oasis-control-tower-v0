@@ -138,9 +138,17 @@ export function DeskCourtSchedule({
   }, [zone, dayKey]);
 
   useEffect(() => {
-    void load();
-    const t = setInterval(() => void load(), 8000);
-    return () => clearInterval(t);
+    const pull = () => {
+      if (document.visibilityState === "hidden") return;
+      void load();
+    };
+    pull();
+    const t = setInterval(pull, 15000);
+    document.addEventListener("visibilitychange", pull);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", pull);
+    };
   }, [load]);
 
   async function endSession(resourceId: string, sessionId?: string) {

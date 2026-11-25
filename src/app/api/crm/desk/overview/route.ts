@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { canAccessDeskZone, isSystemAdmin, requireAuth } from "@/lib/auth";
 import { deskZoneAliases } from "@/lib/desk-zones";
 import { prisma } from "@/lib/prisma";
@@ -86,20 +87,30 @@ export async function GET(req: NextRequest) {
   const serviceWhere = serviceCodes
     ? { service: { serviceCode: { in: serviceCodes } } }
     : {};
+  const codeFilter = serviceCodes?.length
+    ? Prisma.sql`AND s."serviceCode" IN (${Prisma.join(serviceCodes)})`
+    : Prisma.empty;
 
-  const [orders, redeems, claims] = await Promise.all([
-    prisma.appOrder.findMany({
-      where: {
-        createdAt: { gte: dayStart },
-        NOT: { status: "CANCELLED" },
-        ...serviceWhere,
-      },
-      select: {
-        totalVnd: true,
-        customerId: true,
-        service: { select: { serviceCode: true } },
-      },
-    }),
+  const [grouped, guestRows, redeems, claims] = await Promise.all([
+    prisma.$queryRaw<{ code: string; revenue: bigint; orders: bigint }[]>`
+      SELECT s."serviceCode" AS code,
+             COALESCE(SUM(o."totalVnd"), 0)::bigint AS revenue,
+             COUNT(*)::bigint AS orders
+      FROM "app_orders" o
+      INNER JOIN "app_services" s ON s.id = o."serviceId"
+      WHERE o."createdAt" >= ${dayStart}
+        AND o.status <> 'CANCELLED'
+        ${codeFilter}
+      GROUP BY s."serviceCode"
+    `,
+    prisma.$queryRaw<{ guests: bigint }[]>`
+      SELECT COUNT(DISTINCT o."customerId")::bigint AS guests
+      FROM "app_orders" o
+      INNER JOIN "app_services" s ON s.id = o."serviceId"
+      WHERE o."createdAt" >= ${dayStart}
+        AND o.status <> 'CANCELLED'
+        ${codeFilter}
+    `,
     prisma.appPointLedger.findMany({
       where: { reason: "REDEEM", createdAt: { gte: monthStart }, delta: { lt: 0 } },
       select: { delta: true, refId: true },
@@ -140,19 +151,19 @@ export async function GET(req: NextRequest) {
 
   let todayRevenueVnd = 0;
   let todayOrders = 0;
-  const guests = new Set<string>();
-  for (const order of orders) {
-    const bucket = bucketFor(order.service?.serviceCode);
+  for (const row of grouped) {
+    const bucket = bucketFor(row.code);
     if (bucket && !visibleIds.has(bucket)) continue;
     if (!bucket && allowed) continue;
-    const amount = order.totalVnd || 0;
+    const amount = Number(row.revenue) || 0;
+    const count = Number(row.orders) || 0;
     todayRevenueVnd += amount;
-    todayOrders += 1;
-    if (order.customerId) guests.add(order.customerId);
+    todayOrders += count;
     if (!bucket) continue;
     revenue.set(bucket, (revenue.get(bucket) || 0) + amount);
-    orderCount.set(bucket, (orderCount.get(bucket) || 0) + 1);
+    orderCount.set(bucket, (orderCount.get(bucket) || 0) + count);
   }
+  const todayGuests = Number(guestRows[0]?.guests ?? 0);
 
   for (const row of redeems) {
     const bucket = bucketFor(serviceByOrder.get(orderIdFromRef(row.refId) || "") || "");
@@ -179,7 +190,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     todayRevenueVnd,
     todayOrders,
-    todayGuests: guests.size,
+    todayGuests,
     pointsRedeemed: zones.reduce((sum, zoneRow) => sum + zoneRow.points, 0),
     voucherClaims: zones.reduce((sum, zoneRow) => sum + zoneRow.claims, 0),
     zones,

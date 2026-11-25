@@ -1,13 +1,13 @@
 "use client";
 
 import { performCheckin } from "@/app/actions";
+import { loadCheckinProgress } from "@/lib/checkin-progress";
 import { Badge, Button, Card, Input, Select } from "@/components/ui";
 import { formatDate, formatDateTime, getInitials, cn } from "@/lib/utils";
 import { getAreaTheme, getPackageByCode } from "@/config/crm.config";
 import { ServiceTag } from "@/components/service-tag";
 import { PackageNumberBadge } from "@/components/package-number-badge";
 import { fuzzyMatchCustomer, normalizeSearchText } from "@/lib/customer-search";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type Membership = {
@@ -102,30 +102,43 @@ export function CheckinClient({
     staff?: string | null;
   }[];
 }) {
-  const router = useRouter();
+  const [rows, setRows] = useState(customers);
   const [q, setQ] = useState("");
   const [visitQ, setVisitQ] = useState("");
   const [visitSort, setVisitSort] = useState<"time" | "name" | "id">("time");
   const [selectedId, setSelectedId] = useState<string | null>(customers[0]?.id ?? null);
+  const [recentExtra, setRecentExtra] = useState<typeof recent>([]);
+  const [progressNonce, setProgressNonce] = useState(0);
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [detailId, setDetailId] = useState<string | null>(null);
 
+  useEffect(() => {
+    setRows(customers);
+  }, [customers]);
+
   const filtered = useMemo(
-    () => customers.filter((c) => fuzzyMatchCustomer(c, q)),
-    [customers, q]
+    () => rows.filter((c) => fuzzyMatchCustomer(c, q)),
+    [rows, q]
   );
 
   const visitsShown = useMemo(() => {
     const needle = normalizeSearchText(visitQ);
+    const merged = [...recentExtra, ...recent];
+    const seen = new Set<string>();
+    const unique = merged.filter((r) => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
     const list = needle
-      ? recent.filter((r) =>
+      ? unique.filter((r) =>
           normalizeSearchText(`${r.name} ${r.code} ${r.customerCode}`).includes(
             needle
           )
         )
-      : [...recent];
+      : [...unique];
 
     list.sort((a, b) => {
       if (visitSort === "name") {
@@ -139,9 +152,34 @@ export function CheckinClient({
       return new Date(b.at).getTime() - new Date(a.at).getTime();
     });
     return list;
-  }, [recent, visitQ, visitSort]);
+  }, [recent, recentExtra, visitQ, visitSort]);
 
   const selected = filtered.find((c) => c.id === selectedId) ?? filtered[0] ?? null;
+
+  useEffect(() => {
+    const id = selected?.id;
+    if (!id) return;
+    let cancelled = false;
+    void loadCheckinProgress(id).then((res) => {
+      if (cancelled || !res.ok) return;
+      setRows((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                checkInCountToday: res.checkInCountToday,
+                presentToday: res.checkInCountToday > 0,
+                presentTodayBy: res.presentTodayBy,
+                membershipsProgress: res.membershipsProgress,
+              }
+            : c
+        )
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id, progressNonce]);
 
   useEffect(() => {
     if (filtered.length === 0) {
@@ -152,6 +190,55 @@ export function CheckinClient({
       setSelectedId(filtered[0].id);
     }
   }, [filtered, selectedId]);
+
+  function rememberCheckin(
+    customer: Customer,
+    res: {
+      visitCode?: string;
+      checkInCountToday?: number;
+      services?: { code: string; name: string }[];
+      serviceNames?: string;
+      at?: string;
+      staffName?: string | null;
+    }
+  ) {
+    if (res.visitCode) {
+      const names = res.services?.length
+        ? res.services
+        : (res.serviceNames || "")
+            .split(",")
+            .map((name) => name.trim())
+            .filter(Boolean)
+            .map((name) => ({ code: "", name }));
+      setRecentExtra((prev) => [
+        {
+          id: res.visitCode || `${customer.id}-${res.at}`,
+          code: res.visitCode || "",
+          customerCode: customer.customerCode,
+          name: customer.fullName,
+          services: names,
+          at: res.at || new Date().toISOString(),
+          staff: res.staffName || null,
+        },
+        ...prev,
+      ]);
+    }
+    setRows((prev) =>
+      prev.map((c) =>
+        c.id === customer.id
+          ? {
+              ...c,
+              presentToday: true,
+              checkInCountToday: Math.max(
+                c.checkInCountToday,
+                res.checkInCountToday || c.checkInCountToday + 1
+              ),
+            }
+          : c
+      )
+    );
+    setProgressNonce((n) => n + 1);
+  }
 
   function toggleService(id: string) {
     setSelectedServices((prev) =>
@@ -189,7 +276,7 @@ export function CheckinClient({
       setMessage(
         `+1 lúc ${now} · ${res.serviceNames || svc} · gói này hôm nay ${res.checkInCountToday ?? next} lần`
       );
-      router.refresh();
+      rememberCheckin(selected, res);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Check-in lỗi");
     } finally {
@@ -216,7 +303,7 @@ export function CheckinClient({
       });
       setMessage(`+1 lúc ${now} · hôm nay ${res.checkInCountToday ?? next} lần`);
       setSelectedServices([]);
-      router.refresh();
+      rememberCheckin(selected, res);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Check-in lỗi");
     } finally {
@@ -243,7 +330,7 @@ export function CheckinClient({
             ) : null}
           </div>
           <p className="mt-2 text-[11px] text-muted">
-            Hiện {filtered.length}/{customers.length} khách · lọc realtime khi gõ
+            Hiện {filtered.length}/{rows.length} khách · lọc ngay khi gõ
           </p>
         </Card>
 
@@ -368,8 +455,10 @@ export function CheckinClient({
                               </span>
                             </div>
                             <span className="text-xs text-muted">
-                              {m.attendedCount}/{m.totalDays} ngày tới
-                            {m.checkInCountToday > 0
+                              {m.days.length > 0
+                                ? `${m.attendedCount}/${m.totalDays} ngày tới`
+                                : "Đang tính ngày tới"}
+                              {m.checkInCountToday > 0
                                 ? ` · hôm nay ${m.checkInCountToday} lần`
                                 : ""}
                             </span>
@@ -378,7 +467,11 @@ export function CheckinClient({
 
                         <div className="flex items-center gap-2">
                           <div className="min-w-0 flex-1">
-                            <EnergyBar days={m.days} />
+                            {m.days.length > 0 ? (
+                              <EnergyBar days={m.days} />
+                            ) : (
+                              <div className="h-4 w-full rounded-md bg-[#2a2a2a]" />
+                            )}
                           </div>
                           <Button
                             type="button"

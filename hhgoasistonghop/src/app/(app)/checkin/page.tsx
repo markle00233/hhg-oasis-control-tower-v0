@@ -2,13 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/ui";
 import { CheckinClient } from "@/components/checkin-client";
 import { daysUntil } from "@/lib/utils";
-import {
-  buildDaySegments,
-  startOfDay,
-  toDateKey,
-  visitsByDateForMembership,
-  formatVisitLabel,
-} from "@/lib/attendance";
+import { startOfDay } from "@/lib/attendance";
 import { departmentLabel } from "@/config/crm.config";
 import { requireFeature } from "@/lib/require-feature";
 
@@ -17,11 +11,9 @@ const LIST_LIMIT = 200;
 
 export default async function CheckinPage() {
   await requireFeature("checkin");
-  const earliest = new Date();
-  earliest.setDate(earliest.getDate() - 40);
   const today = startOfDay(new Date());
 
-  const [rawCustomers, services, recent] = await Promise.all([
+  const [rawCustomers, services, recent, todayGroups] = await Promise.all([
     prisma.customer.findMany({
       orderBy: { fullName: "asc" },
       take: LIST_LIMIT,
@@ -32,18 +24,6 @@ export default async function CheckinPage() {
             plan: { include: { services: { include: { service: true } } } },
           },
           orderBy: { expiryDate: "desc" },
-        },
-        visits: {
-          where: { visitDate: { gte: earliest } },
-          orderBy: { checkInAt: "asc" },
-          select: {
-            visitDate: true,
-            checkInAt: true,
-            membershipId: true,
-            note: true,
-            staff: { select: { fullName: true, department: true } },
-            usages: { select: { service: { select: { name: true } } } },
-          },
         },
         familyGroup: {
           include: {
@@ -71,13 +51,21 @@ export default async function CheckinPage() {
       orderBy: { checkInAt: "desc" },
       take: 80,
     }),
+    prisma.visit.groupBy({
+      by: ["customerId"],
+      where: { visitDate: today },
+      _count: { _all: true },
+    }),
   ]);
+  const todayCountByCustomer = new Map(
+    todayGroups.map((row) => [row.customerId, row._count._all])
+  );
 
   return (
     <div>
       <PageHeader
         title="Check-in toàn bộ"
-        description="Danh sách luôn hiện sẵn · gõ tìm realtime (không cần đúng dấu) · hồ sơ → tab Check-in để xem 1 người"
+        description="Danh sách hiện sẵn · gõ để lọc · tiến độ gói tải khi chọn khách"
       />
       <CheckinClient
         customers={rawCustomers.map((c) => {
@@ -122,49 +110,43 @@ export default async function CheckinPage() {
             return d != null ? Math.max(0, -d) : null;
           })();
 
-          const todayVisits = c.visits.filter((v) => toDateKey(v.visitDate) === toDateKey(today));
-          const checkInCountToday = todayVisits.length;
+          const checkInCountToday = todayCountByCustomer.get(c.id) || 0;
           const presentToday = checkInCountToday > 0;
-          const presentTodayBy = presentToday
-            ? todayVisits
-                .map((v) => {
-                  const who = v.staff?.fullName || "nhân viên";
-                  const dept = v.staff?.department
-                    ? ` (${departmentLabel(v.staff.department)})`
-                    : "";
-                  return `${formatVisitLabel(v)} · ${who}${dept}`;
-                })
-                .join(" · ")
-            : null;
+          const presentTodayBy = null;
 
           const familyLabel = c.familyGroup
             ? `Gia đình ${c.familyGroup.owner.fullName} (${c.familyGroup.members.length} người)`
             : null;
 
           const membershipsProgress = active.map((m) => {
-            const built = buildDaySegments(
-              m.startDate,
-              m.expiryDate,
-              visitsByDateForMembership(c.visits, {
-                id: m.id,
-                membershipCode: m.membershipCode,
-              })
+            const start = new Date(m.startDate);
+            start.setHours(0, 0, 0, 0);
+            const end = new Date(m.expiryDate);
+            end.setHours(0, 0, 0, 0);
+            const totalDays = Math.max(
+              1,
+              Math.round((end.getTime() - start.getTime()) / 86400000) || 30
             );
             return {
               id: m.id,
               membershipCode: m.membershipCode,
               planName: m.plan.name,
               planCode: m.plan.planCode,
-              totalDays: built.totalDays,
-              attendedCount: built.attendedCount,
-              remainingDays: built.remainingDays,
+              totalDays,
+              attendedCount: 0,
+              remainingDays: Math.max(0, daysUntil(m.expiryDate) ?? 0),
               startDate: m.startDate.toISOString(),
               expiryDate: m.expiryDate.toISOString(),
-              checkedInToday: built.checkedInToday,
-              checkInCountToday: built.checkInCountToday,
+              checkedInToday: false,
+              checkInCountToday: 0,
               serviceIds: m.plan.services.map((ps) => ps.serviceId),
               serviceNames: m.plan.services.map((ps) => ps.service.name),
-              days: built.days,
+              days: [] as {
+                date: string;
+                label: string;
+                status: "present" | "absent" | "future";
+                times: string[];
+              }[],
             };
           });
 

@@ -84,9 +84,17 @@ export function DeskResourceGrid({
   }, [zone]);
 
   useEffect(() => {
-    void load();
-    const t = setInterval(() => void load(), 5000);
-    return () => clearInterval(t);
+    const pull = () => {
+      if (document.visibilityState === "hidden") return;
+      void load();
+    };
+    pull();
+    const t = setInterval(pull, 5000);
+    document.addEventListener("visibilitychange", pull);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", pull);
+    };
   }, [load]);
 
   function setGuest(

@@ -5,6 +5,7 @@ import {
   customerHasLoginAccount,
   deskSegmentOf,
 } from "@/lib/desk-segment";
+import { normalizePhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -23,24 +24,44 @@ export async function GET(req: NextRequest) {
   }
 
   const digits = q.replace(/\D/g, "");
+  const phoneNorm = normalizePhone(digits);
+  const phoneKeys = new Set<string>();
+  if (phoneNorm.length >= 3) {
+    phoneKeys.add(phoneNorm);
+    if (phoneNorm.startsWith("0") && phoneNorm.length > 1) {
+      phoneKeys.add(`84${phoneNorm.slice(1)}`);
+    }
+    if (phoneNorm.startsWith("84") && phoneNorm.length > 2) {
+      phoneKeys.add(`0${phoneNorm.slice(2)}`);
+    }
+  }
+  const phoneOr = [
+    ...[...phoneKeys].map((key) => ({
+      phoneNormalized: { startsWith: key },
+    })),
+    ...(phoneNorm.length === 4 || phoneNorm.length >= 9
+      ? [{ phoneLast4: phoneNorm.slice(-4) }]
+      : []),
+  ];
+  const textOr =
+    digits.length >= 3 && digits.length >= q.replace(/\s/g, "").length
+      ? []
+      : [
+          { fullName: { contains: q, mode: "insensitive" as const } },
+          { customerCode: { startsWith: q, mode: "insensitive" as const } },
+          { shortId: { startsWith: q, mode: "insensitive" as const } },
+        ];
+  const or = [...textOr, ...phoneOr];
+  if (or.length === 0) {
+    return NextResponse.json({ ok: true, customers: [] });
+  }
   try {
     const rows = await prisma.appCustomer.findMany({
       where: {
         status: "ACTIVE",
         phone: { not: null },
         NOT: { username: { startsWith: "anon-" } },
-        OR: [
-          { fullName: { contains: q, mode: "insensitive" } },
-          { phone: { contains: q } },
-          { customerCode: { contains: q, mode: "insensitive" } },
-          { shortId: { contains: q, mode: "insensitive" } },
-          ...(digits.length >= 3
-            ? [
-                { phoneNormalized: { contains: digits } },
-                { phoneLast4: { contains: digits.slice(-4) } },
-              ]
-            : []),
-        ],
+        OR: or,
       },
       select: {
         id: true,

@@ -155,6 +155,7 @@ model Membership {
   @@index([expiryDate])
   @@index([contractCode])
   @@index([salesPersonCode])
+  @@index([planId])
 }
 
 // ─── Hợp đồng lưu form (Hội viên / Dịch vụ HLV) ─────────────
@@ -257,6 +258,7 @@ model Visit {
   @@index([customerId, checkInAt])
   @@index([visitDate])
   @@index([membershipId])
+  @@index([staffId, visitDate])
 }
 
 model ServiceUsage {
@@ -293,6 +295,7 @@ model ActivityLog {
   occurredAt   DateTime @default(now())
 
   @@index([customerId, occurredAt])
+  @@index([staffId, occurredAt])
 }
 
 // ─── Thông báo giữa 2 acc vận hành ─────────────────────────

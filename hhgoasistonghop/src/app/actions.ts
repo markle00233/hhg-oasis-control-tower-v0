@@ -3,7 +3,7 @@
 import { auth, canWrite, isAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizePhone } from "@/lib/utils";
-import { logActivity, nextCode } from "@/lib/codes";
+import { logActivity, nextCode, nextVisitCode } from "@/lib/codes";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -579,6 +579,7 @@ export async function performCheckin(formData: FormData) {
     let membershipName: string | null = null;
     let membershipId: string | null = null;
 
+    let servicesFromPlan = false;
     if (membershipIdRaw) {
       const mem = await prisma.membership.findFirst({
         where: { id: membershipIdRaw, customerId },
@@ -595,6 +596,7 @@ export async function performCheckin(formData: FormData) {
       const planServiceIds = mem.plan.services.map((ps) => ps.serviceId);
       if (planServiceIds.length > 0) {
         serviceIds = planServiceIds;
+        servicesFromPlan = true;
       }
     }
 
@@ -602,18 +604,20 @@ export async function performCheckin(formData: FormData) {
       return { ok: false as const, error: "Chọn ít nhất 1 dịch vụ" };
     }
 
-    const entitled = await getCustomerEntitlements(customerId);
-    const entitledIds = new Set(entitled.map((s) => s.id));
-    const blocked = serviceIds.filter((id) => !entitledIds.has(id));
-    if (entitled.length > 0 && blocked.length > 0) {
-      return {
-        ok: false as const,
-        error:
-          "Khách không có quyền một hoặc nhiều dịch vụ đã chọn (không nằm trong gói / gói gia đình / promotion). Người lạ biết SĐT gia đình nhưng không có trong danh sách thì phải mua gói lẻ.",
-      };
+    if (!servicesFromPlan) {
+      const entitled = await getCustomerEntitlements(customerId);
+      const entitledIds = new Set(entitled.map((s) => s.id));
+      const blocked = serviceIds.filter((id) => !entitledIds.has(id));
+      if (entitled.length > 0 && blocked.length > 0) {
+        return {
+          ok: false as const,
+          error:
+            "Khách không có quyền một hoặc nhiều dịch vụ đã chọn (không nằm trong gói / gói gia đình / promotion). Người lạ biết SĐT gia đình nhưng không có trong danh sách thì phải mua gói lẻ.",
+        };
+      }
     }
 
-    const visitCode = await nextCode("VIS", "visit");
+    const visitCode = await nextVisitCode();
     const visit = await prisma.visit.create({
       data: {
         visitCode,
@@ -642,30 +646,31 @@ export async function performCheckin(formData: FormData) {
       where: { id: { in: serviceIds }, status: "ACTIVE" },
     });
 
-    for (const service of services) {
-      await prisma.serviceUsage.create({
-        data: {
+    if (services.length > 0) {
+      await prisma.serviceUsage.createMany({
+        data: services.map((service) => ({
           visitId: visit.id,
           customerId,
           serviceId: service.id,
           startedAt: now,
           status: "ACTIVE",
-        },
+        })),
       });
-
-      await logActivity({
-        customerId,
-        activityType: "CHECK_IN",
-        serviceId: service.id,
-        title: `${service.name} Check-in`,
-        note: `Visit ${visit.visitCode}`,
-        staffId: actorId ?? undefined,
+      await prisma.activityLog.createMany({
+        data: services.map((service) => ({
+          customerId,
+          activityType: "CHECK_IN",
+          serviceId: service.id,
+          title: `${service.name} Check-in`,
+          note: `Visit ${visit.visitCode}`,
+          staffId: actorId,
+          occurredAt: now,
+        })),
       });
     }
 
     revalidatePath("/checkin");
     revalidatePath(`/customers/${customerId}`);
-    revalidatePath("/");
     const todayCount = await prisma.visit.count({
       where: {
         customerId,
@@ -687,6 +692,9 @@ export async function performCheckin(formData: FormData) {
       visitCode: visit.visitCode,
       checkInCountToday: todayCount,
       serviceNames,
+      services: services.map((s) => ({ code: s.code, name: s.name })),
+      at: now.toISOString(),
+      staffName: session.user.name || null,
       membershipCode,
     };
   } catch (err) {

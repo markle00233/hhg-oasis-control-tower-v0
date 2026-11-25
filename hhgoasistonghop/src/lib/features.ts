@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import {
   CRM_FEATURES,
@@ -7,7 +8,7 @@ import {
   type FeatureFlags,
 } from "@/config/features";
 
-export async function getUserFeatureFlags(userId: string) {
+export const getUserFeatureFlags = cache(async function getUserFeatureFlags(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { id: true, role: true, featureFlags: true, email: true, fullName: true },
@@ -17,7 +18,7 @@ export async function getUserFeatureFlags(userId: string) {
     user,
     flags: resolveFeatureFlags(user.role, user.featureFlags),
   };
-}
+});
 
 export async function userCanFeature(userId: string, code: FeatureCode) {
   const row = await getUserFeatureFlags(userId);

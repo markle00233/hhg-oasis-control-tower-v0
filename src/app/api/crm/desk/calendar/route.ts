@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { requireDeskZone } from "@/lib/auth";
 import { deskZoneAliases, getDeskZone } from "@/lib/desk-zones";
 import { prisma } from "@/lib/prisma";
@@ -194,38 +195,35 @@ export async function GET(req: NextRequest) {
 
   const { start, end } = vnMonthBounds(year, month);
   const nDays = daysInMonth(year, month);
+  const serviceSql = Prisma.join(serviceIds);
 
   const [events, bookings] = await Promise.all([
-    prisma.appServiceEvent.findMany({
-      where: {
-        serviceId: { in: serviceIds },
-        eventType: "SERVICE_USE",
-        createdAt: { gte: start, lt: end },
-      },
-      select: { createdAt: true },
-      take: 5000,
-    }),
-    prisma.appBooking.findMany({
-      where: {
-        serviceId: { in: serviceIds },
-        startAt: { gte: start, lt: end },
-        status: { not: "CANCELLED" },
-      },
-      select: { startAt: true },
-      take: 5000,
-    }),
+    prisma.$queryRaw<{ day: string; n: bigint }[]>`
+      SELECT to_char(e."createdAt" AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS day,
+             COUNT(*)::bigint AS n
+      FROM "app_service_events" e
+      WHERE e."serviceId" IN (${serviceSql})
+        AND e."eventType" = 'SERVICE_USE'
+        AND e."createdAt" >= ${start}
+        AND e."createdAt" < ${end}
+      GROUP BY 1
+    `,
+    prisma.$queryRaw<{ day: string; n: bigint }[]>`
+      SELECT to_char(b."startAt" AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS day,
+             COUNT(*)::bigint AS n
+      FROM "app_bookings" b
+      WHERE b."serviceId" IN (${serviceSql})
+        AND b.status <> 'CANCELLED'
+        AND b."startAt" >= ${start}
+        AND b."startAt" < ${end}
+      GROUP BY 1
+    `,
   ]);
 
   const visitMap = new Map<string, number>();
   const bookMap = new Map<string, number>();
-  for (const e of events) {
-    const key = vnYmd(e.createdAt);
-    visitMap.set(key, (visitMap.get(key) || 0) + 1);
-  }
-  for (const b of bookings) {
-    const key = vnYmd(b.startAt);
-    bookMap.set(key, (bookMap.get(key) || 0) + 1);
-  }
+  for (const e of events) visitMap.set(e.day, Number(e.n) || 0);
+  for (const b of bookings) bookMap.set(b.day, Number(b.n) || 0);
 
   const days = [];
   for (let d = 1; d <= nDays; d++) {
@@ -249,8 +247,8 @@ export async function GET(req: NextRequest) {
     today,
     days,
     totals: {
-      visits: events.length,
-      bookings: bookings.length,
+      visits: [...visitMap.values()].reduce((sum, n) => sum + n, 0),
+      bookings: [...bookMap.values()].reduce((sum, n) => sum + n, 0),
     },
   });
 }

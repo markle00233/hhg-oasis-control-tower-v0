@@ -317,12 +317,13 @@ export default async function CustomersPage({
   }
   if (fPhone) {
     const digits = fPhone.replace(/\D/g, "");
-    andParts.push({
-      OR: [
-        { phone: { contains: fPhone } },
-        ...(digits ? [{ phoneNormalized: { contains: digits } }] : []),
-      ],
-    });
+    andParts.push(
+      digits.length === 4
+        ? { phoneNormalized: { endsWith: digits } }
+        : digits.length >= 3
+          ? { phoneNormalized: { startsWith: digits } }
+          : { phone: { contains: fPhone } }
+    );
   }
   if (fNote) {
     andParts.push({ note: { contains: fNote, mode: "insensitive" } });
@@ -402,7 +403,7 @@ export default async function CustomersPage({
     ReturnType<typeof prisma.customer.findMany<{ include: typeof include }>>
   >;
 
-  const needMemoryPath = !isDbSort(sort) || !!q || !!fDob;
+  const needMemoryPath = !isDbSort(sort) || !!fDob;
 
   if (!needMemoryPath) {
     customers = await prisma.customer.findMany({

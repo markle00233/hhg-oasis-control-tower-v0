@@ -25,13 +25,15 @@ export async function GET(req: NextRequest) {
   );
 
   try {
+    const phoneNorm = normalizePhone(q);
     const searchWhere = q
       ? {
           OR: [
             { fullName: { contains: q, mode: "insensitive" as const } },
-            { phone: { contains: q } },
-            { phoneNormalized: { contains: normalizePhone(q) } },
-            { customerCode: { contains: q, mode: "insensitive" as const } },
+            { customerCode: { startsWith: q, mode: "insensitive" as const } },
+            ...(phoneNorm.length >= 3
+              ? [{ phoneNormalized: { startsWith: phoneNorm } }]
+              : []),
           ],
         }
       : {};

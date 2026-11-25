@@ -524,6 +524,7 @@ model CrmMembership {
   @@index([expiryDate])
   @@index([contractCode])
   @@index([salesPersonCode])
+  @@index([planId])
   @@map("crm_memberships")
 }
 
@@ -631,6 +632,7 @@ model CrmVisit {
   @@index([customerId, checkInAt])
   @@index([visitDate])
   @@index([membershipId])
+  @@index([staffId, visitDate])
   @@map("crm_visits")
 }
 
@@ -669,6 +671,7 @@ model CrmActivityLog {
   occurredAt   DateTime @default(now())
 
   @@index([customerId, occurredAt])
+  @@index([staffId, occurredAt])
   @@map("crm_activity_logs")
 }
 
@@ -966,6 +969,7 @@ model AppServiceEvent {
 
   @@index([customerId, createdAt])
   @@index([serviceId, createdAt])
+  @@index([serviceId, eventType, createdAt])
   @@index([customerId, serviceId, createdAt])
   @@index([eventType, createdAt])
   @@index([deviceId])
@@ -1000,6 +1004,8 @@ model AppOrder {
 
   @@index([status, createdAt])
   @@index([customerId, createdAt])
+  @@index([serviceId, createdAt])
+  @@index([createdAt])
   @@index([serviceUseId])
   @@map("app_orders")
 }

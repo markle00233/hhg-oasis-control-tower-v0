@@ -29,9 +29,17 @@ export function NoticesBell() {
   }, []);
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      void load();
+    };
+    tick();
+    const t = setInterval(tick, 60_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, [load]);
 
   useEffect(() => {

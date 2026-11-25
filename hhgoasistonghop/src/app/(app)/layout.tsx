@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { SessionProvider } from "@/components/session-provider";
 import { BackgroundJobsProvider } from "@/components/background-jobs";
 import { AppShell } from "@/components/app-shell";
-import { getUserFeatureFlags } from "@/lib/features";
 
 export default async function DashboardLayout({
   children,
@@ -13,8 +12,7 @@ export default async function DashboardLayout({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const live = await getUserFeatureFlags(session.user.id);
-  const features = live?.flags || session.user.features;
+  const features = session.user.features;
 
   return (
     <SessionProvider>

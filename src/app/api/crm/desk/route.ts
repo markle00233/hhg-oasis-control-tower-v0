@@ -207,6 +207,59 @@ function deskEventTypes(zone: string) {
   return types;
 }
 
+function etagMatches(header: string | null, stamp: string) {
+  if (!header) return false;
+  return header.split(",").some((part) => {
+    const value = part.trim().replace(/^W\//, "").replace(/^"|"$/g, "");
+    return value === stamp;
+  });
+}
+
+/** Cheap fingerprint of the zone window. Unchanged polls return 304. */
+async function deskChangeStamp(opts: {
+  aliases: string[];
+  since: Date;
+  cartSince: Date;
+  dayStart: Date;
+  dayEnd: Date | null;
+  eventTypes: string[];
+}) {
+  const windowFor = (gte: Date) => ({
+    gte,
+    ...(opts.dayEnd ? { lt: opts.dayEnd } : {}),
+  });
+  const [carts, events, orders] = await Promise.all([
+    prisma.appServiceCart.aggregate({
+      where: {
+        createdAt: windowFor(opts.cartSince),
+        zoneCode: { in: opts.aliases },
+      },
+      _max: { updatedAt: true },
+      _count: true,
+    }),
+    prisma.appServiceEvent.aggregate({
+      where: {
+        createdAt: windowFor(opts.since),
+        eventType: { in: opts.eventTypes },
+        service: { serviceCode: { in: opts.aliases } },
+      },
+      _max: { updatedAt: true },
+      _count: true,
+    }),
+    prisma.appOrder.aggregate({
+      where: {
+        createdAt: windowFor(opts.dayStart),
+        service: { serviceCode: { in: opts.aliases } },
+      },
+      _max: { updatedAt: true },
+      _count: true,
+    }),
+  ]);
+  const part = (count: number, at: Date | null) =>
+    `${count}.${at ? at.getTime() : 0}`;
+  return `${part(carts._count, carts._max.updatedAt)}-${part(events._count, events._max.updatedAt)}-${part(orders._count, orders._max.updatedAt)}`;
+}
+
 export async function GET(req: NextRequest) {
   const hours = Math.min(
     Math.max(Number(req.nextUrl.searchParams.get("hours") || 12) || 12, 1),
@@ -271,6 +324,19 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const stamp = await deskChangeStamp({
+      aliases,
+      since,
+      cartSince,
+      dayStart,
+      dayEnd,
+      eventTypes: deskEventTypes(zone),
+    });
+    const etag = `"${stamp}"`;
+    if (etagMatches(req.headers.get("if-none-match"), stamp)) {
+      return new NextResponse(null, { status: 304, headers: { ETag: etag } });
+    }
+
     /**
      * Khách có cart hoặc lần quét trong ca phải hiện — kể cả đơn khách lẻ không SĐT.
      * Tìm id từ cart/scan trước, rồi mới đọc khách. Tránh OR trên hai quan hệ.
@@ -812,18 +878,21 @@ export async function GET(req: NextRequest) {
         return tb - ta;
       });
 
-    return NextResponse.json({
-      ok: true,
-      hours,
-      zones,
-      zone,
-      zoneName: meta.name,
-      viewDate: viewDate || null,
-      user: toSafeUser(gate.user),
-      isAdmin: isDeskAdminForZone(gate.user, zone),
-      isSystemAdmin: isSystemAdmin(gate.user),
-      arrivals,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        hours,
+        zones,
+        zone,
+        zoneName: meta.name,
+        viewDate: viewDate || null,
+        user: toSafeUser(gate.user),
+        isAdmin: isDeskAdminForZone(gate.user, zone),
+        isSystemAdmin: isSystemAdmin(gate.user),
+        arrivals,
+      },
+      { headers: { ETag: etag } }
+    );
   } catch (e) {
     console.error("[crm/desk]", e);
     return NextResponse.json(

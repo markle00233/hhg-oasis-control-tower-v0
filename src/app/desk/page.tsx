@@ -2052,6 +2052,10 @@ export default function DeskAdministrationPage() {
   /** YYYY-MM-DD — lọc dashboard theo ngày lịch; null = realtime 12h */
   const [viewDate, setViewDate] = useState<string | null>(null);
   const loadSeq = useRef(0);
+  const deskEtagRef = useRef<{ key: string; etag: string }>({
+    key: "",
+    etag: "",
+  });
   const saleGuestRef = useRef<Arrival | null>(null);
   const arrivalSnapRef = useRef("");
   const authFailStreak = useRef(0);
@@ -2354,7 +2358,7 @@ export default function DeskAdministrationPage() {
     return sum;
   }, [cartLines, catalogMenu]);
 
-  const load = useCallback(async (): Promise<{
+  const load = useCallback(async (opts?: { fresh?: boolean }): Promise<{
     arrivals: Arrival[] | null;
     stale: boolean;
   }> => {
@@ -2369,10 +2373,25 @@ export default function DeskAdministrationPage() {
         zone: requested,
       });
       if (viewDate) qs.set("date", viewDate);
+      const etagKey = `${requested}|${viewDate || ""}`;
+      const headers: Record<string, string> = {};
+      if (
+        !opts?.fresh &&
+        deskEtagRef.current.key === etagKey &&
+        deskEtagRef.current.etag
+      ) {
+        headers["If-None-Match"] = deskEtagRef.current.etag;
+      }
       const res = await fetch(`/api/crm/desk?${qs.toString()}`, {
         cache: "no-store",
         credentials: "same-origin",
+        headers,
       });
+      if (res.status === 304) {
+        if (seq !== loadSeq.current) return dropped;
+        authFailStreak.current = 0;
+        return missed;
+      }
       if (seq !== loadSeq.current) return dropped;
       if (zoneRef.current !== requested) return dropped;
 
@@ -2412,6 +2431,8 @@ export default function DeskAdministrationPage() {
       if (seq !== loadSeq.current) return dropped;
       if (zoneRef.current !== requested) return dropped;
       if (!res.ok) throw new Error(data.error || "Load failed");
+      const nextEtag = res.headers.get("etag");
+      if (nextEtag) deskEtagRef.current = { key: etagKey, etag: nextEtag };
       authFailStreak.current = 0;
       const nextArrivals: Arrival[] = data.arrivals || [];
       const snap = `${requested}\n${arrivalSnapshot(nextArrivals)}`;
@@ -3336,8 +3357,8 @@ export default function DeskAdministrationPage() {
 
         // Một lần tải bảng (lần quét vừa tạo + cart) rồi mở khách.
         // Chỉ tải lại khi poll khác thắng cuộc, không tính thêm lần 401.
-        let loaded = await load();
-        if (loaded.stale) loaded = await load();
+        let loaded = await load({ fresh: true });
+        if (loaded.stale) loaded = await load({ fresh: true });
         const list = loaded.arrivals;
         if (!list) throw new Error("Không tải được dữ liệu quầy");
         const fromList = list.find((a) => a.id === cust.id);
